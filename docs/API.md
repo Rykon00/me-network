@@ -32,7 +32,7 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   since 0.5.1 they map to `me-1k-crafting-storage` and have no prototype any more).
   Their recipes are gone: see
   `replace_recipe` and "Recipes of removed items" below.
-- Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-automation`,
+- Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-level-emitter` (issue #679), `me-automation`,
   `me-co-processing`, `me-quantum-crafting`, `me-fluid-storage`, `me-fluid-storage-256k`, `me-upgrade-cards` (0.3.0:
   after `me-storage-64k`, whose cost it takes in `data-final-fixes.lua` unless a mod sets it with `set_technology`).
   Since 0.3.0 (issue #6) `me-autocrafting` unlocks the crafting unit, the 1k and 4k crafting storage and the monitor,

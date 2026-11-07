@@ -215,6 +215,7 @@ local TECHS = {
 	["me-storage-64k"] = { 250, 30, RGB, { "kr-rare-metal-processing" } },
 	["me-autocrafting"] = { 300, 30, RGB },
 	["me-automation"] = { 300, 30, RGB },
+	["me-level-emitter"] = { 200, 30, RG },                    -- (issue #679)
 	["me-fluid-storage"] = { 250, 30, RGB },
 	["me-wireless"] = { 250, 30, RGB, { "kr-lithium-sulfur-battery" }, { battery = true } },
 	["me-wireless-link"] = { 200, 30, RGB },

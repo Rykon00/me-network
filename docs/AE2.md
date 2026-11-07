@@ -41,7 +41,7 @@ ME Chest, ME Drive, ME Interface, ME Terminal, the monitors, the ME IO Port, 1k/
 storage bus, underground cable), `me-storage-64k` (red to blue), `me-storage-256k` (red to purple), `me-storage-1024k`,
 `me-storage-4096k`, `me-storage-16384k` and `me-storage-singularity` (red to yellow, issue #414),
 `me-autocrafting` (red to blue), `me-upgrade-cards` (red to blue), `me-fluid-storage` (red to blue),
-`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
+`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-level-emitter` (red, green; issue #679), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
 blue), `me-co-processing` (red to purple), `me-quantum-crafting` and `me-quantum-bridge` (red to yellow). Their
 prerequisites and recipes are in **Recipes (standalone)**. Gregtorio Continued replaces the recipes and puts the
 technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`).
@@ -920,6 +920,7 @@ brings, so its singularity tech card cannot be researched; there the ME Singular
 | ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
 | ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
 | ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Level Emitter (issue #679) | 200 × 30 s, red, green | 200 × 30 s, red, green |  |
 | ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
 | ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
 | ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
@@ -1754,7 +1755,7 @@ Settings paste, blueprints and clones carry the resource, the lock and the unit.
 
 ## Keeping items in stock: ME Level Maintainer
 
-Tech `me-automation` (needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
+Tech `me-automation` (needs `me-autocrafting`, `me-level-emitter` and Circuit network). The **ME Level Maintainer** is
 a 1x1 block and a member of the network; the controller draws its power (30 kW), it needs no pole and works exactly
 when its network does.
 
@@ -1854,7 +1855,8 @@ and conditions to the blocks the same way.
 
 ## Circuit network: ME Circuit Interface
 
-Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) connected to the
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science; before, ME
+Automation). The **ME Circuit Interface** is a constant combinator (no power) connected to the
 network. Connect red or green wires to it: they carry
 
 * every item of the network (with its quality) and every fluid, fluids rounded down to whole units (a fluid's
@@ -1876,7 +1878,9 @@ largest amounts first).
 
 ### ME Level Emitter
 
-Tech `me-automation` (issue #355, AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science, so an ME Interface or a
+bus can be switched by what the network holds long before autocrafting; before, ME Automation; issue #355,
+AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
 the network that gives **one signal**, its output signal with the value 1 (the green check unless another signal is set
 in its window), while the network holds **at least** the threshold of its item or fluid (**At or above**, AE2's "emit when
 levels are above or equal") or **less** than it (**Below**). With **Stored energy** it compares the energy the network's ME
@@ -1970,11 +1974,13 @@ cable; unlocked with ME Network). Take it in your hand:
 
 Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,
 the GregTech machines of Gregtorio Continued, the machines of every other mod) and **shift + left click** an ME block.
-The block is set up for the machine's recipe; what it had is replaced:
+The block is set up for the machine's recipe. The buses' filters are replaced; the ME Interface **adds** to its rows
+(issue #678 of ME Network), so pasting one machine three times keeps three crafts and two machines' recipes keep the
+ingredients of both. Its window's **Clear** button empties the rows to start over:
 
 | Paste onto | Result | Kept | Holds |
 |---|---|---|---|
-| ME Interface | config rows = the ingredients in the recipe's order, each with **one craft** of the recipe (issue #157 of ME Network; before: a full stack of each item and a side's volume of each fluid): the ingredient's amount per craft, a fluid's rounded up to whole units | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
+| ME Interface | each ingredient adds **one craft** of the recipe (issue #157 of ME Network: the ingredient's amount per craft, a fluid's rounded up to whole units) to the row that holds it (an item at the recipe's quality, a fluid at its temperature); one without a row takes the first free row, in the recipe's order (issue #678) | every other row, the sides | 9 rows (more with Interface Capacity Cards), 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
 | ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
@@ -1984,7 +1990,8 @@ The block is set up for the machine's recipe; what it had is replaced:
   bus takes in every quality).
 * A furnace that is not smelting gives its last recipe.
 * A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
-  import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
+  import side (the flying text says that it has no pipe yet). **Clear** empties every row; a side tied to a row imports
+  again, a side that is off stays off.
 * A flying text names what did not fit, a fluid row with no side left (every side off or tied: set one in the
   window), and a machine without a recipe. Nothing is changed when the recipe has nothing for the block (no
   ingredients; a storage bus on a chest and a recipe of fluids only, or on a tank and no fluid).
@@ -2707,13 +2714,16 @@ from), gets mixed filters and faces a cable. The old fluid blocks and the old en
 
 The recipe paste test (issue #12 of ME Network, own network) checks that every crafting machine prototype lists the
 four ME blocks as pastable (with Gregtorio all GregTech machines too) and calls the paste handler with the event's
-shape: an item recipe and a quality recipe onto an interface (one stack each, the quality), a storage bus (quality
+shape: an item recipe onto an interface with a row (the row kept, one craft each; pasted again two; a second recipe
+adds its rows, issue #678) and a quality recipe onto an interface (the quality), a storage bus (quality
 keys, mode and priority kept) and an export bus (names, the quality message); a chemical reactor's fluid recipe onto an
 interface (the fluid row on the side with a pipe, an off side kept), onto an interface whose side is tied to that fluid
-(kept), then a recipe of two other fluids (the side imports again, two new rows on sides without a pipe, two messages),
+(the row grows, the side kept), then a recipe of two other fluids (two new rows on sides without a pipe, two messages),
+then Clear (no rows, the off side kept),
 onto the import bus (products) and export bus, onto storage buses on a chest (a recipe of fluids only: unchanged,
 message), on a pipe (fluids) and facing nothing (both); fixture recipes with 20 items and 5 fluids and with 2 items and
-5 fluids (rows, fluids and filters full, no side left); a furnace while smelting and its previous recipe once idle; an
+5 fluids (rows, fluids and filters full, no side left; pasted again onto the full interface: its rows grow, nothing
+lost, the message); a furnace while smelting and its previous recipe once idle; an
 assembler and a furnace without a recipe; a paste between two ME blocks is left to their own handlers. It reports
 `recipe paste test: ok`.
 
