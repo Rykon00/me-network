@@ -737,6 +737,32 @@ function me_terminal_test()
 	remote.call(NET, "extract", t, "iron-plate", 7)
 	expect(remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true) == size + 7 and main.get_item_count("iron-plate") == 0
 		and count("iron-plate") == 1000, "storing all plates of the inventory: " .. count("iron-plate"))
+	--- issue #676: control + click takes as much as fits into the inventory, control + right click half (rounded up), capped
+	--- by what fits; the rest stays in the network
+	local stone = prototypes.item["stone"].stack_size
+	main.insert{ name = "stone", count = 7 * stone }
+	local got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(got == 3 * size and main.get_item_count("iron-plate") == 3 * size and count("iron-plate") == 1000 - 3 * size,
+		"control click with 3 free slots: took " .. tostring(got) .. ", network " .. count("iron-plate"))
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	local want = math.min(500, 10 * size)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want and count("iron-plate") == 1000 - want, "control + right click: took " .. tostring(got) .. " of 1000, want " .. want)
+	local have, held = count("iron-plate"), main.get_item_count("iron-plate")
+	local room = main.count_empty_stacks() * size + (size - held % size) % size
+	local want2 = math.min(math.ceil(have / 2), room)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want2 and count("iron-plate") == have - want2, "second control + right click: took " .. tostring(got) .. " of " .. have .. ", want " .. want2)
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	main.insert{ name = "stone", count = 10 * stone }
+	local none, why = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(none == nil and why == "inventory-full" and count("iron-plate") == 1000, "control click into a full inventory: " .. tostring(none) .. " " .. tostring(why))
+	none, why = remote.call(TERM, "take", cursor[1], main, t, "fluid/water", "all")
+	expect(none == nil and why == "fluid-by-hand", "control click on a fluid: " .. tostring(why))
+	main.clear()
+	expect(count("iron-plate") == 1000, "plates lost by the control clicks: " .. count("iron-plate"))
 	--- search and sort
 	local found = remote.call(TERM, "entries", t, "copper", "count")
 	expect(#found == 1 and found[1].name == "copper-plate", "search 'copper': " .. serpent.line(found))
@@ -793,7 +819,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
-	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
+	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, control + click all and half (issue #676), store cursor and inventory, search, sort, unstorable")
 end
 
 --- an ME Drive with four cells of `tier` (default 16k; `fluid`: fluid cells) at x, y, holding `items` ({ name -> count })
