@@ -67,12 +67,6 @@ local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
 local AC = require("scripts.fork-me-autocraft")
 local Conn = require("scripts.fork-me-connector")
---- issue #412: the connector module puts a block's off state into its record (the visit reads `rec.coff` only)
-N.off_setters.io = function(unit, off)
-	local s = storage.fork_me_io
-	local rec = s and s.recs[unit]
-	if rec then rec.coff = off or nil end
-end
 
 local M = {}
 
@@ -239,6 +233,19 @@ local function wake(unit)
 end
 M.wake = wake
 N.wakers.io = wake
+--- issue #412: the connector module puts a block's off state into its record (the visit reads `rec.coff` only). Issue #664:
+--- a change of it wakes the block (the scheduler's front list, no tick of its own), so its next visit writes its status line:
+--- an interface or bus with nothing to do is only probed, and a probe never looks at the condition, so it kept "Working."
+--- after its condition switched it off (and "Off" until its next visit after it was switched on again)
+N.off_setters.io = function(unit, off)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	if not rec then return end
+	off = off or nil
+	if rec.coff == off then return end
+	rec.coff = off
+	wake(unit)
+end
 
 local function kind(entity) return entity and entity.valid and N.kind_of(entity.name) end
 

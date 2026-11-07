@@ -4492,3 +4492,32 @@ both conditions is about 3 to 5 µs more than one with the circuit condition alo
 while every bus has both conditions (the 16 checks per tick are the cost's limit, whatever the number of blocks), 2 to 4 KB of
 allocation per tick, the GC the same, the throughput identical. `bench --check` reports these as regressions: they are the price
 of the feature where it is used on every bus, not a cost of the scenes without it.
+
+## The status line follows a switch of the condition (issue #664)
+
+The I/O module's off setter (`N.off_setters.io`, called by the connector's checks of issue #412 every time a block is
+checked) wakes the block when its off state changes: `Sched.wake` on its own queue, so its next visit (the next tick, through
+the queue's budget) writes the status line. Before, an interface or bus with nothing to do was only probed, and a probe never
+looks at the condition, so its line kept "Working." after a switch-off. A block whose condition does not change costs what it
+cost before (one comparison in the setter); a switch costs one visit of the block, which then parks (off) or works (on).
+
+`bench --check origin/main --sizes 1000,5000` (the scenes have no condition; three rounds in turns):
+
+| | origin/main | #664 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.382 / 2.12 | 0.385 / 2.11 |
+| 5000: script avg / p99 (ms) | 1.000 / 3.04 | 0.997 / 2.96 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.70 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`bench --check origin/main --sizes 1000,5000 --conditions` (every import and export bus with a condition that holds; no switch):
+
+| | origin/main | #664 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.480 / 2.19 | 0.485 / 2.23 |
+| 5000: script avg / p99 (ms) | 1.123 / 3.12 | 1.147 / 3.26 |
+| Lua alloc KB per tick (1000 / 5000) | 46.73 / 68.59 | 46.73 / 68.59 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+Both: `regressions beyond the noise: 0`. The 5000 working copy of the second run has one slow round (1.211 ms against 1.106 and
+1.147; the allocation and the visits are identical), within the noise the check measures.
