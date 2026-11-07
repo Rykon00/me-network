@@ -22,7 +22,8 @@ local M = {}
 M.TAGS = { "fork_me_interface", "fork_me_bus", "fork_me_storage_bus", "fork_me_provider", "fork_me_maintainer",
 	"fork_me_circuit", "fork_me_drive", "fork_me_monitor", "fork_me_emitter", "fork_me_access_point",
 	"fork_me_fluid_storage_bus", "fork_me_io_port", "fork_me_qbridge",
-	"fork_me_wireless_link", "fork_me_p2p" }   -- (issue #649: an ME P2P tunnel's frequency and role, scripts/fork-me-p2p.lua)
+	"fork_me_wireless_link", "fork_me_p2p",    -- (issue #649: an ME P2P tunnel's frequency and role, scripts/fork-me-p2p.lua)
+	"fork_me_logistic_interface" }             -- (issue #663: the ME Logistic Interface's, scripts/fork-me-logistic-interface.lua)
 
 --- function(entity, tags, player) per entity name: the settings of `tags` onto an existing block (control.lua fills it)
 M.appliers = {}
