@@ -963,6 +963,24 @@ function M.on_built(entity, tags, source)
 	end
 end
 
+--- Issue #660: a level maintainer or circuit interface mined, destroyed or removed by a script (also the stand-in of a ghost's
+--- window) leaves its records and its queue at once, as the blocks of the other modules do, so a removed block costs no visit.
+--- (The visit still drops a record whose entity went without an event.) What its queue's lists hold of it stays as a stale
+--- entry that the queue passes over without counting it (Sched.forget).
+function M.on_removed(entity)
+	if not (entity and entity.valid and entity.unit_number) then return end
+	local name = entity.name
+	if name ~= MAINTAINER and name ~= CIRCUIT then return end
+	local s = storage.fork_ae2
+	if not s then return end
+	local unit = entity.unit_number
+	if name == MAINTAINER then
+		if s.maintainers and s.maintainers[unit] then drop_maintainer(s, unit) end
+	elseif s.circuits and s.circuits[unit] then
+		drop_circuit(s, unit)
+	end
+end
+
 --- copy the settings (shift right click, shift left click); the game copies the lamp's circuit condition
 --- and the combinator's signals itself, the interface rewrites them at once
 function M.on_entity_settings_pasted(event)
@@ -1094,6 +1112,15 @@ remote.add_interface("gregtorio-me-circuit", {
 		local rec = entity and entity.valid and storage.fork_ae2 and storage.fork_ae2.circuits
 			and storage.fork_ae2.circuits[entity.unit_number]
 		if rec then circuit_step(rec) end
+	end,
+	--- issue #660 (tests): the records and the units their queues count (busy and probed), of the maintainers and the circuit
+	--- interfaces; the circuit interfaces' budget (updates per second) and interval
+	queues = function()
+		local s = storage.fork_ae2
+		local function n(q) local a, b = 0, 0 if q then a, b = Sched.counts(q) end return a + b end
+		return { maintainers = s and s.maintainers and table_size(s.maintainers) or 0, mq = n(s and s.mq),
+			circuits = s and s.circuits and table_size(s.circuits) or 0, cq = n(s and s.cq), clist = s and s.clist and #s.clist or 0,
+			rate = Sched.setting("circuit"), interval = CIRCUIT_INTERVAL }
 	end,
 	--- issue #38 (tests): when a level maintainer or circuit interface is visited next
 	schedule = function(entity)

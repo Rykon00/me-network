@@ -4466,6 +4466,11 @@ function circuit_test()
 	end
 	if st.done then return end
 	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	--- issue #660: how long a phase waits for the wire, from the queue (never from measured time): the map holds more circuit
+	--- interfaces than the budget visits in their interval, so each comes round once per (units / budget) seconds; a change
+	--- needs at most two rounds (the network's list made at one visit, written at the next) and an interval
+	local q = remote.call(C38, "queues")
+	local limit = math.max(200, 2 * math.ceil(q.cq * 60 / math.max(q.rate, 1)) + q.interval)
 	local wired = on_wire()
 	if st.phase == "all" then
 		local want = expected(nil)
@@ -4476,7 +4481,7 @@ function circuit_test()
 			remote.call(C38, "set_circuit_filters", ci, { "iron-plate", "fluid/water" })
 			return next_phase("filtered")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
 			return finish()
 		end
@@ -4488,7 +4493,7 @@ function circuit_test()
 			remote.call(NET, "store_in_drive", drive, "iron-plate", 25)
 			return next_phase("change")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the filtered wire: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
 			return finish()
 		end
@@ -4496,9 +4501,10 @@ function circuit_test()
 		if wired["iron-plate"] == 225 then
 			expect(table_size(wired) == 2, "the filtered wire after the change: " .. serpent.line(wired))
 			if #problems > 0 then return finish() end
-			return finish(st.all .. " signals, then 2 filtered, change seen after " .. (game.tick - st.phase_tick) .. " ticks")
+			return finish(st.all .. " signals, then 2 filtered, change seen after " .. (game.tick - st.phase_tick) .. " ticks ("
+				.. q.cq .. " circuit interfaces at " .. q.rate .. " updates per second: a phase waits at most " .. limit .. " ticks)")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the wire did not follow the change: " .. serpent.line(wired))
 			return finish()
 		end
