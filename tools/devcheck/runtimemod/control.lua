@@ -87,6 +87,13 @@ local GX, GY = 200, 100                                 -- graph test
 local PX, PY = 235, 100                                 -- power test (no pole of the graph test reaches it)
 local CX, CY = 200, 125                                 -- cells, terminal and import/export test
 
+--- me-network issue #680: a power setting of the mod in W (`default` without it: a version before the settings), so the tests
+--- that check the controller's draw hold with other startup settings too (devcheck --startup)
+function power_setting_w(name, default)
+	local st = settings.startup["me-network-power-" .. name]
+	return st and st.value * 1000 or default
+end
+
 local function me_place(s, fails, what, name, x, y, extra)
 	local ok, e = pcall(function()
 		local def = { name = name, position = { x, y }, force = "player", raise_built = true }
@@ -267,7 +274,8 @@ function me_graph_test()
 		local n = net(a)
 		expect(same(a, d), "the drive is not in the controller's network")
 		expect(n and n.ok and n.members == 7 and n.controllers == 1, "network " .. serpent.line(n))
-		expect(n and n.power == 124000, "controller power " .. tostring(n and n.power) .. " W, expected 124000 (base + one drive)")
+		local want = 120000 + power_setting_w("member", 4000)
+		expect(n and n.power == want, "controller power " .. tostring(n and n.power) .. " W, expected " .. want .. " (base + one drive)")
 		expect(remote.call(NET, "cable_variation", cable(9)) == 11 and remote.call(NET, "cable_variation", cable(7)) == 11,
 			"cable pictures " .. remote.call(NET, "cable_variation", cable(9)) .. "/" .. remote.call(NET, "cable_variation", cable(7)))
 		local id = n and n.id

@@ -88,9 +88,12 @@ return function(H)
 		local function info(e) return remote.call(QB, "info", e) or {} end
 		local i1 = info(l1)
 		local want = remote.call(QB, "drain", "me-wireless-link", 100)
-		expect(want == 210000, "the drain over 100 tiles: " .. tostring(want) .. " W, not 210 kW")
+		--- (issue #680: base + 4 started 32 tiles, the startup settings' numbers)
+		local base = power_setting_w("wireless-link", 10000)
+		local expected = base + 4 * power_setting_w("wireless-link-per-32-tiles", 50000)
+		expect(want == expected, "the drain over 100 tiles: " .. tostring(want) .. " W, not " .. expected .. " W")
 		expect(i1.status == "linked" and remote.call(NET, "same_network", l1, l2), "L1 and L2 on frequency 9: " .. tostring(i1.status))
-		expect(math.abs((i1.watts or 0) - 210000) < 1 and math.abs(l2.power_usage * 60 - 210000) < 1,
+		expect(math.abs((i1.watts or 0) - expected) < 1 and math.abs(l2.power_usage * 60 - expected) < 1,
 			"the linked pair's drain: " .. tostring(i1.watts) .. " / " .. tostring(l2.power_usage * 60) .. " W")
 		expect(math.abs((i1.distance or 0) - 100) < 0.01 and i1.range == 512, "distance and range " .. serpent.line({ i1.distance, i1.range }))
 		expect(iface.get_inventory(defines.inventory.chest).get_item_count("copper-plate") == 40
@@ -99,7 +102,7 @@ return function(H)
 		expect(info(qb).status == "waiting", "a quantum bridge on the links' frequency: " .. tostring(info(qb).status))
 		local i3 = info(l3)
 		expect(i3.status == "other-surface" and not remote.call(NET, "same_network", l3, l4)
-			and math.abs((i3.watts or 0) - 10000) < 1, "a pair on two surfaces: " .. serpent.line({ i3.status, i3.watts }))
+			and math.abs((i3.watts or 0) - base) < 1, "a pair on two surfaces: " .. serpent.line({ i3.status, i3.watts }))
 		local i5 = info(l5)
 		expect(i5.status == "out-of-range" and not remote.call(NET, "same_network", l5, l6) and math.abs((i5.distance or 0) - 599) < 0.01,
 			"a pair 599 tiles apart: " .. serpent.line({ i5.status, i5.distance }))

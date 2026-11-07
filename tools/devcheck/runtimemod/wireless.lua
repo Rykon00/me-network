@@ -66,7 +66,7 @@ return function(H)
 			--- the access point is a member; it draws 20 kW without boosters
 			local n0 = net()
 			local r0 = rows_of(n0, "access-point")
-			expect(r0 and r0.n == 3 and r0.w == 3 * 20000, "the access points' power without boosters: " .. serpent.line(r0))
+			expect(r0 and r0.n == 3 and r0.w == 3 * power_setting_w("access-point", 20000), "the access points' power without boosters: " .. serpent.line(r0))
 			expect(remote.call(WL, "range_of", 0) == 32 and math.abs(remote.call(WL, "range_of", 4) - 224) < 0.01,
 				"range: " .. remote.call(WL, "range_of", 0) .. ", " .. remote.call(WL, "range_of", 4))
 			--- two boosters into A
@@ -82,7 +82,7 @@ return function(H)
 			hand.clear()
 			local n1 = net()
 			local r1 = rows_of(n1, "access-point")
-			local want = 2 * 20000 + remote.call(WL, "power_of", 2)
+			local want = 2 * power_setting_w("access-point", 20000) + remote.call(WL, "power_of", 2)
 			expect(r1 and math.abs(r1.w - want) < 1, "the power with two boosters: " .. serpent.line(r1) .. ", expected " .. want)
 			local r = remote.call(WL, "ap_range", a)
 			expect(math.abs(r - (32 + 24 * 2 ^ 1.5)) < 0.01, "the range with two boosters: " .. r)

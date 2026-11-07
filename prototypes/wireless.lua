@@ -18,7 +18,8 @@ local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = 
 local NUMBERS = {
 	--- the access point (the formulas above; b = the boosters in its card slots)
 	base_range = 32, range_per_booster = 24, range_exponent = 1.5,
-	base_power = 20000, power_per_booster = 10000, power_exponent_divisor = 16,
+	base_power = ME.power_w("access-point"), power_per_booster = ME.power_w("access-point-booster"),   -- (issue #680: settings)
+	power_exponent_divisor = 16,
 	--- the terminal item: its buffer (J), what an open window uses (W, times 1 + distance / range of its access point)
 	item_buffer = 100000000, item_use = 200000,
 	--- the charger: its rate (W, drawn through the controller while an item is not full) and its idle draw
@@ -73,7 +74,7 @@ ME.add_item{
 	--- AE2 (issue #233; prototypes/network.lua, the stand-ins): a wireless receiver, a calculation processor, a fluix cable
 	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 1, "fluix-cable", 1 } },
 }
-block("me-wireless-access-point", { "entity-description.me-wireless-access-point" })
+block("me-wireless-access-point", { "entity-description.me-wireless-access-point", ME.kw(NUMBERS.base_power) })
 recipes[#recipes + 1] = "me-wireless-access-point"
 
 ME.add_item{

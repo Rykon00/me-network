@@ -2569,6 +2569,9 @@ def main():
         p.add_argument("--with-gregtorio", metavar="DIR", help="a Gregtorio Continued checkout to load as well")
         p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
         p.add_argument("--mods-from", help="with --with-mod: folder with the mod zips that are not in .devcheck/mods yet")
+        p.add_argument("--startup", action="append", metavar="NAME=VALUE",
+                       help="issue #680: a startup setting for this run (a number, true/false or a string; repeatable), "
+                            "written into .devcheck/mods/mod-settings.dat and removed afterwards")
         if name in ("check", "all"):
             p.add_argument("--base-only", action="store_true", help="check without Space Age and quality")
         if name in ("runtime", "all"):
@@ -2653,11 +2656,25 @@ def main():
         return migrate(a)
     if a.cmd == "setup":
         return setup(a)
-    if a.cmd == "check":
-        return check(a)
-    if a.cmd == "runtime":
-        return runtime(a)
-    return check(a) or runtime(a)
+    # issue #680: startup settings of the mod for this run (--startup NAME=VALUE), the defaults again afterwards
+    startup = {}
+    for item in getattr(a, "startup", None) or []:
+        name, _, value = item.partition("=")
+        if not (name and value):
+            sys.exit(f"--startup {item}: NAME=VALUE expected")
+        low = value.lower()
+        startup[name] = low == "true" if low in ("true", "false") else float(value) if re.fullmatch(r"-?[0-9.]+(e-?[0-9]+)?", low) else value
+    for name, value in startup.items():
+        startup_setting(name, value)
+    try:
+        if a.cmd == "check":
+            return check(a)
+        if a.cmd == "runtime":
+            return runtime(a)
+        return check(a) or runtime(a)
+    finally:
+        for name in startup:
+            startup_setting(name, None)
 
 
 if __name__ == "__main__":

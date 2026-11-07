@@ -171,7 +171,7 @@ data:extend({ WIRED.legacy({
 --- screens). Its two slots and its window: scripts/fork-me-patternterm.lua.
 --------------------------------------------------------------------------------
 
-local PATTERN_TERMINAL_POWER = 8000             -- W drawn through the ME Controller, like the ME Terminal's
+local PATTERN_TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller, the ME Terminal's (issue #680)
 
 data:extend({ {
 	type = "simple-entity-with-force",
@@ -194,7 +194,7 @@ data:extend({ {
 		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
-	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
+	localised_description = { "entity-description.me-pattern-terminal", ME.kw(PATTERN_TERMINAL_POWER) },
 } })
 --- issue #416: the ME Pattern Terminal Ex, the same block (its kind is the pattern terminal's: power, screen, walkable) with a
 --- picture of its own (tools/gen_ae2_sprites.py --pattern-terminal: the screen's frame in amber)
@@ -204,7 +204,7 @@ pt_ex.icon = ME.hd_icons .. "me-pattern-terminal-ex.png"
 pt_ex.minable = { mining_time = 0.2, result = "me-pattern-terminal-ex" }
 pt_ex.placeable_by = { item = "me-pattern-terminal-ex", count = 1 }
 for i, p in ipairs(pt_ex.pictures) do p.filename = ME.hd_entity_path .. "me-pattern-terminal-ex.png" end
-pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", tostring(PATTERN_TERMINAL_POWER / 1000) }
+pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", ME.kw(PATTERN_TERMINAL_POWER) }
 data:extend({ pt_ex })
 
 --------------------------------------------------------------------------------
@@ -213,7 +213,7 @@ data:extend({ pt_ex })
 --- scripts/fork-me-ifaceterm.lua. It has no slots and no settings.
 --------------------------------------------------------------------------------
 
-local INTERFACE_TERMINAL_POWER = 8000           -- W drawn through the ME Controller, like the ME Terminal's
+local INTERFACE_TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller, the ME Terminal's (issue #680)
 
 data:extend({ {
 	type = "simple-entity-with-force",
@@ -236,7 +236,7 @@ data:extend({ {
 		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
-	localised_description = { "entity-description.me-interface-terminal", tostring(INTERFACE_TERMINAL_POWER / 1000) },
+	localised_description = { "entity-description.me-interface-terminal", ME.kw(INTERFACE_TERMINAL_POWER) },
 } })
 
 --------------------------------------------------------------------------------
@@ -249,7 +249,7 @@ for _, c in pairs(data.raw["assembling-machine"]["assembling-machine-2"].craftin
 	if not c:find("fluid") then item_categories[#item_categories + 1] = c end
 end
 ME.make_molecular_assembler{ base = "assembling-machine-2", crafting_categories = item_categories,
-	crafting_speed = 2.5, energy_usage = "375kW" }
+	crafting_speed = 2.5, energy_usage = ME.energy(ME.power_w("molecular-assembler")) }   -- (issue #680: a startup setting)
 
 
 
@@ -407,9 +407,9 @@ maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
 maintainer.collision_box = ME.solid_box()                  -- (issue #268)
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
-local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+local MAINTAINER_POWER = ME.power_w("level-maintainer")   -- W drawn through the ME Controller (issue #128; #680: a setting)
 maintainer.energy_source = { type = "void" }
-maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
+maintainer.energy_usage_per_tick = ME.energy(math.max(1, MAINTAINER_POWER))
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
@@ -422,7 +422,7 @@ maintainer.stateless_visualisation = { render_layer = "lower-object",
 maintainer.draw_stateless_visualisations_in_ghost = true
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
-maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
+maintainer.localised_description = { "entity-description.me-level-maintainer", ME.kw(MAINTAINER_POWER) }
 data:extend({ maintainer })
 data:extend({
 	{ type = "sprite", name = "me-level-maintainer-screen-on", filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
@@ -490,7 +490,7 @@ data:extend({ circuit })
 --- combinator (redstone torch).
 --------------------------------------------------------------------------------
 
-local TOGGLE_POWER = 500                 -- W drawn through the ME Controller while joined
+local TOGGLE_POWER = ME.power_w("toggle-bus")   -- W drawn through the ME Controller while joined (issue #680: a setting)
 for i, def in ipairs({
 	{ "me-toggle-bus", I{ "fluix-cable", 2, "copper-cable", 2, "power-switch", 1 } },
 	{ "me-inverted-toggle-bus", I{ "me-toggle-bus", 1 } },
@@ -522,7 +522,7 @@ for i, def in ipairs({
 	bus.draw_stateless_visualisations_in_ghost = true
 	bus.fast_replaceable_group = "me-toggle-bus"
 	bus.next_upgrade = nil
-	bus.localised_description = { "entity-description." .. name, tostring(TOGGLE_POWER) }
+	bus.localised_description = { "entity-description." .. name, string.format("%.0f", TOGGLE_POWER) }
 	data:extend({ bus })
 end
 data.raw["mod-data"]["fork-me-network"].data.names.toggle_bus = "me-toggle-bus"
