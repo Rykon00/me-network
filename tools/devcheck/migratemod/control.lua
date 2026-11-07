@@ -198,6 +198,10 @@ local function setup_unified(s)
 		end
 	end
 	game.forces.player.recipes["copper-cable"].enabled = true
+	--- me-network issue #679: ME Automation researched by the player (not by the enemy force): after the load the player has
+	--- the new technology ME Level Emitter researched, which now unlocks the level emitter and the circuit interface
+	local auto = game.forces.player.technologies["me-automation"]
+	if auto then auto.researched = true end
 	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
 		local m = place(s, fails, "me-molecular-assembler", x, -0.5)
 		local p = place(s, fails, "me-pattern-provider", x, 0.5)
@@ -357,6 +361,15 @@ local function check_unified(st)
 		and remote.call(NET, "underground_partner", ua) == ub.unit_number
 		and ug and ug.direction == defines.direction.south, "the underground cables of the old save: "
 		.. serpent.line({ ua and ua.direction, ub and ub.direction, ug and ug.direction }))
+	--- me-network issue #679 (a version that has the technology ME Level Emitter): researched where ME Automation was
+	if prototypes.technology["me-level-emitter"] then
+		local p, e = game.forces.player, game.forces.enemy
+		expect(p.technologies["me-level-emitter"].researched and not e.technologies["me-level-emitter"].researched
+			and p.recipes["me-level-emitter"].enabled and p.recipes["me-circuit-interface"].enabled,
+			"the technology ME Level Emitter after ME Automation: player " .. tostring(p.technologies["me-level-emitter"].researched)
+			.. ", enemy " .. tostring(e.technologies["me-level-emitter"].researched) .. ", recipes "
+			.. tostring(p.recipes["me-level-emitter"].enabled) .. " " .. tostring(p.recipes["me-circuit-interface"].enabled))
+	end
 	local t = at("me-terminal", 12.5, 0.5)
 	local function count(name) return t and remote.call(NET, "count", t, name) or -1 end
 	local c1, c2, c3 = at("iron-chest", 14.5, 3.5), at("iron-chest", 16.5, 3.5), at("iron-chest", 30.5, 3.5)

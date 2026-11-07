@@ -2191,6 +2191,7 @@ TECH_ICONS = {
     "me-fluid-storage-16384k": "me-16384k-fluid-storage-cell",
     "me-autocrafting": "me-molecular-assembler",
     "me-automation": "me-level-maintainer",
+    "me-level-emitter": "me-level-emitter",                     # issue #679
     "me-co-processing": "me-crafting-co-processing-unit",
     "me-quantum-crafting": "me-256k-crafting-storage",
     # issue #415
