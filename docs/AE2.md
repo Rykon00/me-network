@@ -41,7 +41,7 @@ ME Chest, ME Drive, ME Interface, ME Terminal, the monitors, the ME IO Port, 1k/
 storage bus, underground cable), `me-storage-64k` (red to blue), `me-storage-256k` (red to purple), `me-storage-1024k`,
 `me-storage-4096k`, `me-storage-16384k` and `me-storage-singularity` (red to yellow, issue #414),
 `me-autocrafting` (red to blue), `me-upgrade-cards` (red to blue), `me-fluid-storage` (red to blue),
-`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
+`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-level-emitter` (red, green; issue #679), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
 blue), `me-co-processing` (red to purple), `me-quantum-crafting` and `me-quantum-bridge` (red to yellow). Their
 prerequisites and recipes are in **Recipes (standalone)**. Gregtorio Continued replaces the recipes and puts the
 technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`).
@@ -912,6 +912,7 @@ brings, so its singularity tech card cannot be researched; there the ME Singular
 | ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
 | ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
 | ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Level Emitter (issue #679) | 200 × 30 s, red, green | 200 × 30 s, red, green |  |
 | ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
 | ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
 | ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
@@ -1746,7 +1747,7 @@ Settings paste, blueprints and clones carry the resource, the lock and the unit.
 
 ## Keeping items in stock: ME Level Maintainer
 
-Tech `me-automation` (needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
+Tech `me-automation` (needs `me-autocrafting`, `me-level-emitter` and Circuit network). The **ME Level Maintainer** is
 a 1x1 block and a member of the network; the controller draws its power (30 kW), it needs no pole and works exactly
 when its network does.
 
@@ -1846,7 +1847,8 @@ and conditions to the blocks the same way.
 
 ## Circuit network: ME Circuit Interface
 
-Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) connected to the
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science; before, ME
+Automation). The **ME Circuit Interface** is a constant combinator (no power) connected to the
 network. Connect red or green wires to it: they carry
 
 * every item of the network (with its quality) and every fluid, fluids rounded down to whole units (a fluid's
@@ -1868,7 +1870,9 @@ largest amounts first).
 
 ### ME Level Emitter
 
-Tech `me-automation` (issue #355, AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science, so an ME Interface or a
+bus can be switched by what the network holds long before autocrafting; before, ME Automation; issue #355,
+AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
 the network that gives **one signal**, its output signal with the value 1 (the green check unless another signal is set
 in its window), while the network holds **at least** the threshold of its item or fluid (**At or above**, AE2's "emit when
 levels are above or equal") or **less** than it (**Below**). With **Stored energy** it compares the energy the network's ME

@@ -606,10 +606,14 @@ ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k",
 		"me-molecular-assembler", "me-item-p2p-tunnel", "me-fluid-p2p-tunnel", "me-item-p2p-tunnel-attune",   -- (issue #629)
 		"me-fluid-p2p-tunnel-attune" }) }
 
---- issue #38: level maintainer and circuit interface, bigger CPUs
-ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter",   -- (#355)
-		"me-advanced-level-emitter" } }                                                                                         -- (#443)
+--- issue #679: the level emitter and the circuit interface early, with red and green science (a signal from what the network
+--- holds, to switch an ME Interface or a bus off at a threshold), before autocrafting; migrations/me-network-level-emitter-tech.lua
+--- researches it in a save that has ME Automation
+ME.add_technology{ name = "me-level-emitter", prerequisites = { "me-network", "circuit-network" }, unit = ME.unit(2, 200),
+	recipes = { "me-level-emitter", "me-circuit-interface" } }
+--- issue #38: level maintainer, bigger CPUs; the toggle buses (#355) and the advanced level emitter (#443)
+ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "me-level-emitter", "circuit-network" },
+	unit = ME.unit(3, 500), recipes = { "me-level-maintainer", "me-toggle-bus", "me-inverted-toggle-bus", "me-advanced-level-emitter" } }
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
