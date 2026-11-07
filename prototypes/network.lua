@@ -57,7 +57,7 @@ local UNDERGROUND_REACH = 10        -- max_underground_distance of the undergrou
 local NO_PIPELINE_EXTENT = 4294967295  -- uint32 maximum of FluidBox::max_pipeline_extent
 --- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
 local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
-local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
+local CHEST_WATTS = ME.power_w("chest")   -- W: what it draws from the power grid on its own (issue #680: a startup setting)
 local CHEST_FLUID_VOLUME = 1000
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
 --- buses and the ME Terminal (prototypes/api.lua)
@@ -378,7 +378,8 @@ data:extend({ {
 		filename = HD_ENTITY .. "me-network-controller.png",
 		priority = "high", width = 128, height = 128, scale = 0.5,
 	},
-	localised_description = { "entity-description.me-network-controller" },
+	localised_description = { "entity-description.me-network-controller", ME.kw(ME.power_w("member")), ME.kw(ME.power_w("terminal")),
+		ME.kw(ME.power_w("level-maintainer")) },                -- (issue #680)
 } })
 data.raw.item["me-controller"].place_result = CONTROLLER
 
@@ -425,7 +426,7 @@ data:extend({ {
 	inventory_size = 1,
 	inventory_type = "normal",
 	picture = { filename = HD_ENTITY .. "me-chest.png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-chest" },
+	localised_description = { "entity-description.me-chest", ME.kw(CHEST_WATTS) },
 }, {
 	type = "electric-energy-interface",
 	name = CHEST_POWER,
@@ -442,14 +443,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = "100kJ",                    -- 25 s on its own (AE2: 500 AE)
-		input_flow_limit = "40kW",
+		buffer_capacity = ME.energy(CHEST_WATTS * 25, "J"),   -- 25 s on its own (AE2: 500 AE)
+		input_flow_limit = ME.energy(CHEST_WATTS * 10),
 		output_flow_limit = "0W",
 		render_no_network_icon = false,
 		render_no_power_icon = false,
 	},
 	energy_production = "0W",
-	energy_usage = tostring(CHEST_WATTS) .. "W",
+	energy_usage = ME.energy(CHEST_WATTS),
 	localised_name = { "entity-name.me-chest" },
 }, {
 	type = "storage-tank",
@@ -904,7 +905,7 @@ data:extend({
 --- screen lies one layer above it (`lower-object-above-shadow`) and covers it, both below the character.
 --------------------------------------------------------------------------------
 
-local TERMINAL_POWER = 8000             -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+local TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller (issue #128; #680: a startup setting)
 
 local terminal = table.deepcopy(data.raw.lamp["small-lamp"])
 terminal.name = "me-terminal"
@@ -917,7 +918,7 @@ terminal.dying_explosion = nil
 terminal.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 terminal.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 terminal.energy_source = { type = "void" }
-terminal.energy_usage_per_tick = (TERMINAL_POWER / 1000) .. "kW"
+terminal.energy_usage_per_tick = ME.energy(math.max(1, TERMINAL_POWER))
 terminal.always_on = true
 terminal.collision_mask = WALKABLE         -- issue #129: walkable like the cable (its screen is drawn under the character)
 terminal.light = nil
@@ -930,7 +931,7 @@ terminal.stateless_visualisation = { render_layer = "lower-object",
 terminal.draw_stateless_visualisations_in_ghost = true
 terminal.fast_replaceable_group = nil
 terminal.next_upgrade = nil
-terminal.localised_description = { "entity-description.me-terminal", tostring(TERMINAL_POWER / 1000) }
+terminal.localised_description = { "entity-description.me-terminal", ME.kw(TERMINAL_POWER) }
 data:extend({ terminal })
 data.raw.item["me-terminal"].place_result = "me-terminal"
 
@@ -1044,6 +1045,7 @@ data:extend({ {
 		--- issue #128: the power (W) the ME Controller draws for a block that has no power connection of its own, by kind;
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
 		member_power = { terminal = TERMINAL_POWER },
+		member_default = ME.power_w("member"),       -- (issue #680: the power of a member without a number of its own)
 		underground_reach = UNDERGROUND_REACH,
 		drive_view = DRIVE_VIEW,
 		--- issue #278: how a graphics mod shows the ME Controller's state (docs/API.md "The controller view"): an Animation
@@ -1108,7 +1110,7 @@ ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
 --- Interface; the throughput monitor a level emitter more); Gregtorio gives them GTNH's.
 --------------------------------------------------------------------------------
 
-local MONITOR_POWER = 2000               -- W drawn through the ME Controller
+local MONITOR_POWER = ME.power_w("monitor")   -- W drawn through the ME Controller (issue #680: a startup setting)
 local MONITOR_RECIPES = {
 	["me-storage-monitor"] = { "me-terminal", 1, "advanced-circuit", 1 },
 	["me-conversion-monitor"] = { "me-storage-monitor", 1, "me-interface", 1 },
@@ -1140,7 +1142,7 @@ for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throu
 			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 		},
-		localised_description = { "entity-description." .. name, tostring(MONITOR_POWER / 1000) },
+		localised_description = { "entity-description." .. name, ME.kw(MONITOR_POWER) },
 	} })
 	data.raw["mod-data"]["fork-me-network"].data.member_power[name:gsub("^me%-", "")] = MONITOR_POWER
 end
@@ -1160,7 +1162,7 @@ end
 --- the plastic bar, is made in no game of Gregtorio Continued, whose compat file gives the block its GT recipe later.
 --------------------------------------------------------------------------------
 
-local IO_PORT, IO_PORT_POWER = "me-io-port", 5000     -- W drawn through the ME Controller
+local IO_PORT, IO_PORT_POWER = "me-io-port", ME.power_w("io-port")   -- W drawn through the ME Controller (issue #680)
 ME.add_item{ name = IO_PORT, icon = HD_ICON .. "me-io-port.png", icon_size = 64, subgroup = "fork-me-drives", order = "c",
 	stack_size = 10, place_result = IO_PORT,
 	recipe = { energy_required = 5, ingredients = I{ "me-drive", 1, "fluix-cable", 2, "iron-plate", 2, "advanced-circuit", 1 } } }
@@ -1178,7 +1180,7 @@ data:extend({ {
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	picture = { filename = HD_ENTITY .. "me-io-port.png", priority = "high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
+	localised_description = { "entity-description.me-io-port", ME.kw(IO_PORT_POWER) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
 data.raw["mod-data"]["fork-me-network"].data.names.logistic_interface = LOGISTIC_INTERFACE   -- (issue #531)
@@ -1196,7 +1198,7 @@ ME.crafting_block_tech[IO_PORT] = "me-network"
 --- whose compat file gives the block its GT recipe), unlocked late (utility science).
 --------------------------------------------------------------------------------
 
-local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", 1000000
+local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", ME.power_w("quantum-bridge")   -- (issue #680: a startup setting)
 ME.add_item{ name = QBRIDGE, icon = HD_ICON .. "me-quantum-bridge.png", icon_size = 64, subgroup = "fork-me-network", order = "e",
 	stack_size = 10, place_result = QBRIDGE,
 	recipe = { energy_required = 30, ingredients = I{ "iron-plate", 32, "electronic-circuit", 20, "processing-unit", 8,
@@ -1218,14 +1220,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = tostring(QBRIDGE_WATTS * 2) .. "J",     -- (two seconds of its drain)
-		input_flow_limit = tostring(QBRIDGE_WATTS * 2) .. "W",
+		buffer_capacity = ME.energy(QBRIDGE_WATTS * 2, "J"),     -- (two seconds of its drain)
+		input_flow_limit = ME.energy(QBRIDGE_WATTS * 2),
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",
-	energy_usage = tostring(QBRIDGE_WATTS) .. "W",
+	energy_usage = ME.energy(QBRIDGE_WATTS),
 	picture = { filename = HD_ENTITY .. "me-quantum-bridge.png", priority = "high", width = 192, height = 192, scale = 0.5 },
-	localised_description = { "entity-description.me-quantum-bridge", tostring(QBRIDGE_WATTS / 1000000) },
+	localised_description = { "entity-description.me-quantum-bridge", ME.kw(QBRIDGE_WATTS / 1000) },   -- (MW)
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.quantum_bridge = QBRIDGE
 data.raw["mod-data"]["fork-me-network"].data.quantum_bridge = { watts = QBRIDGE_WATTS }
@@ -1240,7 +1242,8 @@ ME.add_technology{ name = "me-quantum-bridge", prerequisites = { "me-storage-256
 --- AE2: a wireless receiver is a radar, as for the access point), unlocked with ME Wireless Link after ME Wireless.
 --------------------------------------------------------------------------------
 
-local WLINK_NAME, WLINK = "me-wireless-link", { base = 10000, per_chunk = 50000, range = 512 }
+local WLINK_NAME, WLINK = "me-wireless-link", { base = ME.power_w("wireless-link"), per_chunk = ME.power_w("wireless-link-per-32-tiles"),
+	range = 512 }                                         -- (issue #680: the power from startup settings)
 ME.add_item{ name = WLINK_NAME, icon = HD_ICON .. "me-wireless-link.png", icon_size = 64, subgroup = "fork-me-network", order = "f",
 	stack_size = 50, place_result = WLINK_NAME,
 	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 2, "fluix-cable", 4, "iron-plate", 4 } } }
@@ -1261,15 +1264,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = tostring(WLINK.base * 2) .. "J",           -- (two seconds of its drain; the runtime sets it with the drain)
-		input_flow_limit = tostring(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2) .. "W",
+		buffer_capacity = ME.energy(WLINK.base * 2, "J"),           -- (two seconds of its drain; the runtime sets it with the drain)
+		input_flow_limit = ME.energy(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2),
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",
-	energy_usage = tostring(WLINK.base) .. "W",
+	energy_usage = ME.energy(WLINK.base),
 	picture = { filename = HD_ENTITY .. "me-wireless-link.png", priority = "high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), tostring(WLINK.base / 1000),
-		tostring(WLINK.per_chunk / 1000) },
+	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), ME.kw(WLINK.base), ME.kw(WLINK.per_chunk) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.wireless_link = WLINK_NAME
 data.raw["mod-data"]["fork-me-network"].data.wireless_link = WLINK

@@ -49,6 +49,32 @@ data:extend({
 	int("me-network-storage-bus-idle-limit", "i", 120, 15, 3600),
 })
 
+--- Issue #680: the power use of the ME blocks, startup settings in kW (the defaults are the numbers of before). The data stage
+--- reads them where the constants were (prototypes/api.lua, ME.power_w): the entities' energy, buffers and flow limits, the
+--- descriptions and the mod-data the runtime reads agree. A mod that sets these numbers in its own data stage still wins.
+--- Order "p...": one group in the settings list, named "Power use: ..." in the locale. A block that draws from the power grid
+--- itself takes at least 1 W; what the ME Controller draws for a block may be 0.
+local function power(name, order, default_kw, min_kw, max_kw)
+	return { type = "double-setting", name = "me-network-power-" .. name, setting_type = "startup", order = "p" .. order,
+		default_value = default_kw, minimum_value = min_kw, maximum_value = max_kw }
+end
+local TW = 1000000000                      -- 1 TW in kW
+data:extend({
+	power("quantum-bridge", "01", 1000, 0.001, TW),
+	power("wireless-link", "02", 10, 0.001, TW),
+	power("wireless-link-per-32-tiles", "03", 50, 0, TW),
+	power("access-point", "04", 20, 0, TW),
+	power("access-point-booster", "05", 10, 0, TW),
+	power("member", "06", 4, 0, TW),
+	power("terminal", "07", 8, 0, TW),
+	power("level-maintainer", "08", 30, 0, TW),
+	power("monitor", "09", 2, 0, TW),
+	power("io-port", "10", 5, 0, TW),
+	power("toggle-bus", "11", 0.5, 0, TW),
+	power("chest", "12", 4, 0.001, TW),
+	power("molecular-assembler", "13", 375, 0.001, TW),
+})
+
 --- Issue #598: with Krastorio 2 (or Krastorio 2 Spaced Out) the ME recipes and technologies follow its materials and science
 --- tiers (data-updates.lua, prototypes/compat/krastorio2.lua); off, they stay the standalone ones. Only with one of the two.
 if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then

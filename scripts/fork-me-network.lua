@@ -40,7 +40,8 @@ M.no_arrival = false
 local SWEEP_PER_STEP = 200          -- members checked for validity per slow step
 local LEDS_PER_STEP_N = 50          -- drives whose lights are redrawn per slow step
 local BASE_POWER = 120000           -- W: controller
-local MEMBER_POWER = 4000           -- W: per member without its own power connection
+--- W: per member without its own power connection (issue #680: the startup setting, through the mod-data)
+local MEMBER_POWER = (prototypes.mod_data["fork-me-network"] and prototypes.mod_data["fork-me-network"].data.member_default) or 4000
 local CELL_TAG = "fork_me_cell"
 local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, partitions = { ["slot"] = { keys } } }
 --- issue #267: a cell's light is a hidden entity on the drive's (or chest's) position whose picture variation is its bay and

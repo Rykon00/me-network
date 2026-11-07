@@ -87,6 +87,14 @@ A network that does not work stores nothing and gives nothing: interfaces and bu
 There are no channels (AE2's 8 or 32 devices per cable): any number of blocks on any cable. The controller's
 power draw grows with the network instead (see `docs/ME-REWORK.md`, "Channels: none").
 
+**Power** (issue #680): the numbers above and those of the blocks (the ME Quantum Bridge's 1 MW per end, the ME Wireless
+Link's 10 kW + 50 kW per started 32 tiles, the access point's 20 kW + 10 kW × b^(1 + b / 16), a member's 4 kW, the
+terminals' 8 kW, the level maintainer's 30 kW, the monitors' 2 kW, the ME IO Port's 5 kW, the toggle buses' 0.5 kW, the
+ME Chest's 4 kW from the grid, the Molecular Assembler's 375 kW) are the defaults of **startup mod settings** ("Power use:
+...", in kW; Settings → Mod settings → Startup). The entities, their buffers and flow limits, the descriptions, the
+controller's power breakdown and `/me-stats` follow them; the controller's own 120 kW and the crafting blocks are fixed.
+A mod that sets these numbers in its own data stage wins (Gregtorio Continued gives the Molecular Assembler its own).
+
 ## Storage cells and the ME Drive
 
 A storage cell holds items virtually; its capacity is AE2's:
