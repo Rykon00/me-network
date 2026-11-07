@@ -4521,3 +4521,27 @@ cost before (one comparison in the setter); a switch costs one visit of the bloc
 
 Both: `regressions beyond the noise: 0`. The 5000 working copy of the second run has one slow round (1.211 ms against 1.106 and
 1.147; the allocation and the visits are identical), within the noise the check measures.
+
+## Removed circuit interfaces and maintainers leave their queues at once (issue #660)
+
+A removed ME Circuit Interface or ME Level Maintainer was dropped only when its queue came to it (`visit_circuit` /
+`visit_maintainer` find the entity invalid): until then it held its place, and for the circuit interfaces that place is one of
+the "updates per second" (10) of the whole map. The mining and destroy paths now call `fork-me-circuit.lua` `M.on_removed`, which
+drops the record and its queue entry (`Sched.forget`; what the lists still hold of it is a stale entry that `Sched.run` passes
+over without counting it against the budget). The runtime map holds 13 to 14 circuit interfaces, more than the budget visits
+in their 60-tick interval, so each comes round once per 1.3 to 1.4 s; its circuit test now derives its wait from that (two rounds
+and an interval: 216 ticks at 13), and the 8 maintainers and circuit interfaces that the copy-paste test builds and removes in
+one tick (before: they stayed, 14 -> 22 circuit interfaces) no longer delay it.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; the build burst removes 1000 buses and interfaces, no
+circuit interface or maintainer, so the numbers measure that the removal paths cost nothing more):
+
+| | origin/main | #660 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.383 / 2.08 | 0.374 / 2.07 |
+| 5000: script avg / p99 (ms) | 0.972 / 2.96 | 1.017 / 2.99 |
+| Lua alloc KB per tick (1000 / 5000) | 41.70 / 61.79 | 41.71 / 61.79 |
+| burst build / remove ms (5000) | 98.0 / 85.9 | 94.7 / 87.5 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`regressions beyond the noise: 0` (the 5000 script average differs within its spread of ±0.05 to ±0.08 ms).

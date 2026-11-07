@@ -530,6 +530,8 @@ return function(H)
 	function T.tick()
 		if game.tick ~= START then return end
 		local s = game.surfaces[1]
+		local before = remote.call(C, "queues")      -- (issue #660: what the circuit module holds before the blocks)
+		before.rate, before.interval = nil, nil
 		local problems, lost, raw = build(s), {}, {}
 		local function lose(path, name, why)
 			lost[path] = lost[path] or {}
@@ -606,11 +608,9 @@ return function(H)
 					local _, e = ghost2.revive{ raise_revive = true }
 					same("cut", e)
 				else lose("cut", name, "made no ghost") end
-				--- ghost window (issue #659): the stand-in has the settings, writes them back, and the built block has them. Not
-				--- the circuit interface: the test map's circuit interfaces fill the per-second budget of their queue already, and
-				--- two more built and taken away in this tick (a stand-in and its revived ghost) delay the circuit interface test's
-				--- one beyond what that test waits (issue #660); its window is the same path as every other block's
-				if remote.call(GW, "window_of_ghost", name) and name ~= "me-circuit-interface" then
+				--- ghost window (issue #659): the stand-in has the settings, writes them back, and the built block has them (issue
+				--- #660: the circuit interface too, since a removed one leaves its queue at once)
+				if remote.call(GW, "window_of_ghost", name) then
 					local g = paste(s, bp, spot(name, i, "ghostwin"), name, true)
 					local stand = g and remote.call(GW, "stage", g, "copypaste")
 					if not stand then lose("ghost window", name, "opened no stand-in")
@@ -633,6 +633,14 @@ return function(H)
 		--- (the blocks go again)
 		for _, e in pairs(s.find_entities_filtered{ area = { { BX - 2, BY - 2 }, { BX + #BLOCKS * STEP + 2, BY + ROWS.ghostwin + 6 } } }) do
 			if e.valid and e.type ~= "character" then e.destroy{ raise_destroy = true } end
+		end
+		--- issue #660: every maintainer and circuit interface of this test was mined or destroyed (with the event, also the
+		--- stand-ins of the ghost windows): none stays in the module's records or in its queues' counts
+		local after = remote.call(C, "queues")
+		after.rate, after.interval = nil, nil
+		if serpent.line(after) ~= serpent.line(before) then
+			problems[#problems + 1] = "the removed maintainers and circuit interfaces stay in the circuit module: before "
+				.. serpent.line(before) .. ", after " .. serpent.line(after)
 		end
 		storage.copypaste383 = { done = true, lost = paths, raw = raw }
 		me_report("COPYPASTE", "ME settings through the copy-paste tool", problems, #paths == 0
