@@ -11,9 +11,11 @@
 --- * D: ghosts that go: one cancelled (deconstruction order), one destroyed without an event (as undo removes it), one built
 ---   (revive with raise_revive, as robots build): their ghost neighbours follow; an ME Interface ghost and a built ME block
 ---   next to a cable ghost (arm), the block mined (no arm), an underground cable ghost facing away (no arm) and facing it (arm);
---- * E: the corner pasted turned east onto a line (a cable has a direction that does not show; the game refused the paste,
----   red, as for a turned belt): the two line cables it lands on are turned east, the paste builds, the line keeps its shape;
----   a line of four turned east on free ground (a column 5 6 6 2); an unturned paste over a cable turned east by hand;
+--- * E (issue #673): a cable has a direction that does not show; the game refuses a paste (red) that lands a cable on a
+---   cable of another direction. What scripts/fork-me-cableturn.lua does when a player holding the corner presses R (remote
+---   `align` with the key): the line's cables turn east, the corner turned east onto it builds, the line keeps its shape;
+---   a line of four turned east on free ground (a column 5 6 6 2); a cable turned east by hand under the corner held as it is
+---   (`align` without a key: north again); V then R counts west; a blueprint of turned cables is stored north (`normalise`);
 --- * at the end every entity is removed and the module keeps nothing (`counts`).
 --- A new ghost takes its shape on the next tick (the module's queue), what goes and what a member changes at once; every
 --- step waits two ticks (on_object_destroyed comes at the end of the tick or the next one).
@@ -22,6 +24,7 @@
 --- Loaded by control.lua: require("cableshape")(H) returns { setup, tick, running }.
 
 local CS = "gregtorio-me-cableshape"
+local CT = "gregtorio-me-cableturn"
 local SURFACE = "me-cableshape-test"
 local START = 140
 local CABLE, UG = "me-cable", "me-underground-cable"
@@ -200,19 +203,40 @@ return function(H)
 		--- E: the corner pasted turned east (the blueprint rotated) onto a line y = 10: (1,10) and (2,10) on the line, a ghost
 		--- at (2,11); and a blueprint line of four turned east on free ground (a column at x = 10)
 		elseif step == 9 then
+			local turn = remote.interfaces[CT] ~= nil
+			expect(turn, "no remote interface " .. CT)
 			line(10, 0, 4)
+			if turn then remote.call(CT, "align", s, { 2, 11 }, { "fork-me-cable-rotate" }) end
 			st.e = paste(CORNER, { 2, 11 }, D.east)
 			expect(#st.e == 1, "E: the turned paste onto the line made " .. #st.e .. " ghosts, wanted 1")
 			local turned = {}
 			for x = 0, 4 do local c = at(x, 10) turned[#turned + 1] = tostring(c and c.direction) end
-			expect(table.concat(turned, " ") == "0 4 4 0 0", "E: the line's directions after the turned paste: "
-				.. table.concat(turned, " ") .. ", wanted 0 4 4 0 0 (the two the corner lands on turned east)")
+			expect(table.concat(turned, " ") == "4 4 4 4 4", "E: the line's directions after R: "
+				.. table.concat(turned, " ") .. ", wanted 4 4 4 4 4")
+			--- a blueprint of the turned line is stored north
+			local inv = game.create_inventory(1)
+			inv.insert{ name = "blueprint" }
+			inv[1].create_blueprint{ surface = s, force = "player", area = { { 0.2, 10.2 }, { 4.8, 10.8 } } }
+			local before = inv[1].get_blueprint_entities() or {}
+			local d0 = before[1] and before[1].direction
+			if turn then remote.call(CT, "normalise", inv[1]) end
+			local after = inv[1].get_blueprint_entities() or {}
+			local left = 0
+			for _, be in pairs(after) do if (be.direction or 0) ~= 0 then left = left + 1 end end
+			expect(#after == 5 and d0 == D.east and left == 0, "E: a blueprint of the turned line: " .. #after .. " cables, the first "
+				.. tostring(d0) .. " before, " .. left .. " not north after, wanted 5, 4 and 0")
+			inv.destroy()
+			if turn then
+				local _, d = remote.call(CT, "align", s, { 40, 40 }, { "fork-me-cable-flip-vertical", "fork-me-cable-rotate" })
+				expect(d == D.west, "E: V then R counts " .. tostring(d) .. ", wanted west (12)")
+			end
 			st.e2 = paste({ { CABLE, 0.5, 0.5, 3 }, { CABLE, 1.5, 0.5, 11 }, { CABLE, 2.5, 0.5, 11 }, { CABLE, 3.5, 0.5, 9 } }, { 10, 15 }, D.east)
 			expect(#st.e2 == 4, "E: the turned line on free ground made " .. #st.e2 .. " ghosts, wanted 4")
 			--- E3: a cable turned by hand (east) under a paste as it is (north): x 0..2 at y = 13, a ghost at (2,13) (the built
 			--- (1,13) keeps its real shape: no arm to the ghost)
 			cable(0, 13, nil, D.east)
 			cable(1, 13)
+			if turn then remote.call(CT, "align", s, { 1.5, 13.5 }, {}) end
 			st.e3 = paste({ { CABLE, 0.5, 0.5, 3 }, { CABLE, 1.5, 0.5, 11 }, { CABLE, 2.5, 0.5, 9 } }, { 1.5, 13.5 })
 			expect(#st.e3 == 1, "E3: the paste over a cable turned by hand made " .. #st.e3 .. " ghosts, wanted 1")
 		elseif step == 10 then

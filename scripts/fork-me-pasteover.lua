@@ -124,6 +124,7 @@ local function resolve(bp, player)
 	end
 	return bp
 end
+M.resolve = resolve                      -- (issue #673: scripts/fork-me-cableturn.lua reads the held blueprint)
 
 --- The entities and tiles of the blueprint `bp` (from resolve), and whether M.layout places it (not when its placement
 --- follows other rules: rails, which keep a grid of two tiles; absolute snapping).
@@ -185,7 +186,7 @@ function M.paste(bp, surface, force, at, direction, fh, fv, player)
 	return apply_tagged(entities, tiles, tagged, surface, force, at, direction, fh, fv, player)
 end
 
---- issue #670: function(surface, entities, place, at, direction, fh, fv), set by scripts/fork-me-cableshape.lua: the cables of a pasted
+--- issue #670: function(surface, entities, place, at), set by scripts/fork-me-cableshape.lua: the cables of a pasted
 --- blueprint (`place`: function(be) -> position, or nil when M.layout does not place this blueprint)
 M.cable_hook = nil
 
@@ -205,7 +206,7 @@ function M.note_cables(bp, surface, at, direction, fh, fv, player, entities, til
 			return layout(be)
 		end
 	end
-	M.cable_hook(surface, entities, place, at, direction, fh, fv)
+	M.cable_hook(surface, entities, place, at)
 end
 
 --- on_pre_build: a player places the blueprint (or copy) in the cursor
