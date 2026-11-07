@@ -4592,3 +4592,21 @@ five ticks after it; the maintainer's whole base has 1767 cables. Without ghosts
 | items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
 
 `regressions beyond the noise: 0`.
+
+## Turned cable blueprints over ME Cable (issue #673)
+
+**What changed:** a new module, scripts/fork-me-cableturn.lua. While a player holds a blueprint with cable, one
+`find_entities_filtered` over the cables within 128 tiles and a direction write for each one that differs: when the
+blueprint comes into the cursor, on every rotate or flip key, and after the player moved 32 tiles. Nothing per tick and nothing
+for players without such a blueprint (the position event returns at once). `on_player_setup_blueprint` reads and, only when a
+cable is stored turned, writes the new blueprint's entities once.
+
+**Measured** (the remote `align` on the server of a real-client test, `helpers.create_profiler`): 16 200 cables within the
+radius (every second tile of 180 x 180):
+
+| ms per key | #673 |
+|---|---|
+| all 16 200 turned | 21.9 |
+| none to turn (the search only) | 14.9 to 16.7 |
+
+The bench has no players: none of this runs there.
