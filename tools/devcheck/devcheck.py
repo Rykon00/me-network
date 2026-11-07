@@ -1212,6 +1212,7 @@ RUNTIME_TESTS = (
     ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
     ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
+    ("CABLESHAPE", "ME Cable shapes from blueprints and of ghosts (issue #670)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
@@ -1553,6 +1554,7 @@ BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua 
 CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
 BURST_TICKS = 330               # after the latency probes: the build burst (build, remove, plain build, plain remove, issue #538: ghosts)
+CABLE_GHOST_TICKS = 260         # issue #670: after the burst, the cable ghost steps (ticks 330 to 580 of the burst)
 GHOST_WAIT = 600                # issue #538: the ghost paste waits for the allocation meter's ticks (ALLOC_FROM + ALLOC_TICKS)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
 # the functions the profile times, per module of the instrumented copy (local functions through their upvalue,
@@ -1944,6 +1946,8 @@ def bench_config(a, scene, size, variant, profile):
            "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0,
            # issue #538: that many wall ghosts pasted in one tick (and removed in one) in that logistic network, after the burst
            "ghosts": (getattr(a, "ghosts", 0) or 0) if scene == "me" else 0,
+           # issue #670: that many ME Cable ghosts pasted, removed, pasted again and built, each in one tick, after the burst
+           "cable_ghosts": (getattr(a, "cable_ghosts", 0) or 0) if scene == "me" else 0,
            # issue #603: that many characters with the ME Wireless Module and logistic requests at an access point
            "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0,
            # issue #639: every import and export bus with a circuit condition and a logistic condition (in the check list)
@@ -1980,7 +1984,7 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
-        + (GHOST_WAIT if cfg.get("ghosts") else 0)
+        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
     if not re.search(r"Performed (\d+) updates", log):
         print(f"  {label}: did not run\n{load_errors(log) or ''}")
@@ -2356,6 +2360,8 @@ def print_bench(results):
     for s in results["scenes"]:
         b = s.get("burst") or {}
         for what in ("build", "remove", "plain-build", "plain-remove", "asm-build", "asm-remove", "ghost-paste", "ghost-remove",
+                     "cable-ghost-paste", "cable-ghost-paste-after", "cable-ghost-remove", "cable-ghost-remove-after",
+                     "cable-ghost-paste2", "cable-ghost-build", "cable-ghost-build-after",
                      "ghost-after"):
             v = b.get(what)
             if v:
@@ -2611,6 +2617,8 @@ def main():
                    "logistic network that ask for items it holds, items only the ME network has and items nobody has")
     p.add_argument("--ghosts", type=int, default=0, metavar="N", help="issue #538: with --logistic, N wall ghosts pasted in one tick "
                    "in the logistic network after the build burst, then removed in one tick")
+    p.add_argument("--cable-ghosts", type=int, default=0, metavar="N", help="issue #670: N ME Cable ghosts in a square after the "
+                   "build burst: pasted in one tick, removed in one, pasted again and built in one (with the ticks after)")
     p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
                    "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")

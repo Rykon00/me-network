@@ -2470,6 +2470,79 @@ local function burst_remove(list)
 	return n
 end
 
+--- me-network issue #670: `C.cable_ghosts` ME Cable ghosts in a square north of the burst (every ghost has up to four ghost
+--- neighbours), pasted in one tick (raise_built, as a paste raises on_built_entity per
+--- ghost) and removed in one tick (on_object_destroyed comes at the end of that tick or the next: the "-after" lines), then
+--- pasted again and built in one tick (revive with raise_revive, as robots build), the built cables removed
+local function cable_ghost_tick(b, t)
+	local s = surface()
+	local n = C.cable_ghosts
+	local side = math.ceil(math.sqrt(n))
+	local function paste(what)
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, side - 1 do
+			for x = 0, side - 1 do
+				if k < n then
+					k = k + 1
+					local g = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { p1(X0 - 1 + x, BURST_Y - 60 - y) },
+						force = "player", raise_built = true }
+					if g then made[#made + 1] = g end
+				end
+			end
+		end
+		p.stop()
+		b.cable_ghosts = made
+		log({ "", "DEVCHECK-BENCH-BURST " .. what .. " ", #made, " ", game.tick, " ", p })
+	end
+	local function after(what)
+		local p = helpers.create_profiler()
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST " .. what .. " 0 ", game.tick, " ", p })
+	end
+	if t == 330 then
+		s.request_to_generate_chunks({ X0 + side / 2, BURST_Y - 60 - side / 2 }, math.ceil(side / 64) + 2)
+		s.force_generate_chunk_requests()
+	elseif t == 331 then
+		paste("cable-ghost-paste")
+	elseif t == 332 then
+		after("cable-ghost-paste-after")
+	elseif t == 390 then
+		local p = helpers.create_profiler()
+		local k = 0
+		for _, g in ipairs(b.cable_ghosts or {}) do
+			if g.valid then
+				g.destroy()
+				k = k + 1
+			end
+		end
+		p.stop()
+		b.cable_ghosts = nil
+		log({ "", "DEVCHECK-BENCH-BURST cable-ghost-remove ", k, " ", game.tick, " ", p })
+	elseif t == 391 then
+		after("cable-ghost-remove-after")
+	elseif t == 450 then
+		paste("cable-ghost-paste2")
+	elseif t == 510 then
+		local p = helpers.create_profiler()
+		local built = {}
+		for _, g in ipairs(b.cable_ghosts or {}) do
+			if g.valid then
+				local _, e = g.revive{ raise_revive = true }
+				if e then built[#built + 1] = e end
+			end
+		end
+		p.stop()
+		b.cable_ghosts = built
+		log({ "", "DEVCHECK-BENCH-BURST cable-ghost-build ", #built, " ", game.tick, " ", p })
+	elseif t == 511 then
+		after("cable-ghost-build-after")
+	elseif t == 570 then
+		burst_remove(b.cable_ghosts or {})
+		b.cable_ghosts = nil
+	end
+end
+
 local function on_burst_tick()
 	local b = storage.b
 	local t = game.tick - b.burst_t0
@@ -2605,7 +2678,10 @@ local function on_burst_tick()
 		local p = helpers.create_profiler()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST ghost-after 0 ", game.tick, " ", p })
-	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area)) then   -- (after #560's assembler burst)
+	elseif (C.cable_ghosts or 0) > 0 and t >= 330 and t <= 580 then
+		cable_ghost_tick(b, t)
+	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area))
+		and (t > 580 or (C.cable_ghosts or 0) == 0) then   -- (after #560's assembler burst, and #670's cable ghosts)
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")

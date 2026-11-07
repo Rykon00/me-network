@@ -167,6 +167,14 @@ end
 
 function M.kind_of(name) return kinds()[name] end
 
+--- issue #670: the node of the member `entity` (nil when it is none: not registered, or marked for deconstruction)
+function M.node_of(entity)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[entity.unit_number]
+	if node and node.entity == entity then return node end
+	return nil
+end
+
 local function cell_spec(name) return mod_data().cells[name] end
 M.cell_spec = cell_spec
 --- every storage cell's spec by item name (issue #37: the most kinds a cell of each kind takes)
@@ -311,6 +319,10 @@ local function connects(a, b)
 	if b.kind == "underground" and side_of(b, a) ~= DIR_BIT[b.dir] then return false end
 	return true
 end
+M.side_of, M.connects = side_of, connects       -- (issue #670: the shapes of cable ghosts, scripts/fork-me-cableshape.lua)
+--- issue #670: function(entity, node) called when a member joined or left the graph (set by scripts/fork-me-cableshape.lua:
+--- the cable ghosts next to it follow)
+M.ghost_hook = nil
 
 --- render objects of an older version (a dashed line between paired ends): destroyed when the graph is rebuilt
 local function clear_link(node)
@@ -368,6 +380,12 @@ local function update_cable(s, node)
 		end
 	end
 	node.entity.graphics_variation = mask + 1
+end
+
+--- issue #670: the built cable `entity` takes its shape from the graph again (a paste over it gave it the blueprint's)
+function M.reshape_cable(entity)
+	local node = M.node_of(entity)
+	if node then update_cable(storage.fork_me_net, node) end
 end
 
 local recompute
@@ -591,6 +609,7 @@ local function add_node(s, entity, kind)
 	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
+	if M.ghost_hook then M.ghost_hook(entity, node) end   -- (issue #670)
 	if #order == 1 and not M.STATUS_KINDS[kind] then                  -- (issue #442: the creative energy cell too)
 		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
@@ -651,6 +670,7 @@ function remove_node_graph(s, unit)
 	end
 	table.sort(neighbours)
 	for _, u in ipairs(neighbours) do update_cable(s, s.nodes[u]) end
+	if M.ghost_hook and node.entity.valid then M.ghost_hook(node.entity, node) end   -- (issue #670)
 	if not net then return end
 	net.nodes[unit] = nil
 	net.n = net.n - 1
