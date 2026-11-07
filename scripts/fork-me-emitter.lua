@@ -396,7 +396,7 @@ G.on("em_key", function(event, player, el)
 	end
 	local d = M.get(entity)
 	if d.energy then return end
-	picker.open(player, { callback = "em_key", data = { unit = entity.unit_number }, kinds = { item = true, fluid = true },
+	W.pick(player, { callback = "em_key", data = { unit = entity.unit_number }, kinds = { item = true, fluid = true },
 		preset = picker.preset_of(d.key), quality = true })
 end)
 
@@ -510,7 +510,7 @@ G.on("aem_key", function(event, player, el)
 		return
 	end
 	local r = M.get(entity).rows[i] or {}
-	picker.open(player, { callback = "aem_key", data = { unit = entity.unit_number, row = i }, kinds = { item = true, fluid = true },
+	W.pick(player, { callback = "aem_key", data = { unit = entity.unit_number, row = i }, kinds = { item = true, fluid = true },
 		preset = picker.preset_of(r.key), quality = true })
 end)
 

@@ -1098,6 +1098,8 @@ qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me
 --- me-network issue #602: the terminal's sort preference, sorts by mod and tier, rows kept at 0 (sortprefs.lua)
 sortprefs602 = require("sortprefs")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
+--- me-network issue #677: config slots take the item in the cursor (cursorslot.lua)
+cursorslot677 = require("cursorslot")({ me_place = me_place, power = power, me_report = me_report, me_connect = me_connect })
 --- me-network issue #603: the wireless refill (wrefill.lua)
 wrefill603 = require("wrefill")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
@@ -1367,6 +1369,7 @@ local function tests_running()
 	entries50.running(check)
 	qualityterm514.running(check)
 	sortprefs602.running(check)
+	cursorslot677.running(check)
 	wrefill603.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
@@ -2374,6 +2377,7 @@ script.on_nth_tick(10, function()
 	entries50.tick()
 	qualityterm514.tick()
 	sortprefs602.tick()
+	cursorslot677.tick()
 	wrefill603.tick()
 	holderlists59.tick()
 	crafter59.tick()
@@ -5310,6 +5314,7 @@ script.on_init(function()
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sortprefs602.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cursorslot677.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end

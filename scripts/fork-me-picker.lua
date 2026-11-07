@@ -403,6 +403,16 @@ function M.quality_view(frame, bottom, qualities, with_temperature, chosen)
 	return out
 end
 
+--- Issue #677: `choice` goes to the callback of a picker that `spec` would open (as M.open takes it), without opening one: a slot
+--- clicked with an item in the cursor. Any picker of the player closes. False when no callback has that name.
+function M.choose(player, spec, choice)
+	local cb = confirms[spec.callback]
+	if not cb then return false end
+	M.close(player)
+	cb(player, spec.data or {}, choice)
+	return true
+end
+
 function M.close(player)
 	local frame = player.gui.screen[M.NAME]
 	if frame and frame.valid then frame.destroy() end
