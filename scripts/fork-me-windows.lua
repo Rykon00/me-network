@@ -2009,6 +2009,8 @@ local function open_interface(player, entity, opts)
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_if_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 300
 	scroll.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
+	content.add{ type = "button", caption = { "fork-me-gui.interface-clear" }, tooltip = { "fork-me-gui.interface-clear-tooltip" },
+		tags = G.act("if_clear") }                          -- (issue #678)
 	G.heading(content, { "fork-me-gui.interface-sides" })
 	content.add{ type = "flow", name = "fork_me_if_sides", direction = "vertical" }
 	G.heading(content, { "fork-me-gui.interface-contents" })
@@ -2230,6 +2232,23 @@ picker.on_confirm("if_item", function(player, data, choice)
 	local old = choice.cursor and io.get_interface_config(entity)[data.index]
 	if not M.set_interface_choice(entity, data.index, choice, old and old.amount or nil) then refused_choice(player) end
 	G.refresh_one(player)
+end)
+
+--- Issue #678: "Clear": every config row emptied (the amounts and the keys, also the rows beyond the cards' rows), the
+--- sides tied to a row import again, a side that is off stays off. False when `entity` is no interface.
+function M.clear_interface(entity)
+	if not io.get_interface_config(entity) then return false end
+	local sides = {}
+	for d, v in pairs(io.get_interface_sides(entity) or {}) do
+		if v == "off" then sides[d] = "off" end
+	end
+	return io.set_interface_config(entity, {}, sides)
+end
+
+G.on("if_clear", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity and M.clear_interface(entity) then G.refresh_one(player) end
 end)
 
 G.on("if_amount", function(event, player, el)
@@ -2987,6 +3006,7 @@ remote.add_interface("gregtorio-me-gui", {
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,
 	set_interface_choice = function(entity, i, choice, amount) return M.set_interface_choice(entity, i, choice, amount) end,
+	clear_interface = function(entity) return M.clear_interface(entity) end,       -- (issue #678: the window's "Clear")
 	--- issue #28, since #542 the actions of the inventory element (on_gui_inventory_action): `mode` "shift" (stack_transfer),
 	--- "control" (inventory_transfer), "shift-right" (stack_split), "control-right" (inventory_split) or "remote" (a plain
 	--- click in remote view) on slot `slot` of an inventory standing for the player's, in `entity`'s window (or the window
