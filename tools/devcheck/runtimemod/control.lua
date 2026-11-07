@@ -819,7 +819,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
-	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
+	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, control + click all and half (issue #676), store cursor and inventory, search, sort, unstorable")
 end
 
 --- an ME Drive with four cells of `tier` (default 16k; `fluid`: fluid cells) at x, y, holding `items` ({ name -> count })
