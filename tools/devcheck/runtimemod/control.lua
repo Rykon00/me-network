@@ -1136,6 +1136,8 @@ lifbuild538 = require("lifbuild")({ me_place = me_place, cable_row = cable_row, 
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- Task-Ingame #661 (issue #659): the ME windows of ghosts, built by construction robots (ghostbuild.lua)
 ghostbuild661 = require("ghostbuild")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #670: the shapes of ME Cable from blueprints and of cable ghosts (cableshape.lua)
+cableshape670 = require("cableshape")({ me_report = me_report })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1404,6 +1406,7 @@ local function tests_running()
 	lifauto537.running(check)
 	lifbuild538.running(check)
 	ghostbuild661.running(check)
+	cableshape670.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -2410,6 +2413,7 @@ script.on_nth_tick(10, function()
 	lifauto537.tick()
 	lifbuild538.tick()
 	ghostbuild661.tick()
+	cableshape670.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -5343,6 +5347,7 @@ script.on_init(function()
 	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(ghostbuild661.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(cableshape670.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wrefill603.setup(s)) do fails[#fails + 1] = f end

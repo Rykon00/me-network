@@ -11,6 +11,8 @@
 ---   * Where a blueprint entity lands: M.layout, as the game places a blueprint; the runtime test (copypaste.lua) checks it
 ---     against the ghosts of LuaItemStack.build_blueprint in four directions (that call takes no flip: the flips follow
 ---     the same rule untested). Blueprints with rails or absolute snapping place by other rules and are left alone.
+---   * Issue #670: the cables of every pasted blueprint go to M.cable_hook (scripts/fork-me-cableshape.lua: the game gives the
+---     cables standing where they land the blueprint's shape).
 ---   * Only tags of this mod count: a blueprint entity without them changes nothing (a blank block pasted over a
 ---     configured one keeps it configured). The active blueprint of a book in the cursor counts too.
 --- No state.
@@ -96,17 +98,16 @@ function M.layout(entities, tiles, at, direction, fh, fv)
 	end
 end
 
---- The blueprint `bp` (a blueprint item, a book item's active blueprint, or a blueprint record, also a book's), unless its
---- placement follows other rules than M.layout's (rails, which keep a grid of two tiles; absolute snapping): its entities,
---- its tiles and those of its entities with tags of this mod (nil when there are none). `player`: whose cursor holds it.
-local function readable(bp, player)
+--- The blueprint `bp` itself (a blueprint item, a book item's active blueprint, or a blueprint record, also a book's), set
+--- up, or nil. `player`: whose cursor holds it.
+local function resolve(bp, player)
 	if not (bp and bp.valid) then return nil end
 	if bp.object_name == "LuaItemStack" then
 		if not bp.valid_for_read then return nil end
 		if bp.is_blueprint_book then
 			local inv = bp.get_inventory(defines.inventory.item_main)
 			local inner = inv and bp.active_index and inv[bp.active_index]
-			if inner then return readable(inner, player) end
+			if inner then return resolve(inner, player) end
 			return nil
 		end
 		if not (bp.is_blueprint and bp.is_blueprint_setup()) then return nil end
@@ -114,33 +115,47 @@ local function readable(bp, player)
 		if bp.type == "blueprint-book" then
 			local i = player and bp.get_active_index(player)
 			local inner = i and bp.contents and bp.contents[i]
-			if inner then return readable(inner, player) end
+			if inner then return resolve(inner, player) end
 			return nil
 		end
 		if bp.type ~= "blueprint" or not bp.is_blueprint_setup() then return nil end
 	else
 		return nil
 	end
-	if bp.blueprint_snap_to_grid then return nil end
+	return bp
+end
+
+--- The entities and tiles of the blueprint `bp` (from resolve), and whether M.layout places it (not when its placement
+--- follows other rules: rails, which keep a grid of two tiles; absolute snapping).
+local function contents(bp)
 	local entities = bp.get_blueprint_entities() or {}
+	local placeable = not bp.blueprint_snap_to_grid
+	if placeable then
+		for _, be in pairs(entities) do
+			local p = prototypes.entity[be.name]
+			if not p or p.type:find("rail", 1, true) then
+				placeable = false
+				break
+			end
+		end
+	end
+	return entities, bp.get_blueprint_tiles() or {}, placeable
+end
+
+--- the entities of `entities` with tags of this mod (nil when there are none)
+local function tagged_of(entities)
 	local tagged
 	for _, be in pairs(entities) do
-		local p = prototypes.entity[be.name]
-		if not p or p.type:find("rail", 1, true) then return nil end
 		if has_tag(be.tags) then
 			tagged = tagged or {}
 			tagged[#tagged + 1] = be
 		end
 	end
-	if not tagged then return nil end
-	return entities, bp.get_blueprint_tiles() or {}, tagged
+	return tagged
 end
 
---- Paste `bp` at `at` (direction, flips) on `surface` for `force` (`player`: whose cursor, for a book record): every block of
---- a tagged blueprint entity's name standing where it lands takes its settings. Returns the number of blocks that did.
-function M.paste(bp, surface, force, at, direction, fh, fv, player)
-	local entities, tiles, tagged = readable(bp, player)
-	if not tagged then return 0 end
+--- every block of a tagged blueprint entity's name standing where it lands takes its settings; returns how many did
+local function apply_tagged(entities, tiles, tagged, surface, force, at, direction, fh, fv, player)
 	local place = M.layout(entities, tiles, at, direction, fh, fv)
 	local turn = math.floor(((direction or 0) % 16) / 4) * 4
 	local n = 0
@@ -159,6 +174,40 @@ function M.paste(bp, surface, force, at, direction, fh, fv, player)
 	return n
 end
 
+--- Paste `bp` at `at` (direction, flips) on `surface` for `force` (`player`: whose cursor, for a book record): every block of
+--- a tagged blueprint entity's name standing where it lands takes its settings. Returns the number of blocks that did.
+function M.paste(bp, surface, force, at, direction, fh, fv, player)
+	bp = resolve(bp, player)
+	if not bp then return 0 end
+	local entities, tiles, placeable = contents(bp)
+	local tagged = placeable and tagged_of(entities)
+	if not tagged then return 0 end
+	return apply_tagged(entities, tiles, tagged, surface, force, at, direction, fh, fv, player)
+end
+
+--- issue #670: function(surface, entities, place, at), set by scripts/fork-me-cableshape.lua: the cables of a pasted
+--- blueprint (`place`: function(be) -> position, or nil when M.layout does not place this blueprint)
+M.cable_hook = nil
+
+--- the cables of `bp` pasted at `at` go to M.cable_hook (on_pre_build; the runtime test through its remote interface)
+function M.note_cables(bp, surface, at, direction, fh, fv, player, entities, tiles, placeable)
+	if not M.cable_hook then return end
+	if not entities then
+		bp = resolve(bp, player)
+		if not bp then return end
+		entities, tiles, placeable = contents(bp)
+	end
+	local place
+	if placeable then
+		local layout
+		place = function(be)
+			layout = layout or M.layout(entities, tiles, at, direction, fh, fv)
+			return layout(be)
+		end
+	end
+	M.cable_hook(surface, entities, place, at)
+end
+
 --- on_pre_build: a player places the blueprint (or copy) in the cursor
 function M.on_pre_build(event)
 	local player = game.get_player(event.player_index)
@@ -166,8 +215,14 @@ function M.on_pre_build(event)
 	local bp = player.cursor_record
 	if not (bp and bp.valid) then bp = player.cursor_stack end
 	--- a blueprint that another mod changed may be unreadable: never break the paste
-	pcall(M.paste, bp, player.surface, player.force, event.position, event.direction, event.flip_horizontal, event.flip_vertical,
-		player)
+	local ok, b = pcall(resolve, bp, player)
+	if not (ok and b) then return end
+	local ok2, entities, tiles, placeable = pcall(contents, b)
+	if not ok2 then return end
+	local at, dir, fh, fv = event.position, event.direction, event.flip_horizontal, event.flip_vertical
+	local tagged = placeable and tagged_of(entities)
+	if tagged then pcall(apply_tagged, entities, tiles, tagged, player.surface, player.force, at, dir, fh, fv, player) end
+	pcall(M.note_cables, b, player.surface, at, dir, fh, fv, player, entities, tiles, placeable)
 end
 
 --- the runtime test (copypaste.lua): the landing of a blueprint entity, and a paste as on_pre_build makes it

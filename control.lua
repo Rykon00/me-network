@@ -50,6 +50,8 @@ local names = require("scripts.fork-me-names")
 require("scripts.fork-me-stats")
 --- issue #383: a blueprint pasted over ME blocks that stand there already
 local pasteover = require("scripts.fork-me-pasteover")
+--- issue #670: the shape of ME Cable pasted over cable, and of cable ghosts
+local cableshape = require("scripts.fork-me-cableshape")
 --- issue #386: the ME IO Port (a cell emptied into the network or filled from it; its own queue)
 local fork_ioport = require("scripts.fork-me-ioport")
 --- issue #531: the ME Logistic Interface (offers to the logistic robots, asks them for what the network lacks, takes their
@@ -112,6 +114,7 @@ local function on_built(entity, tags, event)
 	fork_qbridge.on_built(entity, tags)
 	fork_p2p.on_built(entity, tags)                           -- (issue #629)
 	fork_conn.on_built(entity, tags)                          -- (issues #412, #628: the condition; an old connector hands over)
+	cableshape.on_built(entity)                               -- (issue #670: an ME ghost recorded, shaped on the next tick)
 	cabledrag.on_built(entity, event)                         -- (last: a dragged cable may become an underground end)
 end
 
@@ -142,6 +145,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_qbridge.on_built(event.destination, nil, event.source)
 	fork_p2p.on_built(event.destination, nil, event.source)   -- (issue #629: the source's frequency and role)
 	fork_conn.on_built(event.destination, nil, event.source)
+	cableshape.on_built(event.destination)                    -- (issue #670: a cloned ME ghost)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -276,7 +280,10 @@ end, REMOVED_FILTER)
 script.on_event(defines.events.on_marked_for_upgrade, function(event) fork_lc.on_marked_for_upgrade(event) end)
 script.on_event(defines.events.on_cancelled_upgrade, function(event) fork_lc.on_cancelled_upgrade(event) end)
 script.on_event(defines.events.on_post_entity_died, function(event) fork_lc.on_post_entity_died(event) end)
-script.on_event(defines.events.on_object_destroyed, function(event) fork_lc.on_object_destroyed(event) end)
+script.on_event(defines.events.on_object_destroyed, function(event)
+	fork_lc.on_object_destroyed(event)
+	cableshape.on_object_destroyed(event)                     -- (issue #670: an ME ghost gone, its cable ghost neighbours follow)
+end)
 script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
@@ -298,6 +305,7 @@ local function on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
+	cableshape.on_tick(tick)                                  -- (issue #670: queued ghosts shaped, the cables under a paste)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
@@ -321,6 +329,7 @@ script.on_event(defines.events.on_player_rotated_entity, function(event)
 	fork_net.on_rotated(event.entity)
 	fork_sbus.on_rotated(event.entity)
 	fork_p2p.on_rotated(event.entity)
+	cableshape.on_rotated(event.entity)                       -- (issue #670: a rotated underground cable ghost)
 end)
 
 --- Issue #146: saves from before 0.5.0 are no longer converted (the old drives, controller and interface of before the
@@ -356,6 +365,7 @@ script.on_init(function()
 	wired.migrate()                                           -- (issue #628: old buses and providers, before the graph)
 	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
+	cableshape.migrate()                                      -- (issue #670: ME ghosts of a handed-over save)
 end)
 
 script.on_configuration_changed(function(data)
@@ -386,6 +396,7 @@ script.on_configuration_changed(function(data)
 	--- (the only map scan), then the modules that read it
 	fork_net.migrate_underground_direction()
 	fork_net.rebuild()
+	cableshape.migrate()                                      -- (issue #670: the ME ghosts registered, cable ghosts shaped)
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
 	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil
 	fork_me.on_configuration_changed()

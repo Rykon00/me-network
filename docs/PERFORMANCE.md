@@ -4545,3 +4545,50 @@ circuit interface or maintainer, so the numbers measure that the removal paths c
 | items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
 
 `regressions beyond the noise: 0` (the 5000 script average differs within its spread of ±0.05 to ±0.08 ms).
+
+## The shape of ME Cable from blueprints and of cable ghosts (issue #670)
+
+A cable ghost now takes the shape it will have when built, and the cables under a paste take their shape from the graph again
+(`scripts/fork-me-cableshape.lua`). The costs:
+
+* **A ghost made** (a paste raises one on_built_entity per ghost): the ghost is recorded (its tile box, kind, direction, the
+  shape last set; `script.register_on_object_destroyed`) in `storage.fork_me_cableshape.g`, put into a lookup by tile (`IDX`,
+  derived, built again on the first use after a load) and queued. On the next tick the queue is shaped, at most 1000 ghosts a
+  tick: one `find_entities_filtered` for built members per chunk of the batch (not per ghost: the first version searched per
+  ghost, members and ghosts together, and cost 380 ms for the paste below), the ghost neighbours from the lookup. Ghosts of the
+  batch get no arm from their neighbours of the batch (they compute their whole shape), and the shape is written only when it
+  changes (the last value is kept in the record).
+* **A ghost gone** (on_object_destroyed, end of the tick or the next): out of the lookup; the live cable ghosts next to it (the
+  lookup; a gone one is skipped, its own event comes) take the arm toward its box, searched for members only when there is one.
+* **A member that joins or leaves the graph** (`N.ghost_hook` from add_node and remove_node_graph): nothing while its surface
+  has no ME ghost (one table read); else the lookup of the tiles around it, no search.
+* **A paste** (on_pre_build): the area its cables land on is noted; on the next tick the built cables and cable ghosts there
+  take their shape again (one search each).
+
+**Bench** (`bench --cable-ghosts N`, new): after the build burst N ME Cable ghosts in a square (every ghost has up to four
+ghost neighbours) are pasted in one tick (raise_built, as a paste raises on_built_entity per ghost), removed in one tick
+(`destroy`, as undo removes them; the removal's on_object_destroyed is in the tick's whole update), pasted again and built in one
+tick (revive with raise_revive, as robots build: robots spread this over many ticks). `bench --sizes 1000 --runs 1
+--cable-ghosts 5000`, origin/main four runs, the working copy two (the final version), in turns:
+
+| ms (5000 cable ghosts) | origin/main | #670 |
+|---|---|---|
+| paste: tick script | 112 to 117 | 162 to 168 |
+| the tick after the paste (the first 1000 shaped) | 1.4 | 16 to 18 |
+| remove: tick script / whole update | 4.4 / 5.5 | 5.8 / 49 |
+| build: tick script / whole update | 264 to 280 / 265 to 281 | 361 to 374 / 404 to 418 |
+
+So a 5000-cable paste costs about 50 ms more in its own tick (10 us per ghost: the record) and then about 17 ms on each of the
+five ticks after it; the maintainer's whole base has 1767 cables. Without ghosts nothing changes:
+
+`bench --check origin/main` (sizes 100, 1000, 5000, three rounds in turns):
+
+| | origin/main | #670 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.385 / 2.12 | 0.386 / 2.13 |
+| 5000: script avg / p99 (ms) | 1.006 / 3.03 | 1.010 / 3.00 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| burst build / remove ms (5000) | 97.7 / 84.6 | 97.6 / 85.2 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`regressions beyond the noise: 0`.
