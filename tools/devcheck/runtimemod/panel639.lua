@@ -17,9 +17,11 @@
 ---     logistic condition fails as well (the circuit one is named first), and P in lock mode "while it holds" says the logistic
 ---     one holds; the roboport removed: E1, S, M and P (back in the first mode) say no logistic network covers them.
 ---   * Task-Ingame #658: an ME Interface I (connected with "iron plate > 100") says its logistic condition does not hold, and is
----     off once the roboport is gone (its line then still says "Working.": issue #664); E2 with its circuit condition holding and its logistic one failing names the
+---     off once the roboport is gone (issue #664: its line then names the missing network); E2 with its circuit condition holding and its logistic one failing names the
 ---     logistic condition (its panel: the circuit condition holds, the logistic one not); the combinator on again with 150
 ---     plates: E2 says "Working."; the line names the missing logistic network at most 300 ticks after the roboport went.
+---   * Issue #664, an interface with nothing to do (I, no rows) switched while it works: the roboport built again, I is on and
+---     says "Working."; wired to K with "A > 0" it stays so, K off: it says its circuit condition does not hold, K on: "Working.".
 --- Loaded by control.lua: require("panel639")(H) returns { setup, tick, running }.
 
 local IO, CONN, C, GUI = "gregtorio-me-io", "gregtorio-me-connector", "gregtorio-me-circuit", "gregtorio-me-gui"
@@ -250,8 +252,9 @@ return function(H)
 			if wait < 320 then return end           -- (the checks' lookup is at most 300 ticks old)
 			expect(st.seen and st.seen <= 300, "E1's line names the missing logistic network " .. tostring(st.seen)
 				.. " ticks after the roboport went (at most 300)")
-			--- (I is switched off now, but its line still says "Working.": issue #664; its check comes with the fix)
 			expect(off(I), "I, connected outside every network, is not off: " .. line(remote.call(CONN, "levels", I)))
+			--- issue #664: the interface had been working and has nothing to do (no rows): its line follows the switch-off
+			status(I, "fork-me-net.bus-no-logistic-network", "I (no logistic network, switched off while it was working)")
 			expect(off(E1) and remote.call(CONN, "levels", E1)[2] == false, "E1, connected outside every network, is off: "
 				.. line(remote.call(CONN, "levels", E1)))
 			local p = side(E1)
@@ -267,6 +270,49 @@ return function(H)
 			status(S, "fork-me-net.storage-bus-no-logistic-network", "S (no logistic network)")
 			status(M, "fork-me-circuit.maintainer-no-logistic-network", "M (no logistic network)")
 			status(P, "fork-me-gui.provider-locked-low-no-logistic-network", "P (no logistic network)")
+			--- issue #664: the logistic network comes back (150 plates, "iron plate > 100" holds): I is switched on again
+			local fails = {}
+			me_place(s, fails, "logistic condition", "roboport", BX + 3, BY + 10)
+			for _, f in pairs(fails) do expect(false, f) end
+			st.phase, st.tick = "regain", game.tick
+			return
+		end
+
+		--- issue #664: the switch on and off of an interface with nothing to do, by its logistic and its circuit condition
+		if st.phase == "regain" then
+			if wait < 320 then return end           -- (the checks' lookup is at most 300 ticks old)
+			expect(not off(I), "I with its logistic network back is off: " .. line(remote.call(CONN, "levels", I)))
+			status(I, "fork-me-net.bus-ok", "I (switched on again by its logistic condition)")
+			--- its circuit condition: wired to K (signal A) with "A > 0", which holds
+			local w = defines.wire_connector_id.circuit_red
+			I.get_wire_connector(w, true).connect_to(K.get_wire_connector(w, true), false)
+			remote.call(CONN, "set_condition", I, true, { first_signal = SIG, comparator = ">", constant = 0 })
+			st.phase, st.tick = "iwired", game.tick
+			return
+		end
+
+		if st.phase == "iwired" then
+			if wait < 40 then return end
+			expect(not off(I), "I with its circuit condition holding is off: " .. line(remote.call(CONN, "levels", I)))
+			status(I, "fork-me-net.bus-ok", "I (both conditions hold)")
+			K.get_or_create_control_behavior().enabled = false
+			st.phase, st.tick = "icircuitoff", game.tick
+			return
+		end
+
+		if st.phase == "icircuitoff" then
+			if wait < 40 then return end
+			expect(off(I), "I with its circuit condition failing is not off: " .. line(remote.call(CONN, "levels", I)))
+			status(I, "fork-me-net.bus-circuit-off", "I (switched off by its circuit condition while it had nothing to do)")
+			K.get_or_create_control_behavior().enabled = true
+			st.phase, st.tick = "icircuiton", game.tick
+			return
+		end
+
+		if st.phase == "icircuiton" then
+			if wait < 40 then return end
+			expect(not off(I), "I with its circuit condition holding again is off: " .. line(remote.call(CONN, "levels", I)))
+			status(I, "fork-me-net.bus-ok", "I (switched on again by its circuit condition)")
 			remote.call(GUI, "stand_in_close_window", "panel639")
 			remote.call(GUI, "stand_in_forget", "panel639")
 			if st.inv and st.inv.valid then st.inv.destroy() end
