@@ -4592,3 +4592,19 @@ five ticks after it; the maintainer's whole base has 1767 cables. Without ghosts
 | items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
 
 `regressions beyond the noise: 0`.
+
+## Turned pastes over ME Cable (issue #673)
+
+**What changed:** in `on_pre_build` (`note_paste`, scripts/fork-me-cableshape.lua) every cable of the blueprint notes the
+direction it lands with (its own, flipped, turned by the paste) in a table by tile; one `find_entities_filtered` over the
+paste's cable area finds the cables that stand there, and each one with another direction is turned to it, so the game no
+longer refuses the paste (red). Once per paste click; nothing per tick.
+
+**Measured** (a temporary step in the runtime test, `helpers.create_profiler` around the remote `note_paste`): a blueprint of
+4900 cables (70 x 70) pasted over 4900 built cables, five pastes north, east, north, east, south:
+
+| ms per paste | origin/main | #673 |
+|---|---|---|
+| note_paste (4900 cables over 4900) | 33 to 35 | 54 to 57 (one 122: all 4900 turned) |
+
+`bench --check origin/main` (the bench does not paste through on_pre_build): `regressions beyond the noise: 0`.

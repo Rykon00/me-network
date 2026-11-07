@@ -5,7 +5,9 @@
 ---     onto the ghosts, and onto cables that stand where a pasted cable lands (no event). Both are corrected here.
 ---   * Pasted over cable: on_pre_build (scripts/fork-me-pasteover.lua reads the blueprint) notes the area its cables land on
 ---     (one tile more on each side); on the next tick every built cable there takes its shape from the graph again and every
----     cable ghost there is computed again (M.on_tick, which does nothing while nothing is noted).
+---     cable ghost there is computed again (M.on_tick, which does nothing while nothing is noted). A cable has a direction
+---     that does not show; a turned or flipped paste would land cables of another direction on it, which the game refuses
+---     (red) as for belts: in on_pre_build each cable a blueprint cable lands on takes that cable's direction first.
 ---   * A cable ghost shows the shape it will have when built: an arm toward every side where an ME member of the graph or a
 ---     ghost of an ME block or cable touches it and may connect (the graph's rule, `connects`: an underground cable only on
 ---     the side it faces). Every ME ghost is recorded when it is made (on_built_entity, script_raised_built, a clone) and
@@ -278,10 +280,15 @@ end
 --- Where the cables of a blueprint land, pasted at `at` (on_pre_build; scripts/fork-me-pasteover.lua reads the blueprint):
 --- the area of their tiles, one tile more on each side. `place`: function(be) -> position, or nil when the blueprint is
 --- placed by other rules (rails, absolute snapping): then a square around `at` as large as the blueprint, both ways.
-function M.note_paste(surface, entities, place, at)
+--- Turned or flipped pastes: a cable has a direction that does not show, and the game refuses a paste (red) that lands a
+--- cable on a cable of another direction, as it does for belts. So each cable that a cable of the blueprint lands on is
+--- turned first to the direction the blueprint gives it (`direction`, `fh`, `fv`: on_pre_build's), and the paste builds.
+function M.note_paste(surface, entities, place, at, direction, fh, fv)
 	local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
 	local any = false
 	local kinds = {}
+	local turn = place and {}                  -- tile key -> the direction the blueprint gives the cable there
+	local dir = (direction or 0) % 16
 	for _, be in pairs(entities) do
 		local k = kinds[be.name]
 		if k == nil then
@@ -291,7 +298,13 @@ function M.note_paste(surface, entities, place, at)
 		local p = be.position
 		if k then
 			any = true
-			if place then p = place(be) end
+			if place then
+				p = place(be)
+				local d = (be.direction or 0) % 16
+				if fh then d = (16 - d) % 16 end           -- (east and west change places)
+				if fv then d = (24 - d) % 16 end           -- (north and south)
+				turn[key(math.floor(p.x), math.floor(p.y))] = (d + dir) % 16
+			end
 		end
 		if k or not place then
 			if p.x < x1 then x1 = p.x end
@@ -301,6 +314,13 @@ function M.note_paste(surface, entities, place, at)
 		end
 	end
 	if not any then return end
+	if turn then
+		for _, e in pairs(surface.find_entities_filtered{ area = { { x1 - 0.5, y1 - 0.5 }, { x2 + 0.5, y2 + 0.5 } }, name = cable_names() }) do
+			local q = e.position
+			local d = turn[key(math.floor(q.x), math.floor(q.y))]
+			if d and e.direction ~= d then e.direction = d end
+		end
+	end
 	if not place then
 		local r = math.max(x2 - x1, y2 - y1) + 2
 		x1, y1, x2, y2 = at.x - r, at.y - r, at.x + r, at.y + r
