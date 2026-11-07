@@ -52,6 +52,7 @@ require("scripts.fork-me-stats")
 local pasteover = require("scripts.fork-me-pasteover")
 --- issue #670: the shape of ME Cable pasted over cable, and of cable ghosts
 local cableshape = require("scripts.fork-me-cableshape")
+local cableturn = require("scripts.fork-me-cableturn")    -- (issue #673: its own events: cursor, position, rotate/flip keys)
 --- issue #386: the ME IO Port (a cell emptied into the network or filled from it; its own queue)
 local fork_ioport = require("scripts.fork-me-ioport")
 --- issue #531: the ME Logistic Interface (offers to the logistic robots, asks them for what the network lacks, takes their
@@ -174,6 +175,7 @@ script.on_event(defines.events.on_player_alt_selected_area, function(event) memc
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
+	cableturn.on_player_setup_blueprint(event)                -- (issue #673: the cables stored as north; after the tags)
 end)
 
 --- issue #383: a blueprint (or the copy-paste tool's copy) pasted over ME blocks of the same kind makes no ghost and raises

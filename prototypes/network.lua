@@ -972,6 +972,20 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- Issue #673: the rotate and flip keys (linked to the game's own; R, Shift + R, H, V by default): while a blueprint with ME
+--- Cable is held, scripts/fork-me-cableturn.lua turns the cables around the player to the direction its cables will land
+--- with, so the game does not refuse the paste
+for _, key in ipairs({ { "fork-me-cable-rotate", "rotate" }, { "fork-me-cable-reverse-rotate", "reverse-rotate" },
+	{ "fork-me-cable-flip-horizontal", "flip-horizontal" }, { "fork-me-cable-flip-vertical", "flip-vertical" } }) do
+	data:extend({ {
+		type = "custom-input",
+		name = key[1],
+		key_sequence = "",
+		linked_game_control = key[2],
+		consuming = "none",
+	} })
+end
+
 --- Issue #527: the settings paste of the ME Quantum Bridge and the ME Wireless Link (prototypes/paste.lua, KEYS), on the
 --- game's copy and paste keys (Shift + right click, Shift + left click by default); the game's own paste goes on
 for _, key in pairs(require("prototypes.paste").INPUTS) do

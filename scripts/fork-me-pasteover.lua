@@ -124,6 +124,7 @@ local function resolve(bp, player)
 	end
 	return bp
 end
+M.resolve = resolve                      -- (issue #673: scripts/fork-me-cableturn.lua reads the held blueprint)
 
 --- The entities and tiles of the blueprint `bp` (from resolve), and whether M.layout places it (not when its placement
 --- follows other rules: rails, which keep a grid of two tiles; absolute snapping).
