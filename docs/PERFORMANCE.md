@@ -4614,7 +4614,7 @@ The bench has no players: none of this runs there.
 ## Turned blueprints over ME blocks whose direction does not show (issue #674)
 
 **What changed:** the same module now takes the drive and the other direction-agnostic blocks, and their ghosts, so one key costs a
-search by 36 names (instead of the cable's one) and a second search by ghost name. Still nothing per tick and nothing for a player
+search by 37 names (instead of the cable's one) and a second search by ghost name. Still nothing per tick and nothing for a player
 without such a blueprint. A paste with crafting blocks or variation screens costs one more search of the noted area
 (`scripts/fork-me-cableshape.lua`), and the variations written back on the next tick.
 
@@ -4626,4 +4626,4 @@ the radius (every second tile of 180 x 180, a drive on every ninth odd column):
 | all blocks turned | | 29.5 to 36.5 |
 | none to turn (the searches only) | 13.6 to 17.0 | 21.0 to 31.7 |
 
-A key is a person pressing it, so this stays a cost of a moment, not of the running base; the bench has no players, none of it runs there.
+Measured with 36 names, before the Pattern Provider joined the list. A key is a person pressing it, so this stays a cost of a moment, not of the running base; the bench has no players, none of it runs there.

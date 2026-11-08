@@ -14,7 +14,8 @@
 ---   writes the blueprint's stored variation over it: scripts/fork-me-cableshape.lua puts the picture back);
 --- * a ghost of a block is turned and the paste is taken; a ghost of a bus is not turned;
 --- * a block marked for deconstruction is not turned, stays marked and out of the network, and a paste over it is taken;
---- * `normalise` stores a turned drive as north.
+--- * `normalise` stores a turned drive as north;
+--- * a pattern provider (a display panel with a circuit connector) keeps its red wire through the turn and the paste.
 --- Loaded by control.lua: require("turnblocks")(H) returns { setup, tick, running }.
 
 local CT = "gregtorio-me-cableturn"
@@ -30,7 +31,7 @@ local PLATES = 100
 local REAL = {
 	["me-import-bus"] = "faces a target", ["me-export-bus"] = "faces a target", ["me-storage-bus"] = "faces a target",
 	["me-item-p2p-tunnel"] = "faces a target", ["me-fluid-p2p-tunnel"] = "faces a target",
-	["me-underground-cable"] = "open side", ["me-pattern-provider"] = "left refused (issue #674)",
+	["me-underground-cable"] = "open side",
 	["me-level-emitter"] = "wire connection points", ["me-advanced-level-emitter"] = "wire connection points",
 	["me-circuit-interface"] = "wire connection points",
 }
@@ -295,6 +296,19 @@ return function(H)
 		local bg = s.create_entity{ name = "entity-ghost", inner_name = "me-import-bus", position = { 96.5, 200.5 }, force = "player", direction = D.north }
 		align(bg, { R })
 		expect(bg.direction == D.north, "the ghost of an import bus was turned")
+
+		--- a pattern provider keeps its wire
+		local pa = stand("me-pattern-provider")
+		local pb = s.create_entity{ name = "me-pattern-provider", position = { pa.position.x + 2, pa.position.y }, force = "player" }
+		local ca = pa.get_wire_connector(defines.wire_connector_id.circuit_red, true)
+		local cb = pb.get_wire_connector(defines.wire_connector_id.circuit_red, true)
+		expect(ca.connect_to(cb, false), "the two pattern providers could not be wired")
+		align(pa, { R })
+		expect(pa.direction == D.east, "the wired pattern provider was not turned")
+		expect(ca.valid and ca.connection_count == 1, "the turn cut the pattern provider's wire")
+		local onto = paste("me-pattern-provider", pa)
+		expect(onto == 1, "the turned paste over the wired pattern provider made " .. onto .. " ghosts, wanted the chest's")
+		expect(ca.valid and ca.connection_count == 1, "the paste cut the pattern provider's wire")
 
 		return finish(#all .. " blocks, " .. refused .. " refused turned, " .. turned .. " of the list taken after R, the drive's network, marks, ghosts (tick " .. game.tick .. ")")
 	end

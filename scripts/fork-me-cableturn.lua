@@ -21,8 +21,7 @@
 ---   * Blocks that use their direction stay out, and a turned paste over them stays refused, a real conflict as for an
 ---     inserter: the buses, the P2P tunnels, the underground cable (their front or open side), and the blocks made from a
 ---     constant combinator (ME Level Emitter, ME Circuit Interface: their wire connection points and light follow it).
----     The Pattern Provider is left out as well (the maintainer's call, issue #674). The runtime test (turnblocks.lua) fails
----     for a block the game refuses that is in neither list.
+---     The runtime test (turnblocks.lua) fails for a block the game refuses that is in neither list.
 ---   * Measured with a real client (2.1.24, the cable): R, V + R, R + V, Shift + R, R + H + R, R then Q and taken again, a
 ---     book, the clipboard: each paste over cable built. Cost: two searches within RADIUS per key, nothing per tick.
 --- State: storage.fork_me_cableturn (lazy): `mem` the counted direction by blueprint item number (only when not north),
@@ -45,6 +44,7 @@ local AGNOSTIC_KINDS = {
 	["pattern-terminal"] = true, ["interface-terminal"] = true, ["storage-monitor"] = true, ["conversion-monitor"] = true,
 	["throughput-monitor"] = true, ["creative-energy"] = true, ["logistic-interface"] = true, controller = true,
 	["quantum-bridge"] = true, ["wireless-link"] = true,
+	provider = true,                    -- (one picture, machines on all four sides, the same wire connector in every direction)
 }
 local AGNOSTIC_NAMES = { ["me-logistic-storage-bus"] = true, ["me-cell-workbench"] = true }
 
