@@ -5714,6 +5714,101 @@ function M.clean_removed_items()
 	end
 end
 
+--- Issue #689: the old drive items (before issue #68) that the cells of drives and ME Chests hold are replaced, before the graph
+--- rebuild of on_configuration_changed computes every network's totals and index from the cells. `products(name, quality,
+--- count, data)` gives the stack definitions that replace `count` of the old item (an ME Drive, its cells, a card). They go into
+--- the same drive's item cells where there is room (an empty cell as its plain key, a cell with contents as a key with its
+--- tags, as M.storable keys them); the rest is returned with the drive's place: { { surface, position, defs } }. Returns the
+--- number of old items replaced and that list.
+function M.convert_legacy_drive_keys(products)
+	local s = state()
+	local legacy = mod_data().legacy_drives or {}
+	local found, spills = 0, {}
+	local units = {}
+	for unit in pairs(s.drives) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local d = s.drives[unit]
+		local defs = {}
+		local has
+		for slot = 1, drive_slots() do
+			local cell = d.slots[slot]
+			for key in pairs(cell and cell.items or {}) do
+				if legacy[(parse_key(key))] then has = true break end
+			end
+			if has then break end
+		end
+		--- (a drive in a network: its cells leave the network's totals and index while they change, and come back after)
+		local net = has and drive_net(s, unit)
+		local counted = {}
+		if net then
+			for slot = 1, drive_slots() do
+				local cid = unit .. ":" .. slot
+				if d.slots[slot] and net.cells[cid] == d.slots[slot] then
+					net_cell(net, cid, d.slots[slot], -1)
+					counted[slot] = true
+				end
+			end
+		end
+		for slot = 1, has and drive_slots() or 0 do
+			local cell = d.slots[slot]
+			local spec = cell and cell_spec(cell.name)
+			if spec and not fluid_cell(spec) and not spec.creative then
+				local keys = {}
+				for key in pairs(cell.items) do
+					if legacy[(parse_key(key))] then keys[#keys + 1] = key end
+				end
+				table.sort(keys)
+				for _, key in ipairs(keys) do
+					local n = math.floor(cell.items[key])
+					local data = cell.data and cell.data[key]
+					local name, q = parse_key(key)
+					cell_add(cell, spec, key, -cell.items[key])
+					if cell.data then cell.data[key] = nil end
+					for _, def in ipairs(products(name, q, n, data)) do defs[#defs + 1] = def end
+					found = found + n
+				end
+			end
+		end
+		if #defs > 0 then
+			s.dirty[unit] = true
+			local rest = {}
+			for _, def in ipairs(defs) do
+				local key = def.tags and key_of(def.name, def.quality, helpers.table_to_json({ tags = def.tags }))
+					or key_of(def.name, def.quality)
+				local left = def.count
+				for slot = 1, drive_slots() do
+					local cell = d.slots[slot]
+					local spec = cell and cell_spec(cell.name)
+					if left <= 0 then break end
+					if spec and item_exists(def.name) then
+						local n = math.min(left, math.floor(cell_room(cell, spec, key)))
+						if n > 0 then
+							cell_add(cell, spec, key, n)
+							if def.tags then cell.data[key] = { tags = def.tags } end
+							left = left - n
+						end
+					end
+				end
+				if left > 0 then
+					local copy = {}
+					for k, v in pairs(def) do copy[k] = v end
+					copy.count = left
+					rest[#rest + 1] = copy
+				end
+			end
+			if #rest > 0 then
+				local e = d.entity
+				local surface = e and e.valid and e.surface or (d.surface and game.surfaces[d.surface])
+				local position = e and e.valid and e.position or d.position
+				if surface and position then spills[#spills + 1] = { surface = surface, position = position, defs = rest } end
+			end
+		end
+		for slot in pairs(counted) do net_cell(net, unit .. ":" .. slot, d.slots[slot], 1) end
+	end
+	return found, spills
+end
+
 --- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same
 --- rules and prototypes (s.graph_sig), and with few members that changed without an event: those that vanished are taken out
 --- as the sweep takes them out (vanish), member entities that came without an event (the count of the map's member
