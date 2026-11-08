@@ -1,11 +1,15 @@
 --------------------------------------------------------------------------------
---- ME NETWORK: THE SHAPE OF ME CABLE FROM BLUEPRINTS AND OF CABLE GHOSTS (issue #670)
+--- ME NETWORK: THE SHAPE OF ME CABLE FROM BLUEPRINTS AND OF CABLE GHOSTS (issue #670), THE PICTURES OF BLOCKS UNDER A PASTE (#674)
 ---   * A cable's picture is graphics_variation = 1 + N + 2E + 4S + 8W, set from the graph by update_cable
 ---     (scripts/fork-me-network.lua) for built cables. The game copies a blueprint's stored `variation` onto what it builds:
 ---     onto the ghosts, and onto cables that stand where a pasted cable lands (no event). Both are corrected here.
 ---   * Pasted over cable: on_pre_build (scripts/fork-me-pasteover.lua reads the blueprint) notes the area its cables land on
 ---     (one tile more on each side); on the next tick every built cable there takes its shape from the graph again and every
 ---     cable ghost there is computed again (M.on_tick, which does nothing while nothing is noted).
+---   * Issue #674: the same write hits the other blocks whose picture is a graphics variation: the crafting blocks (their
+---     frame and state) and the screens that are variations (pattern and interface terminals, monitors). A blueprint's stored
+---     variation fits only where it was taken, so what stands in the noted area keeps its picture: read on_pre_build, written
+---     back on the next tick (one search per paste with such blocks; nothing else runs for them).
 ---   * A cable ghost shows the shape it will have when built: an arm toward every side where an ME member of the graph or a
 ---     ghost of an ME block or cable touches it and may connect (the graph's rule, `connects`: an underground cable only on
 ---     the side it faces). Every ME ghost is recorded when it is made (on_built_entity, script_raised_built, a clone) and
@@ -21,7 +25,8 @@
 ---     costs a lookup of the tiles around it while its surface has ME ghosts, nothing while it has none.
 --- State: storage.fork_me_cableshape (lazy): `g` the ME ghosts by unit number ({ x1, y1, x2, y2, kind, dir, e = the ghost,
 --- s = surface index, f = force name, v = the shape last set }), `n` their number per surface, `q` the unit numbers of the
---- ghosts waiting for their shape, `paste` the noted paste areas ({ surface, x1, y1, x2, y2, tick }) until the next tick.
+--- ghosts waiting for their shape, `paste` the noted paste areas ({ surface, x1, y1, x2, y2, tick, pics = { { entity,
+--- variation } } }) until the next tick.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -52,6 +57,22 @@ local function cable_names()
 		end
 	end
 	return cable_cache
+end
+
+local picture_cache
+--- the names of the blocks other than the cable whose picture is a graphics variation (issue #674), as a list and a set
+local function picture_names()
+	if not picture_cache then
+		picture_cache = { list = {}, set = {} }
+		for _, n in ipairs(N.node_names()) do
+			local k = N.kind_of(n)
+			if k == "crafting" or N.VARIATION_SCREENS[k] then
+				picture_cache.list[#picture_cache.list + 1] = n
+				picture_cache.set[n] = true
+			end
+		end
+	end
+	return picture_cache
 end
 
 --- the ghosts by tile: IDX[surface index][key] = record (derived from storage.fork_me_cableshape.g)
@@ -275,18 +296,20 @@ function N.ghost_hook(entity, node)
 	end)
 end
 
---- Where the cables of a blueprint land, pasted at `at` (on_pre_build; scripts/fork-me-pasteover.lua reads the blueprint):
---- the area of their tiles, one tile more on each side. `place`: function(be) -> position, or nil when the blueprint is
+--- Where the cables of a blueprint, and its blocks whose picture is a variation (issue #674), land, pasted at `at`
+--- (on_pre_build; scripts/fork-me-pasteover.lua reads the blueprint): the area of their tiles, one tile more on each side. `place`: function(be) -> position, or nil when the blueprint is
 --- placed by other rules (rails, absolute snapping): then a square around `at` as large as the blueprint, both ways.
 function M.note_paste(surface, entities, place, at)
 	local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
-	local any = false
+	local any, pics = false, false
 	local kinds = {}
+	local pn = picture_names()
 	for _, be in pairs(entities) do
 		local k = kinds[be.name]
 		if k == nil then
-			k = N.kind_of(be.name) == "cable"
+			k = N.kind_of(be.name) == "cable" or pn.set[be.name] == true
 			kinds[be.name] = k
+			if pn.set[be.name] then pics = true end
 		end
 		local p = be.position
 		if k then
@@ -307,7 +330,15 @@ function M.note_paste(surface, entities, place, at)
 	end
 	local st = state()
 	st.paste = st.paste or {}
-	st.paste[#st.paste + 1] = { surface.index, x1 - 1.5, y1 - 1.5, x2 + 1.5, y2 + 1.5, game.tick }
+	local p = { surface.index, x1 - 1.5, y1 - 1.5, x2 + 1.5, y2 + 1.5, game.tick }
+	if pics then
+		local list = {}
+		for _, e in pairs(surface.find_entities_filtered{ area = { { p[2], p[3] }, { p[4], p[5] } }, name = pn.list }) do
+			list[#list + 1] = { e, e.graphics_variation }
+		end
+		p.pics = list
+	end
+	st.paste[#st.paste + 1] = p
 end
 P.cable_hook = M.note_paste
 
@@ -398,6 +429,9 @@ function M.on_tick(tick)
 		if p[6] < tick then
 			local surface = game.surfaces[p[1]]
 			if surface then reshape(st, surface, { { p[2], p[3] }, { p[4], p[5] } }) end
+			for _, b in ipairs(p.pics or {}) do                 -- (issue #674: the game wrote the blueprint's variation over them)
+				if b[1].valid and b[1].graphics_variation ~= b[2] then b[1].graphics_variation = b[2] end
+			end
 		else
 			keep = keep or {}
 			keep[#keep + 1] = p

@@ -1214,6 +1214,7 @@ RUNTIME_TESTS = (
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
     ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
     ("CABLESHAPE", "ME Cable shapes from blueprints and of ghosts (issue #670)"),
+    ("TURNBLOCKS", "Turned blueprints over ME blocks whose direction does not show (issue #674)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
