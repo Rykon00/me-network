@@ -2999,6 +2999,50 @@ function fluid_cell_test()
 	total = 0
 	for _, cell in pairs(bi) do for _, v in pairs(cell.items) do total = total + v end end
 	expect(bi[5] and near(total, 40000), "an old item with more fluid than four cells hold: " .. serpent.line(bi))
+	--- issue #689: the conversion of 0.6.0 replaces the old drive items a save holds: in a chest, on the ground, in the network
+	local chest = s.create_entity{ name = "iron-chest", position = { FX + 20.5, FY + 6.5 }, force = "player" }
+	local ci = chest.get_inventory(defines.inventory.chest)
+	ci[1].set_stack{ name = "me-drive-1k", count = 2 }
+	ci[2].set_stack{ name = "me-fluid-drive-1k", count = 1 }
+	ci[2].tags = { fork_me_fluids = { water = 40000 } }
+	ci[3].set_stack{ name = "me-drive-256k", count = 1 }
+	local gpos = { FX + 24.5, FY + 6.5 }
+	s.create_entity{ name = "item-on-ground", position = gpos, stack = { name = "me-drive-4k", count = 1 } }
+	local net_drives = remote.call(NET, "count", t, "me-drive")
+	local net_cells = remote.call(NET, "count", t, "me-1k-storage-cell")
+	expect(remote.call(NET, "insert", t, "me-drive-1k", 1) == 1, "an old drive item not stored in the network")
+	local converted = remote.call("gregtorio-me-legacy-drives", "convert")
+	expect(converted == 6, "old drive items converted: " .. tostring(converted) .. " (expected 6)")
+	local cc = {}
+	for i = 1, #ci do
+		if ci[i].valid_for_read then cc[ci[i].name] = (cc[ci[i].name] or 0) + ci[i].count end
+	end
+	expect(ci[1].valid_for_read and ci[1].name == "me-drive" and ci[1].count == 2, "the drive in the old item's slot: " .. serpent.line(cc))
+	expect(cc["me-drive"] == 4 and cc["me-1k-storage-cell"] == 8 and cc["me-256k-storage-cell"] == 4
+		and (cc["me-1k-fluid-storage-cell"] or 0) >= 5 and not cc["me-drive-1k"] and not cc["me-fluid-drive-1k"]
+		and not cc["me-drive-256k"] and (not prototypes.item["acceleration-card"] or cc["acceleration-card"] == 1),
+		"chest after the conversion: " .. serpent.line(cc))
+	local fluid_total = 0
+	for i = 1, #ci do
+		local st = ci[i]
+		if st.valid_for_read and st.name == "me-1k-fluid-storage-cell" then
+			local stored = st.tags and st.tags.fork_me_cell
+			for _, v in pairs(stored and stored.items or {}) do fluid_total = fluid_total + v end
+		end
+	end
+	expect(near(fluid_total, 40000), "the old fluid drive's fluid in its cells: " .. fluid_total)
+	local gc = {}
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do
+		gc[g.stack.name] = (gc[g.stack.name] or 0) + g.stack.count
+	end
+	expect(gc["me-drive"] == 1 and gc["me-4k-storage-cell"] == 4 and not gc["me-drive-4k"], "ground after the conversion: " .. serpent.line(gc))
+	expect(remote.call(NET, "count", t, "me-drive-1k") == 0 and remote.call(NET, "count", t, "me-drive") == net_drives + 1
+		and remote.call(NET, "count", t, "me-1k-storage-cell") == net_cells + 4,
+		"network after the conversion: drives " .. remote.call(NET, "count", t, "me-drive") .. ", cells "
+		.. remote.call(NET, "count", t, "me-1k-storage-cell") .. ", old " .. remote.call(NET, "count", t, "me-drive-1k"))
+	expect(remote.call("gregtorio-me-legacy-drives", "convert") == 0, "a second conversion found old items")
+	chest.destroy()
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do g.destroy() end
 	inv.destroy()
 	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses, old fluid drive items")
 end

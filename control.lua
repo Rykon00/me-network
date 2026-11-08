@@ -3,6 +3,7 @@
 
 --- the network core: cable graph, controller, drives and cells, storage API
 local fork_net = require("scripts.fork-me-network")
+local legacy_drives = require("scripts.fork-me-legacy-drives")   -- (issue #689: the old drive items, once per save)
 --- ME Storage Bus: a chest or cargo wagon, or the fluid segment of a tank, as network storage (its visits run in the
 --- I/O step; the fluid side is scripts/fork-me-fluid-storagebus.lua)
 local fork_sbus = require("scripts.fork-me-storagebus")
@@ -367,6 +368,7 @@ script.on_init(function()
 	wired.migrate()                                           -- (issue #628: old buses and providers, before the graph)
 	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
+	legacy_drives.on_init()
 	cableshape.migrate()                                      -- (issue #670: ME ghosts of a handed-over save)
 end)
 
@@ -394,6 +396,9 @@ script.on_configuration_changed(function(data)
 	fork_ae2.clean_removed_items()
 	fork_circuit.clean_removed_items()
 	fork_io.clean_removed_items()
+	--- issue #689: the old drive items of a save (in the drives' cells, inventories, hands, belts, on the ground) become ME Drives
+	--- with their cells, once, before the graph rebuild computes the networks' totals from the cells
+	legacy_drives.convert()
 	--- the underground cables of a save from before 0.5.11 turned to the vanilla underground pipe's rule, then the graph first
 	--- (the only map scan), then the modules that read it
 	fork_net.migrate_underground_direction()
