@@ -41,6 +41,7 @@ local QUEUES = {
 	{ name = "logistic_storage_bus", floor = "logistic_storage_bus", ceiling = "logistic_storage_bus_max",   -- issue #506
 		probe = "logistic_storage_bus_probe" },
 	{ name = "io_port", floor = "io_port", ceiling = "io_port_max", probe = "io_port_probe" },       -- issue #386
+	{ name = "p2p", floor = "p2p", ceiling = "p2p_max", probe = "p2p_probe" },                     -- issue #633
 	{ name = "wireless_refill", floor = "wireless_refill", ceiling = "wireless_refill_max" },          -- issue #603 (players)
 	{ name = "logistic_interface", floor = "logistic_interface", ceiling = "logistic_interface_max",   -- issue #531
 		probe = "logistic_interface_probe" },

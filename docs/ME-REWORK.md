@@ -1350,7 +1350,11 @@ becomes the unified block when a save is loaded.
   `{ type = "fluid", name, amount }`). Items work as before.
 * **How a side is tied to a fluid:** every side has a setting: *import* (the default), *off*, or a fluid row. A side
   tied to a row keeps that fluid in its tank at the row's amount (at most 5000, the old fluid interface's volume);
-  several sides may share one row. When a fluid is put into a row, the first import side with a pipe connected gets
+  several sides may share one row. Since me-network issue #626 the amount counts the side's whole fluid segment (its
+  tank and the pipes joined to it without a pump: `get_fluid_segment_fluid`), not the tank's share, and a segment
+  that holds more than the row (a lowered amount, a save over-filled before) gives the surplus back like an item row
+  (beyond one unit: segment counts are rounded). The cap stays one tank's volume, so a row means the same amount with
+  or without pipes behind the side; the headroom of a visit and the window's fill use the same amount. When a fluid is put into a row, the first import side with a pipe connected gets
   it (else the first import side); the window has a drop-down per side. A fluid row that no side uses keeps nothing.
 * **How many fluids at once:** four, one per side (a fluid box holds one fluid; a 1x1 block has four sides). Up to nine
   rows can be fluids, but only those tied to a side are kept. Closest to AE2's 9 mixed slots that a 1x1 block allows

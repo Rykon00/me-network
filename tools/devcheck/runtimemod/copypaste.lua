@@ -10,7 +10,11 @@
 ---   and raises no event (Factorio 2.0), so the block kept its blank settings (the step that lost them, issue #383; the
 ---   row "over, game only" records it); the mod's on_pre_build handler (scripts/fork-me-pasteover.lua, called here as the
 ---   event calls it, the harness has no player) gives the block the tags' settings;
---- * cut: the copy revived after the original was mined (Ctrl+X).
+--- * cut: the copy revived after the original was mined (Ctrl+X);
+--- * ghost window (issue #659): the copy pasted as a ghost whose ME window is opened: the window's stand-in on the hidden
+---   surface has the original's settings, the ghost keeps them when the window writes them back, and the block revived
+---   from it has them; nothing stays on the hidden surface or in the mod's storage when the window is closed. And a change
+---   made in a ghost's window arrives in the block built from the ghost (GHOSTWIN).
 --- And the landing of the paste handler: a blueprint of the whole row (blocks of 1x1, 2x2 and 3x3) built at positions
 --- on and off the tile grid in the four directions: every ghost stands where pasteover.landing puts its entity.
 --- No network: the settings belong to the blocks, not to a network. Everything is built, checked and taken away in one tick.
@@ -19,9 +23,11 @@
 local IO, NET, AC = "gregtorio-me-io", "gregtorio-me-network", "gregtorio-me-autocraft"
 local SB, C, MON, EM = "gregtorio-me-storagebus", "gregtorio-me-circuit", "gregtorio-me-monitor", "gregtorio-me-emitter"
 local PO = "gregtorio-me-pasteover"
+local CONN = "gregtorio-me-connector"
 local BX, BY = -300, 180                 -- (inside the cleared test area, TEST_RADIUS of control.lua; clear of the other tests)
 local STEP = 4                           -- tiles between two blocks of a row
-local ROWS = { source = 0, blueprint = 6, ghost = 12, ghostcopy = 18, over = 24, raw = 30, cut = 36, mixed = 42 }
+local ROWS = { source = 0, blueprint = 6, ghost = 12, ghostcopy = 18, over = 24, raw = 30, cut = 36, mixed = 42, ghostwin = 48 }
+local GW = "gregtorio-me-ghostwin"      -- (issue #659: the ME window of a ghost)
 --- the landing check's second blueprint: entities of other sizes, two of them turned (a 1x2 pump facing east, a bus facing
 --- west), so the area it covers has an even side; the ones the game lacks (another mod removed them) are left out
 local MIXED = { { "assembling-machine-1", 1.5, 1.5 }, { "accumulator", 5, 1 }, { "pump", 8, 1, defines.direction.east },
@@ -30,17 +36,32 @@ local LAND = { x = BX + 30, y = BY + 90 }   -- (the landing check: the row, turn
 local START = 60
 
 local function cond(cb) cb.circuit_condition = { first_signal = { type = "item", name = "iron-plate" }, comparator = ">", constant = 5 } end
+--- issue #628: the circuit condition of the buses, the interface and the provider (kept by the script, in their tags)
+local function wired(e, on, second)
+	remote.call(CONN, "set_condition", e, on, { first_signal = { type = "virtual", name = "signal-B" }, comparator = "<=",
+		constant = 17, second_signal = second and { type = "item", name = "copper-plate" } or nil })
+	--- issue #639: the logistic condition too (in the same tag)
+	remote.call(CONN, "set_logistic", e, true, { first_signal = { type = "item", name = "iron-plate" }, comparator = ">",
+		constant = 9, second_signal = second and { type = "item", name = "copper-plate" } or nil })
+end
 --- the blocks and how each is configured (by its remote interface, as its window does)
 local BLOCKS = {
 	{ "me-network-interface", function(e)
 		remote.call(IO, "set_interface_config", e, { [1] = { name = "iron-plate", quality = "normal", amount = 50 },
 			[2] = { type = "fluid", name = "water", amount = 2345 } }, { [2] = 2, [4] = "off" })
 		remote.call(IO, "set_interface_priority", e, 3)
+		wired(e, true)
 	end },
-	{ "me-import-bus", function(e) remote.call(IO, "set_bus_filters", e, { "iron-plate", "fluid/water" }) end },
+	{ "me-import-bus", function(e) remote.call(IO, "set_bus_filters", e, { "iron-plate", "fluid/water" }) wired(e, true, true) end },
 	{ "me-export-bus", function(e) remote.call(IO, "set_bus_filters", e, { "copper-plate", "iron-gear-wheel" }) end },
-	{ "me-storage-bus", function(e) remote.call(SB, "set_settings", e, { filters = { "copper-plate" }, priority = 4 }) end },
-	{ "me-level-maintainer", function(e) remote.call(C, "set_maintainer", e, "iron-gear-wheel", 1234, false) end },
+	{ "me-storage-bus", function(e)
+		remote.call(SB, "set_settings", e, { filters = { "copper-plate" }, priority = 4 })
+		wired(e, false)                                                                                -- (set, but off)
+	end },
+	{ "me-level-maintainer", function(e)
+		remote.call(C, "set_maintainer", e, "iron-gear-wheel", 1234, false)
+		remote.call(C, "set_logistic", e, true, { first_signal = { type = "item", name = "copper-plate" }, comparator = "<", constant = 3 })   -- (#639)
+	end },
 	{ "me-circuit-interface", function(e) remote.call(C, "set_circuit_filters", e, { "iron-plate", "fluid/water" }) end },
 	{ "me-toggle-bus", function(e) cond(e.get_or_create_control_behavior()) end },
 	{ "me-inverted-toggle-bus", function(e) cond(e.get_or_create_control_behavior()) end },
@@ -55,12 +76,23 @@ local BLOCKS = {
 	{ "me-pattern-provider", function(e)
 		remote.call(AC, "set_priority", e, 7)
 		remote.call(AC, "set_blocking", e, "blocking")
+		wired(e, true)
 	end },
 	{ "me-drive", function(e) remote.call(NET, "set_priority", e, 5) end },
 	{ "me-chest", function(e) remote.call(NET, "set_priority", e, -2) end },
 	{ "me-io-port", function(e) remote.call("gregtorio-me-ioport", "set_mode", e, "fill") end },       -- (issue #386)
 	{ "me-quantum-bridge", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 1234) end },   -- (issue #385, 3x3)
 	{ "me-wireless-link", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 4321) end },   -- (issue #384)
+	--- issue #663: the ME Logistic Interface (issue #531), every setting away from a blank block's (built since #537: Automatic)
+	{ "me-logistic-interface", function(e)
+		local LIF = "gregtorio-me-logistic-interface"
+		remote.call(LIF, "set_row", e, "offer", 2, "iron-plate", 70)
+		remote.call(LIF, "set_row", e, "request", 1, "copper-plate", 30)
+		remote.call(LIF, "set_accept", e, false)
+		remote.call(LIF, "set_filter", e, "iron-gear-wheel")
+		remote.call(LIF, "set_auto", e, false)
+		remote.call(LIF, "set_mode", e, "manual")
+	end },
 }
 
 --- the centre of block `i` in a row (by the size of its prototype)
@@ -160,10 +192,8 @@ local function landing(s, bp, at, d)
 	end
 	for _, g in pairs(ghosts) do
 		if g.valid and g.ghost_name == "me-circuit-connector" then
-			--- issue #412: a circuit connector lands on its block (one per bus and interface, at the block's position)
-			if not at_ghost[g.position.x .. ":" .. g.position.y] then
-				problems[#problems + 1] = "the circuit connector at " .. serpent.line(g.position) .. " has no block's ghost there"
-			end
+			--- issue #628: the blocks take their wires themselves; a blueprint has no connector any more
+			problems[#problems + 1] = "a blueprint holds an old circuit connector at " .. serpent.line(g.position)
 			g.destroy()
 		elseif g.valid then
 			local p = want[g.ghost_name]
@@ -323,11 +353,185 @@ return function(H)
 		return problems
 	end
 
+	--- me-network issue #649: an ME P2P tunnel's copy pasted over a tunnel that stands there (Ctrl+C / Ctrl+V) gives it the
+	--- copy's frequency and role, as a tunnel built from the ghost: a bound output pasted over an unbound tunnel becomes an
+	--- output of that frequency; an input pasted over a tunnel of another frequency becomes a second input of the copy's
+	--- frequency, which waits ("taken") while the first one holds it, and the frequency it left has no input any more.
+	local P2P, TY = "gregtorio-me-p2p", KY + 6
+	local function p2p_paste(s)
+		local problems = {}
+		local I = "me-item-p2p-tunnel"
+		local function put(x, name) return me_place(s, problems, "p2p paste", name or I, BX + x + 0.5, TY + 0.5) end
+		local a, b, c, d, e = put(0), put(3), put(6), put(9), put(12)
+		--- (Task-Ingame #654: an unbound one, and the fluid kind)
+		local F = "me-fluid-p2p-tunnel"
+		local u, fa, fb, fc, fd, fe = put(15), put(18, F), put(21, F), put(24, F), put(27, F), put(30, F)
+		local function gone()
+			for _, x in pairs({ a, b, c, d, e, u, fa, fb, fc, fd, fe }) do if x and x.valid then x.destroy{ raise_destroy = true } end end
+		end
+		if not (a and b and c and d and e and u and fa and fb and fc and fd and fe) then gone() return problems end
+		local function info(x) return remote.call(P2P, "info", x) or {} end
+		local function over(src, dst)
+			local inv, bp = copy_of(s, area_of(src))
+			remote.call(PO, "paste", bp, s, "player", dst.position, defines.direction.north)
+			inv.destroy()
+		end
+		local function want(x, freq, output, status, what)
+			local i = info(x)
+			if i.freq ~= freq or i.output ~= output or (status and i.status ~= status) then
+				problems[#problems + 1] = ("%s: frequency %s, %s, status %s (expected %s, %s%s)"):format(what, tostring(i.freq),
+					i.output and "output" or "input", tostring(i.status), freq, output and "output" or "input",
+					status and (", " .. status) or "")
+			end
+		end
+		local f1 = remote.call(P2P, "make_input", a)
+		remote.call(P2P, "bind_output", b, f1)
+		local f2 = remote.call(P2P, "make_input", d)
+		remote.call(P2P, "bind_output", e, f2)
+		if not (f1 and f2 and f1 ~= f2) then
+			problems[#problems + 1] = "p2p paste: no two frequencies (" .. tostring(f1) .. ", " .. tostring(f2) .. ")"
+			gone()
+			return problems
+		end
+		--- a bound output over an unbound tunnel
+		over(b, c)
+		want(c, f1, true, nil, "a bound output pasted over an unbound tunnel")
+		want(b, f1, true, nil, "the copied output")
+		--- an input over the input of another frequency: a second input of the copy's frequency waits
+		over(a, d)
+		want(d, f1, false, "taken", "an input pasted over the input of another frequency")
+		want(a, f1, false, "input", "the copied input (it keeps the frequency)")
+		want(e, f2, true, "no-input", "the output of the frequency the pasted-over input left")
+		--- Task-Ingame #654: a blank (unbound) copy pasted over a bound tunnel changes nothing
+		over(u, b)
+		want(b, f1, true, nil, "a blank copy pasted over a bound output")
+		over(u, a)
+		want(a, f1, false, "input", "a blank copy pasted over a bound input")
+		--- Task-Ingame #654: the same with fluid tunnels
+		local g1 = remote.call(P2P, "make_input", fa)
+		remote.call(P2P, "bind_output", fb, g1)
+		local g2 = remote.call(P2P, "make_input", fd)
+		remote.call(P2P, "bind_output", fe, g2)
+		if not (g1 and g2 and g1 ~= g2) then
+			problems[#problems + 1] = "p2p paste: no two fluid frequencies (" .. tostring(g1) .. ", " .. tostring(g2) .. ")"
+		else
+			over(fb, fc)
+			want(fc, g1, true, nil, "a bound fluid output pasted over an unbound fluid tunnel")
+			over(fa, fd)
+			want(fd, g1, false, "taken", "a fluid input pasted over the input of another frequency")
+			want(fa, g1, false, "input", "the copied fluid input (it keeps the frequency)")
+			want(fe, g2, true, "no-input", "the fluid output of the frequency the pasted-over input left")
+		end
+		gone()
+		return problems
+	end
+
+	--- me-network issue #659: a change in the ME window of a ghost arrives in the block built from it. An ME Import Bus copied
+	--- with one filter, pasted as a ghost that another mod tagged as well: its window's stand-in (the harness has no player,
+	--- so the test stages it as the window does) gets other filters and a Capacity Card; written back, the ghost carries them
+	--- and the other mod's tag, the card comes back when the window closes (the ghost then wants it), and the bus built from
+	--- the ghost has the new filters. The stand-in of an ME Quantum Bridge of a frequency that two bridges have takes it from
+	--- neither (the third block of a frequency would). Nothing stays on the hidden surface or in storage.
+	local GX, GY = -380, 180              -- (west of the rows, clear of the logistic storage bus test's roboports)
+	local function ghost_window(s)
+		local problems = {}
+		local function bad(text) problems[#problems + 1] = text end
+		local B = "me-quantum-bridge"
+		local bus = me_place(s, problems, "ghost window", "me-import-bus", GX + 0.5, GY + 0.5)
+		local q1, q2 = me_place(s, problems, "ghost window", B, GX + 5.5, GY + 1.5), me_place(s, problems, "ghost window", B, GX + 10.5, GY + 1.5)
+		local inv = game.create_inventory(4)
+		local function gone()
+			for _, e in pairs(s.find_entities_filtered{ area = { { GX - 1, GY - 1 }, { GX + 20, GY + 8 } } }) do
+				if e.valid and e.type ~= "character" then e.destroy{ raise_destroy = true } end
+			end
+			inv.destroy()
+		end
+		if not (bus and q1 and q2) then gone() return problems end
+		remote.call(IO, "set_bus_filters", bus, { "iron-plate" })
+		local cinv, bp = copy_of(s, area_of(bus))
+		bus.destroy{ raise_destroy = true }
+		local g = paste(s, bp, { GX + 0.5, GY + 0.5 }, "me-import-bus", true)
+		cinv.destroy()
+		if not g then bad("the import bus made no ghost") gone() return problems end
+		local t = g.tags or {}
+		t.another_mod = { kept = 42 }
+		g.tags = t
+		local stand = remote.call(GW, "stage", g, "edit")
+		if not stand then bad("the import bus's ghost opened no stand-in") gone() return problems end
+		if remote.call(GW, "ghost_of", stand) ~= g then bad("the stand-in does not know its ghost") end
+		if stand.surface == s then bad("the stand-in stands on the ghost's surface") end
+		remote.call(IO, "set_bus_filters", stand, { "copper-plate", "fluid/water" })
+		inv[1].set_stack{ name = "me-capacity-card", count = 1 }
+		local why = remote.call(IO, "bus_card_click", stand, 1, inv[1], inv, false)
+		if why ~= nil or inv[1].valid_for_read then bad("the stand-in took no card: " .. tostring(why)) end
+		remote.call(GW, "sync", "edit")
+		local tags = g.tags or {}
+		local bt = tags.fork_me_bus or {}
+		if serpent.line(bt.filters) ~= serpent.line({ "copper-plate", "fluid/water" }) then
+			bad("the ghost's filters after the window: " .. serpent.line(bt.filters))
+		end
+		if serpent.line(bt.cards) ~= serpent.line({ "me-capacity-card" }) then bad("the ghost's cards after the window: " .. serpent.line(bt.cards)) end
+		if not (type(tags.another_mod) == "table" and tags.another_mod.kept == 42) then bad("another mod's tag on the ghost was lost") end
+		local back = game.create_inventory(4)
+		local given = remote.call(GW, "unstage", "edit", back)
+		if given ~= 1 or back.get_item_count("me-capacity-card") ~= 1 then
+			bad("the card put into the ghost's window did not come back (" .. tostring(given) .. " items)")
+		end
+		back.destroy()
+		if not g.valid then bad("the ghost is gone after its window") gone() return problems end
+		local _, e = g.revive{ raise_revive = true }
+		local got = e and remote.call(IO, "get_bus", e)
+		if not (got and serpent.line(got.filters) == serpent.line({ "copper-plate", "fluid/water" })) then
+			bad("the bus built from the ghost has the filters " .. serpent.line(got and got.filters))
+		end
+		--- what the game's own window put into a stand-in (the ME Interface's "Open inventory") comes back too
+		local iface = me_place(s, problems, "ghost window", "me-network-interface", GX + 2.5, GY + 5.5)
+		if iface then
+			local iinv, ibp = copy_of(s, area_of(iface))
+			iface.destroy{ raise_destroy = true }
+			local ig = paste(s, ibp, { GX + 2.5, GY + 5.5 }, "me-network-interface", true)
+			iinv.destroy()
+			local is = ig and remote.call(GW, "stage", ig, "iface")
+			if not is then bad("the interface's ghost opened no stand-in")
+			else
+				is.get_inventory(defines.inventory.chest).insert{ name = "iron-plate", count = 7 }
+				local into = game.create_inventory(4)
+				local n = remote.call(GW, "unstage", "iface", into)
+				if n ~= 7 or into.get_item_count("iron-plate") ~= 7 then
+					bad("the plates put into the interface's stand-in came back as " .. tostring(n) .. " items")
+				end
+				into.destroy()
+			end
+		end
+		--- a bridge's ghost of the pair's frequency: its stand-in takes the frequency from neither
+		remote.call(QB, "set_frequency", q1, 777)
+		remote.call(QB, "set_frequency", q2, 777)
+		local before = (remote.call(QB, "info", q1) or {}).status
+		local qinv, qbp = copy_of(s, area_of(q1))
+		local qg = paste(s, qbp, { GX + 15.5, GY + 1.5 }, B, true)
+		qinv.destroy()
+		local qs = qg and remote.call(GW, "stage", qg, "bridge")
+		if not qg then bad("the bridge made no ghost")
+		elseif not qs then bad("the bridge's ghost opened no stand-in")
+		else
+			if (remote.call(QB, "info", qs) or {}).freq ~= 777 then bad("the bridge's stand-in has not the ghost's frequency") end
+			local during = (remote.call(QB, "info", q1) or {}).status
+			if during ~= before then bad("the bridge's stand-in took the pair's frequency: " .. tostring(before) .. " -> " .. tostring(during)) end
+			remote.call(GW, "unstage", "bridge")
+		end
+		local c = remote.call(GW, "counts")
+		if c.entities ~= 0 or c.sessions ~= 0 or c.units ~= 0 then bad("left after the windows: " .. serpent.line(c)) end
+		gone()
+		return problems
+	end
+
 	function T.setup() return {} end
 
 	function T.tick()
 		if game.tick ~= START then return end
 		local s = game.surfaces[1]
+		local before = remote.call(C, "queues")      -- (issue #660: what the circuit module holds before the blocks)
+		before.rate, before.interval = nil, nil
 		local problems, lost, raw = build(s), {}, {}
 		local function lose(path, name, why)
 			lost[path] = lost[path] or {}
@@ -404,6 +608,22 @@ return function(H)
 					local _, e = ghost2.revive{ raise_revive = true }
 					same("cut", e)
 				else lose("cut", name, "made no ghost") end
+				--- ghost window (issue #659): the stand-in has the settings, writes them back, and the built block has them (issue
+				--- #660: the circuit interface too, since a removed one leaves its queue at once)
+				if remote.call(GW, "window_of_ghost", name) then
+					local g = paste(s, bp, spot(name, i, "ghostwin"), name, true)
+					local stand = g and remote.call(GW, "stage", g, "copypaste")
+					if not stand then lose("ghost window", name, "opened no stand-in")
+					else
+						local got = signature(stand)
+						if got ~= want then lose("ghost window", name, "stand-in without its settings: " .. got .. " (the original: " .. want .. ")") end
+						remote.call(GW, "unstage", "copypaste")
+						if g.valid then
+							local _, e = g.revive{ raise_revive = true }
+							same("ghost window", e)
+						else lose("ghost window", name, "the ghost is gone") end
+					end
+				end
 				inv.destroy()
 			end
 		end
@@ -411,8 +631,16 @@ return function(H)
 		for path, names in pairs(lost) do paths[#paths + 1] = path .. ": " .. table.concat(names, ", ") end
 		table.sort(paths)
 		--- (the blocks go again)
-		for _, e in pairs(s.find_entities_filtered{ area = { { BX - 2, BY - 2 }, { BX + #BLOCKS * STEP + 2, BY + ROWS.mixed + 6 } } }) do
+		for _, e in pairs(s.find_entities_filtered{ area = { { BX - 2, BY - 2 }, { BX + #BLOCKS * STEP + 2, BY + ROWS.ghostwin + 6 } } }) do
 			if e.valid and e.type ~= "character" then e.destroy{ raise_destroy = true } end
+		end
+		--- issue #660: every maintainer and circuit interface of this test was mined or destroyed (with the event, also the
+		--- stand-ins of the ghost windows): none stays in the module's records or in its queues' counts
+		local after = remote.call(C, "queues")
+		after.rate, after.interval = nil, nil
+		if serpent.line(after) ~= serpent.line(before) then
+			problems[#problems + 1] = "the removed maintainers and circuit interfaces stay in the circuit module: before "
+				.. serpent.line(before) .. ", after " .. serpent.line(after)
 		end
 		storage.copypaste383 = { done = true, lost = paths, raw = raw }
 		me_report("COPYPASTE", "ME settings through the copy-paste tool", problems, #paths == 0
@@ -427,6 +655,13 @@ return function(H)
 			"the player's path (the mod's keys, issue #527): the frequency from a bridge onto a bridge and a link onto a link,"
 				.. " not across, with sound and flying text; a copy over another block, another force and a source that is"
 				.. " gone paste nothing")
+		me_report("GHOSTWIN", "The ME window of a ghost", ghost_window(s),
+			"issue #659: the filters and a card set in a ghost's window reach its tags (another mod's tag kept) and the built"
+				.. " block, the card comes back, a bridge's stand-in takes no frequency, nothing stays")
+		me_report("P2PPASTE", "ME P2P tunnels pasted over tunnels", p2p_paste(s),
+			"issue #649: a bound output pasted over an unbound tunnel takes its frequency and role; an input pasted over the"
+				.. " input of another frequency waits as a second input of the copy's frequency; a blank copy changes nothing;"
+				.. " the same with fluid tunnels (Task-Ingame #654)")
 	end
 
 	function T.running(check) check(storage.copypaste383 and storage.copypaste383.done, "ME settings through the copy-paste tool") end

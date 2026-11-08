@@ -148,9 +148,9 @@ end
 do
 	local bad = {}
 	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
-		local e = data.raw["simple-entity-with-force"][name]
+		local e = data.raw["display-panel"][name]                -- (issue #628: the buses are display panels)
 		for _, dir in pairs({ "north", "east", "south", "west" }) do
-			local l = e and e.picture and e.picture[dir] and e.picture[dir].layers
+			local l = e and e.sprites and e.sprites[dir] and e.sprites[dir].layers
 			local m = l and l[2]
 			local base = "/" .. name .. "-" .. dir
 			if not (l and #l == 2 and l[1].filename:sub(-#base - 4) == base .. ".png" and m.filename:sub(-#base - 11) == base .. "-marker.png"

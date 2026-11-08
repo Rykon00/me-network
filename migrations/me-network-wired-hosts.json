@@ -1,0 +1,9 @@
+{
+  "entity":
+  [
+    ["me-import-bus", "me-import-bus-legacy"],
+    ["me-export-bus", "me-export-bus-legacy"],
+    ["me-storage-bus", "me-storage-bus-legacy"],
+    ["me-pattern-provider", "me-pattern-provider-legacy"]
+  ]
+}

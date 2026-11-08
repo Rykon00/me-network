@@ -23,6 +23,9 @@
                                                             # a run of 30 minutes, reported per 5 minutes
     python tools/devcheck/devcheck.py bench --planner [--with-gregtorio ../Gregtorio]
                                                             # the planner on every recipe of the game as deep trees
+    python tools/devcheck/devcheck.py bench --tunnels-only [--idle]
+                                                            # issue #629: one provider reaching 64 machines through
+                                                            # ME P2P tunnels against 16 providers with 4 neighbours
     python tools/devcheck/devcheck.py bench --check origin/main --sizes 1000,5000
                                                             # the working copy against a reference, in turns; fails
                                                             # when a number is worse by more than the measured noise
@@ -1138,11 +1141,12 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("TAGITEM", "ME items with tags through storage buses test"), ("TAGDAMAGED", "ME damaged items with tags test"), ("TAGCRAFT", "ME autocrafting of items with tags test"), ("TAGLABEL", "ME items with a label test"), ("FUZZYDATA", "ME fuzzy export of items with data test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("SETTINGSPASTE", "ME settings paste through the game test"), ("PASTEKEYS", "ME settings paste through the copy and paste keys test"),("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("TAGITEM", "ME items with tags through storage buses test"), ("TAGDAMAGED", "ME damaged items with tags test"), ("TAGCRAFT", "ME autocrafting of items with tags test"), ("TAGLABEL", "ME items with a label test"), ("FUZZYDATA", "ME fuzzy export of items with data test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("SETTINGSPASTE", "ME settings paste through the game test"), ("PASTEKEYS", "ME settings paste through the copy and paste keys test"), ("P2PPASTE", "ME P2P tunnels pasted over tunnels test"), ("GHOSTWIN", "The ME window of a ghost test"),("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
     ("SORTPREFS", "ME Terminal sort preference test"),
+    ("CURSORSLOT", "ME config slots from the cursor test"),
     ("WREFILL", "ME wireless refill test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
@@ -1169,7 +1173,8 @@ RUNTIME_TESTS = (
     ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
     ("BUSCARDS", "Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)"),
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
-    ("CIRCUITBUS", "Circuit connector of the buses and the interface (issue #412)"),
+    ("CIRCUITBUS", "Circuit condition of the buses and the interface (issues #412, #628)"),
+    ("PANEL639", "Logistic condition and the circuit and logistic network panel (issue #639)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),
@@ -1188,6 +1193,7 @@ RUNTIME_TESTS = (
     ("BPCARDS", "Cards of blocks built from a blueprint (issue #590)"),
     ("WGROUP", "ME Wireless Link groups (issue #559)"),
     ("EXTENT", "ME underground cable chains never overextend (issue #623)"),
+    ("DECON", "ME blocks marked for deconstruction carry no network"),
     ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("FASTCRAFT", "Fast machines kept busy (issue #557)"),
     ("ASMNET", "ME Molecular Assembler carries the network (issue #560)"),
@@ -1206,15 +1212,22 @@ RUNTIME_TESTS = (
     ("LIF", "ME logistic interface (issue #531)"),
     ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
+    ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
+    ("CABLESHAPE", "ME Cable shapes from blueprints and of ghosts (issue #670)"),
+    ("TURNBLOCKS", "Turned blueprints over ME blocks whose direction does not show (issue #674)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
+    ("IFACESEGMENT", "ME interface fluid row over its segment (issue #626)"),
+    ("P2P", "ME P2P tunnels with a pattern provider (issue #629)"),
+    ("P2PFLOW", "ME P2P tunnels on their own (issue #633)"),
     ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),
     ("DONE", "all tests reported"),
 )
 
 
+TUNNEL_MACHINES = 64            # issue #629: the machines of the tunnel scene (benchmod: one provider, or 16 with 4 each)
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
 
 
@@ -1482,6 +1495,8 @@ def migrate_run(a):
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save (every kind of block): {setup.group(1) if setup else 'no result'}")
+    wired_setup = re.search(r"DEVCHECK-MIGRATE-WIRED-SETUP (.*)", log)       # issue #628
+    print(f"old save, buses and providers with their connectors: {wired_setup.group(1) if wired_setup else 'no result'}")
     prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
     if a.removed_items:                   # one of them removed, one renamed through ME_NETWORK.replace_item
         startup_setting(ITEMS_SETTING, "new")
@@ -1503,6 +1518,8 @@ def migrate_run(a):
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
+    wired = re.search(r"DEVCHECK-MIGRATE-WIRED (.*)", log)   # issue #628: the wired buses and providers
+    print(f"the wired buses and providers after the update: {wired.group(1) if wired else 'no result'}")
     lif = re.search(r"DEVCHECK-MIGRATE-LIF (.*)", log)       # issue #537 (a version with the ME Logistic Interface)
     if lif:
         print(f"the ME Logistic Interface after the update: {lif.group(1)}")
@@ -1512,7 +1529,7 @@ def migrate_run(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
-        and fluids and fluids.group(1).startswith("ok") and not fails
+        and fluids and fluids.group(1).startswith("ok") and not fails         and wired_setup and wired_setup.group(1).startswith("ok") and wired and wired.group(1).startswith("ok")
     if a.removed_items:
         # issue #503: after the update the network holds the renamed item under its new name (counts added up, quality kept), the
         # removed one nowhere, and every circuit interface (one built after the load too) works; the log names each name once
@@ -1539,6 +1556,7 @@ BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua 
 CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
 BURST_TICKS = 330               # after the latency probes: the build burst (build, remove, plain build, plain remove, issue #538: ghosts)
+CABLE_GHOST_TICKS = 260         # issue #670: after the burst, the cable ghost steps (ticks 330 to 580 of the burst)
 GHOST_WAIT = 600                # issue #538: the ghost paste waits for the allocation meter's ticks (ALLOC_FROM + ALLOC_TICKS)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
 # the functions the profile times, per module of the instrumented copy (local functions through their upvalue,
@@ -1892,6 +1910,10 @@ def size_variant(size):
 
 def variant_name(v):
     parts = []
+    if v.get("tunnel") is not None:                 # (issue #629: the tunnel scene's two layouts)
+        parts.append("tunnel" if v["tunnel"] else "neighbours")
+    if v.get("carry"):                              # (issue #633: the carry scene's two ways)
+        parts.append(v["carry"])
     if v.get("base"):
         parts.append("base")
     if v.get("idle"):
@@ -1915,14 +1937,23 @@ def bench_config(a, scene, size, variant, profile):
            "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
            "planner_targets": a.planner_targets,
+           # issue #629: the tunnel scene's layout: one provider reaching its machines through ME P2P tunnels, or providers with
+           # the machines next to them
+           "tunnel": bool(variant.get("tunnel")) if scene == "tunnels" else None,
+           # issue #633: the carry scene's way: "tunnels" (ME P2P tunnels on their own) or "buses" (import and export buses)
+           "carry": variant.get("carry") if scene == "carry" else None,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
            "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0,
            # issue #538: that many wall ghosts pasted in one tick (and removed in one) in that logistic network, after the burst
            "ghosts": (getattr(a, "ghosts", 0) or 0) if scene == "me" else 0,
+           # issue #670: that many ME Cable ghosts pasted, removed, pasted again and built, each in one tick, after the burst
+           "cable_ghosts": (getattr(a, "cable_ghosts", 0) or 0) if scene == "me" else 0,
            # issue #603: that many characters with the ME Wireless Module and logistic requests at an access point
-           "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0}
+           "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0,
+           # issue #639: every import and export bus with a circuit condition and a logistic condition (in the check list)
+           "conditions": bool(getattr(a, "conditions", False)) if scene == "me" else None}
     return cfg
 
 
@@ -1938,7 +1969,8 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
         return None, err or "no DEVCHECK-BENCH-SETUP line"
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
-    out = {"scene": cfg["scene"], "size": cfg["size"], "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base")},
+    out = {"scene": cfg["scene"], "size": cfg["size"],
+           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry") if cfg.get(k) is not None},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -1954,7 +1986,7 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
-        + (GHOST_WAIT if cfg.get("ghosts") else 0)
+        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
     if not re.search(r"Performed (\d+) updates", log):
         print(f"  {label}: did not run\n{load_errors(log) or ''}")
@@ -2141,7 +2173,7 @@ def bench(a):
     print(results["factorio"])
     problems = []
     plan = []                                              # (scene, size, variant)
-    if not a.planner_only:
+    if not (a.planner_only or a.tunnels_only or a.carry_only):
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
             for entry in sizes:
                 size, base = size_variant(entry)
@@ -2159,6 +2191,13 @@ def bench(a):
             plan.append(("me", max(x for x in sizes if x != "base"), {"long": True}))
     if a.planner or a.planner_only:
         plan.append(("planner", 0, {}))
+    if a.tunnels or a.tunnels_only:                   # (issue #629)
+        for idle in ([False, True] if a.idle else [False]):
+            for tunnel in (True, False):
+                plan.append(("tunnels", TUNNEL_MACHINES, {"tunnel": tunnel, **({"idle": True} if idle else {})}))
+    if a.carry or a.carry_only:                       # (issue #633)
+        for way in ("tunnels", "buses"):
+            plan.append(("carry", 60, {"carry": way}))
     for scene, size, variant in plan:
         runs_before = a.runs
         if variant.get("long"):
@@ -2218,6 +2257,7 @@ def print_service(s):
               "logistic_storage_bus", "logistic_storage_bus_probe",                   # (issue #506)
               "logistic_interface", "logistic_interface_probe", "logistic_demand",  # (issue #531, #537)
               "wireless_refill",                                                       # (issue #603)
+              "p2p", "p2p_probe",                                                     # (issue #633)
               "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
         if not st or not (st.get("visits") or st.get("due")):
@@ -2283,6 +2323,15 @@ def print_bench(results):
         if s["scene"] == "planner":
             print(f"  planner: jobs {tp.get('jobs')}; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
             continue
+        if s["scene"] == "carry":                      # (issue #633)
+            print(f"  {scene_label(s)}: {tp.get('item_lines')} item and {tp.get('fluid_lines')} fluid lines, items into the sinks "
+                  f"{fmt(tp.get('items_per_s'), 1)}/s")
+            continue
+        if s["scene"] == "tunnels":                    # (issue #629)
+            print(f"  {scene_label(s)} {s['size']}: {tp.get('providers')} providers, {tp.get('machines')} machines "
+                  f"({tp.get('reached')} reached by the patterns), crafts {fmt(tp.get('crafts_per_s'), 1)}/s, {tp.get('working')} "
+                  f"machines crafted")
+            continue
         print(f"  {scene_label(s)} {s['size']}: items {fmt(tp['items_per_s'], 0)}/s, {fmt(tp['items_per_s_per_endpoint'], 2)}/s "
               f"per endpoint ({tp['endpoints']} endpoints)"
               + (f", fluid {fmt(tp.get('fluid_per_s'), 0)}/s, provider crafts {fmt(tp.get('provider_crafts_per_s'), 1)}/s, "
@@ -2313,6 +2362,8 @@ def print_bench(results):
     for s in results["scenes"]:
         b = s.get("burst") or {}
         for what in ("build", "remove", "plain-build", "plain-remove", "asm-build", "asm-remove", "ghost-paste", "ghost-remove",
+                     "cable-ghost-paste", "cable-ghost-paste-after", "cable-ghost-remove", "cable-ghost-remove-after",
+                     "cable-ghost-paste2", "cable-ghost-build", "cable-ghost-build-after",
                      "ghost-after"):
             v = b.get(what)
             if v:
@@ -2519,6 +2570,9 @@ def main():
         p.add_argument("--with-gregtorio", metavar="DIR", help="a Gregtorio Continued checkout to load as well")
         p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
         p.add_argument("--mods-from", help="with --with-mod: folder with the mod zips that are not in .devcheck/mods yet")
+        p.add_argument("--startup", action="append", metavar="NAME=VALUE",
+                       help="issue #680: a startup setting for this run (a number, true/false or a string; repeatable), "
+                            "written into .devcheck/mods/mod-settings.dat and removed afterwards")
         if name in ("check", "all"):
             p.add_argument("--base-only", action="store_true", help="check without Space Age and quality")
         if name in ("runtime", "all"):
@@ -2557,6 +2611,9 @@ def main():
     p.add_argument("--networks", metavar="K[,K]", help="also the same blocks on K networks (e.g. 10,100)")
     p.add_argument("--engine-share", action="store_true", help="also each scene without its ME entities (the engine's share)")
     p.add_argument("--long", type=int, metavar="MINUTES", help="also one run of that many minutes at the largest size, reported per 5 minutes")
+    p.add_argument("--conditions", action="store_true", help="issue #639: every import and export bus of the ME scene gets a "
+                   "circuit condition (no wire) and, where the version has it, a logistic condition that holds, in the logistic "
+                   "network of unpowered roboports over the scene: every bus is in the connector's check list")
     p.add_argument("--burst", type=int, default=1000, metavar="N", help="ME blocks built and removed in one tick after the probes (default 1000, 0: none)")
     p.add_argument("--logistic", type=int, default=0, metavar="N", help="issue #506: every ME scene also gets a logistic network of N "
                    "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus and (issue #531) 16 ME Logistic "
@@ -2565,9 +2622,18 @@ def main():
                    "logistic network that ask for items it holds, items only the ME network has and items nobody has")
     p.add_argument("--ghosts", type=int, default=0, metavar="N", help="issue #538: with --logistic, N wall ghosts pasted in one tick "
                    "in the logistic network after the build burst, then removed in one tick")
+    p.add_argument("--cable-ghosts", type=int, default=0, metavar="N", help="issue #670: N ME Cable ghosts in a square after the "
+                   "build burst: pasted in one tick, removed in one, pasted again and built in one (with the ticks after)")
     p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
                    "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
+    p.add_argument("--tunnels", action="store_true", help="issue #629: also the tunnel scene, one pattern provider that reaches %d "
+                   "machines through ME P2P tunnels and %d providers with 4 machines next to each (with --idle: also without "
+                   "jobs)" % (64, 16))
+    p.add_argument("--tunnels-only", action="store_true", help="only the tunnel scene (with --idle: also without jobs)")
+    p.add_argument("--carry", action="store_true", help="issue #633: also the carry scene, 40 item and 20 fluid lines (a source, "
+                   "four sinks) carried by ME P2P tunnels on their own and by an import bus and four export buses")
+    p.add_argument("--carry-only", action="store_true", help="only the carry scene")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
                    "sample must be the same (issue #50)")
@@ -2591,11 +2657,25 @@ def main():
         return migrate(a)
     if a.cmd == "setup":
         return setup(a)
-    if a.cmd == "check":
-        return check(a)
-    if a.cmd == "runtime":
-        return runtime(a)
-    return check(a) or runtime(a)
+    # issue #680: startup settings of the mod for this run (--startup NAME=VALUE), the defaults again afterwards
+    startup = {}
+    for item in getattr(a, "startup", None) or []:
+        name, _, value = item.partition("=")
+        if not (name and value):
+            sys.exit(f"--startup {item}: NAME=VALUE expected")
+        low = value.lower()
+        startup[name] = low == "true" if low in ("true", "false") else float(value) if re.fullmatch(r"-?[0-9.]+(e-?[0-9]+)?", low) else value
+    for name, value in startup.items():
+        startup_setting(name, value)
+    try:
+        if a.cmd == "check":
+            return check(a)
+        if a.cmd == "runtime":
+            return runtime(a)
+        return check(a) or runtime(a)
+    finally:
+        for name in startup:
+            startup_setting(name, None)
 
 
 if __name__ == "__main__":

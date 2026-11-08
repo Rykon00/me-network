@@ -153,7 +153,7 @@ return {
 	},
 	["item/me-molecular-assembler"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
 	--- the pattern provider (issue #269): AE2-Unofficial has none, so its purple interface skin (BlockInterfaceAlternate_Purple)
-	["simple-entity-with-force/me-pattern-provider"] = {
+	["display-panel/me-pattern-provider"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-pattern-provider.png"] = "__me-network-ae2-textures__/graphics/blocks/me-pattern-provider.png",
 		["__me-network__/graphics/icons/hd/me-pattern-provider.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-provider.png", icon_size = 64 },
 	},
@@ -208,9 +208,9 @@ return {
 		["__me-network__/graphics/icons/hd/me-throughput-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-throughput-monitor.png", icon_size = 64 },
 	},
 	["item/me-throughput-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-throughput-monitor.png", icon_size = 64 },
-	--- the buses (issue #282): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
+	--- the buses (issue #282; display panels since ME Network issue #628): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
 	--- marker layer stays and shows it); only the first layer of each direction is replaced
-	["simple-entity-with-force/me-import-bus"] = {
+	["display-panel/me-import-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
@@ -222,7 +222,7 @@ return {
 	["item/me-import-bus"] = {
 		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
 	},
-	["simple-entity-with-force/me-export-bus"] = {
+	["display-panel/me-export-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
@@ -232,7 +232,7 @@ return {
 	["item/me-export-bus"] = {
 		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
 	},
-	["simple-entity-with-force/me-storage-bus"] = {
+	["display-panel/me-storage-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
@@ -258,6 +258,10 @@ return {
 		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 	},
 	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
+	--- the underground cable's arm (ME Network: a layer of the cable sheet's variation of its side, under the tunnel mouth): the same sheet
+	["pipe-to-ground/me-underground-cable"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-cable.png"] = "__me-network-ae2-textures__/graphics/blocks/me-cable.png",
+	},
 	--- the crafting blocks (issue #302): each a sheet of ME Network's 48 variations (16 without a CPU: a cube each; 32 of a
 	--- CPU: AE2's formed look per side that touches the CPU, one big block with AE2's ring around its outside, issue #306)
 	["simple-entity-with-force/me-crafting-unit"] = {

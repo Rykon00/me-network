@@ -34,7 +34,7 @@
   network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
   windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
   bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
-  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386, and so has the ME Logistic Storage Bus, issue #506: a visit reads a whole logistic network), crafting jobs are stepped one per tick (each at most every 20
+  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386, and so has the ME Logistic Storage Bus, issue #506: a visit reads a whole logistic network, and the ME P2P input tunnel that carries on its own, issue #633), crafting jobs are stepped one per tick (each at most every 20
   ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
   (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side, IO ports 2,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
@@ -48,7 +48,12 @@
   storage engine (`N.ext_*`), with an item side and a fluid side (`scripts/fork-me-fluid-storagebus.lua`). Since issue
   #3 the ME Interface, the import, export and storage bus handle items and fluids; the ME Fluid Interface and the ME
   Fluid Import / Export / Storage Bus are hidden prototypes that `scripts/fork-me-unify.lua` replaces (keep them while
-  saves may hold them). The entity types the buses work with are in `scripts/fork-me-targets.lua`. The terminal module registers every GUI event and hands it to `fork-me-gui.lua`
+  saves may hold them). Since issue #628 the ME Import, Export and
+  Storage Bus and the ME Pattern Provider are display panels that take circuit wires (the interface a container with a circuit
+  connector); their old simple entities are hidden as `<name>-legacy` (the one approved exception to "never rename a
+  prototype": the old ones were renamed by `migrations/me-network-wired-hosts.json`, the wired ones kept the names), and
+  `scripts/fork-me-wired.lua` replaces them, moving their state to the new unit number through each module's `M.rekey`. A new
+  table keyed by the unit number of a bus or provider needs its line in that module's `rekey`. The entity types the buses work with are in `scripts/fork-me-targets.lua`. The terminal module registers every GUI event and hands it to `fork-me-gui.lua`
   (`dispatch`: actions by the `fork_me_act` tag; the block windows are in `fork-me-windows.lua`).
 - The hand-over (`scripts/fork-me-handover.lua`): the table list and the fingerprint function must stay equal to
   Gregtorio's `scripts/fork-me-handover.lua`. A new storage table that a Gregtorio save could hold cannot appear any

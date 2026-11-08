@@ -42,6 +42,7 @@ local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
 local picker = require("scripts.fork-me-picker")        -- (issue #514: the visible qualities)
 local circuit = require("scripts.fork-me-circuit")      -- (issue #520: the game's comparators)
 local SK = require("scripts.fork-me-sortkeys")          -- (issue #602: the sort by mod and by tier)
+local Ghost = require("scripts.fork-me-ghostwin")      -- (issue #659: the window of a ghost)
 
 local M = {}
 
@@ -415,8 +416,9 @@ end
 
 --- A click on an item of the grid, for a player's `cursor` (LuaItemStack) and main inventory `inv`. `mode`:
 --- "stack" (a stack into the cursor), "one" (one item into the cursor), "inventory" (a stack into the
---- inventory). With something in the cursor, "stack" stores the cursor. Returns the number of items moved
---- (stored: negative), or nil and a reason.
+--- inventory), "all" (issue #676: as much as fits into the inventory) or "half" (half of what the network holds,
+--- rounded up, capped by what fits). With something in the cursor, "stack" stores the cursor. Returns the number of
+--- items moved (stored: negative), or nil and a reason.
 function M.take_to(cursor, inv, terminal, key, mode)
 	local net, why = network(terminal)
 	if not net then return nil, why end
@@ -431,6 +433,14 @@ function M.take_to(cursor, inv, terminal, key, mode)
 	if mode == "inventory" or mode == "inventory-one" then      -- ("inventory-one": remote view's right click, issue #177)
 		if not inv then return nil, "no-inventory" end
 		local n = N.extract_to(net, inv, key, mode == "inventory" and proto.stack_size or 1)
+		if n == 0 then return nil, "inventory-full" end
+		return n
+	end
+	if mode == "all" or mode == "half" then                     -- (issue #676: control + click, control + right click)
+		if not inv then return nil, "no-inventory" end
+		local have = N.count_key(net, key)
+		if have <= 0 then return 0 end
+		local n = N.extract_to(net, inv, key, mode == "all" and have or math.ceil(have / 2))   -- (the inventory caps it)
 		if n == 0 then return nil, "inventory-full" end
 		return n
 	end
@@ -461,7 +471,7 @@ end
 --- (or nil and "no-inventory"); the third value tells the window to say where the items went.
 function M.take(player, terminal, key, mode)
 	local cursor, inv, remote = G.hand(player)
-	if remote then mode = mode == "one" and "inventory-one" or "inventory" end
+	if remote and mode ~= "all" and mode ~= "half" then mode = mode == "one" and "inventory-one" or "inventory" end
 	local n, why = M.take_to(cursor, inv, terminal, key, mode)
 	return n, why, remote and n and n > 0
 end
@@ -707,6 +717,8 @@ local function open(player, entity)
 end
 M.open = open
 
+local GRID_HINT = { "fork-me-net.grid-slot-hint" }     -- (issue #676: the clicks of an item slot, below its tooltip)
+
 --- a slot button of the storage grid for entry `c` (at `index`, nil: at the end); issue #602: a row kept at 0 is greyed and
 --- does nothing
 function M.grid_slot(grid, c, index)
@@ -715,7 +727,8 @@ function M.grid_slot(grid, c, index)
 		b.enabled = false
 		return b
 	end
-	return G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, index)
+	return G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil,
+		c.key:sub(1, 6) ~= "fluid/" and GRID_HINT or nil, index)
 end
 
 local function refresh_storage(player, st, frame, net)
@@ -1252,10 +1265,13 @@ end
 G.on("term_take", function(event, player, el)
 	local st = st_of(player)
 	if not (st and event.name == defines.events.on_gui_click) then return end
-	local mode = event.shift and "inventory" or event.button == defines.mouse_button_type.right and "one" or "stack"
-	local _, why, moved = M.take(player, st.entity, el.tags.key, mode)
+	local right = event.button == defines.mouse_button_type.right
+	local mode = event.control and (right and "half" or "all") or event.shift and "inventory" or right and "one" or "stack"
+	local n, why, moved = M.take(player, st.entity, el.tags.key, mode)
 	report(player, why)
-	if moved then G.moved_text(player) end
+	if (mode == "all" or mode == "half") and n and n > 0 then           -- (issue #676: the flying text names the count)
+		player.create_local_flying_text{ text = { "fork-me-gui.moved-count", G.fmt(n) }, create_at_cursor = true }
+	elseif moved then G.moved_text(player) end
 	M.refresh(player)
 	follow_up(player)
 end)
@@ -1360,7 +1376,7 @@ remote.add_interface("gregtorio-me-terminal", {
 	entity_by_unit = function(unit) return G.entity_by_unit(unit) end,
 	withdraw = function(terminal, target, name, quality, count) return M.withdraw(terminal, target, name, quality or "normal", count) end,
 	store_stack = function(terminal, stack) return M.store_stack(terminal, stack) end,
-	--- what the grid buttons do, for a cursor stack and a main inventory: mode "stack", "one" or "inventory"
+	--- what the grid buttons do, for a cursor stack and a main inventory: mode "stack", "one", "inventory", "all" or "half"
 	take = function(cursor, inventory, terminal, key, mode) return M.take_to(cursor, inventory, terminal, key, mode) end,
 	--- the "Store item in hand" button and a click on the grid with something in the cursor
 	store_cursor = function(cursor, terminal) return M.store_stack(terminal, cursor) end,
@@ -1442,6 +1458,7 @@ function M.on_configuration_changed()
 		if not game.get_player(index) then storage.fork_me_term_prefs[index] = nil end
 	end
 	G.close_all()
+	Ghost.on_configuration_changed()                        -- (issue #659: the stand-ins of the ghosts' windows)
 	storage.fork_me_gui_bypass = nil
 	SK.rebuild()                                            -- (issue #602: the prototypes can have changed)
 end
@@ -1483,6 +1500,8 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
 	Conn.on_gui_closed(event)                                -- (issue #412: a circuit connector's lamp window)
 	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
+	local player = game.get_player(event.player_index)
+	if player then Ghost.settle(player) end                  -- (issue #659: a ghost's window closed)
 end)
 
 --- issue #542: shift + click and control + click in the inventory element of an ME window (the game draws its slots and
@@ -1492,14 +1511,19 @@ script.on_event(defines.events.on_gui_inventory_action, function(event)
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
-	G.on_left(game.get_player(event.player_index))
+	local player = game.get_player(event.player_index)
+	G.on_left(player)
+	if player then Ghost.settle(player) end                  -- (issue #659)
 end)
 
 script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_changed, defines.events.on_gui_elem_changed,
 	defines.events.on_gui_confirmed, defines.events.on_gui_checked_state_changed,
 	defines.events.on_gui_switch_state_changed, defines.events.on_gui_selection_state_changed,
 	defines.events.on_gui_selected_tab_changed, defines.events.on_gui_value_changed }, function(event)
-	G.dispatch(event)
+	if G.dispatch(event) then
+		local player = game.get_player(event.player_index)
+		if player then Ghost.settle(player) end              -- (issue #659: the settings of a ghost's window into its tags)
+	end
 end)
 
 local function refresh()

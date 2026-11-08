@@ -10,6 +10,10 @@
 ---     every entity of the mod after the build (the engine's share: the same scene without the ME entities).
 ---   scene "planner": every usable recipe of the game as a processing pattern (deep trees, with Gregtorio its
 ---     recipes), the raw materials in cells; the planner and a job start are timed on the deepest items.
+---   scene "tunnels" (issue #629): 64 ME Molecular Assemblers of one pattern, reached by one provider through ME P2P tunnels
+---     (`tunnel`) or by 16 providers with four next to each; jobs keep them busy (none with `idle`).
+---   scene "carry" (issue #633): 40 item and 20 fluid lines, one source and four sinks each, carried by ME P2P tunnels on
+---     their own (`carry` "tunnels") or by an import bus and four export buses (`carry` "buses").
 ---   scene "inserters": the same number of chest -> inserter -> chest lines (half fast, half bulk inserters).
 ---   scene "robots": size / 10 requester chests (each emptied by a bulk inserter) served by logistic robots from
 ---     passive provider chests.
@@ -819,6 +823,45 @@ local function configure_part(b, part, first)
 	return types
 end
 
+--- Issue #639 (`conditions`): every import and export bus gets a circuit condition (no wire: it does nothing, the bus works)
+--- and, where the version has the logistic condition, one that holds ("iron plate >= 0") in the logistic network of unpowered
+--- roboports without collision on the buses' tiles (data.lua): every bus is in the connector's
+--- check list (16 checks per tick, each bus at most every 10 ticks), so the scene's throughput stays the same
+local function add_conditions(b)
+	local CONN = "gregtorio-me-connector"
+	local iface = remote.interfaces[CONN]
+	if not (iface and iface.set_condition) then return end
+	local s = surface()
+	local buses = {}
+	for _, rec in ipairs(b.slots) do
+		for _, e in pairs({ rec.bus, rec.exp, rec.imp }) do
+			if e and e.valid and (e.name == "me-import-bus" or e.name == "me-export-bus") then buses[#buses + 1] = e end
+		end
+	end
+	local logistic = iface.set_logistic ~= nil
+	local ports = 0
+	--- (on the tile of each bus that none covers yet: data.lua, no collision; in both versions, so that what the logistic networks
+	--- cost elsewhere is the same and the difference is the condition's)
+	do
+		for _, e in ipairs(buses) do
+			if not s.find_logistic_network_by_position(e.position, "player")
+				and s.create_entity{ name = "zz-bench-roboport", position = e.position, force = "player" } then ports = ports + 1 end
+		end
+	end
+	local covered = 0
+	for _, e in ipairs(buses) do
+		remote.call(CONN, "set_condition", e, true, { first_signal = { type = "virtual", name = "signal-A" }, comparator = "<", constant = 1 })
+		if logistic then
+			remote.call(CONN, "set_logistic", e, true, { first_signal = { type = "item", name = "iron-plate" }, comparator = ">=", constant = 0 })
+			if s.find_logistic_network_by_position(e.position, "player") then covered = covered + 1 end
+		end
+	end
+	if logistic and covered < #buses then
+		fail("conditions: " .. (#buses - covered) .. " buses outside the roboport's area (" .. ports .. " roboports)")
+	end
+	b.conditions = { buses = #buses, roboports = ports, logistic = logistic }
+end
+
 --- `noent`: every entity of the mod goes (the members, the interfaces' side tanks), nothing is registered any more
 local function strip_me()
 	local n = 0
@@ -1050,6 +1093,7 @@ local function build_me()
 	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
+	if C.conditions then add_conditions(b) end                                 -- (issue #639)
 	--- issue #603: the characters join the refill's queue (where the version has it)
 	if b.refill then
 		local wl = remote.interfaces["gregtorio-me-wireless"]
@@ -1086,6 +1130,7 @@ local function build_me()
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
 		logistic = b.logistic,                                                  -- (issue #506)
+		conditions = b.conditions,                                              -- (issue #639)
 		refill = b.refill and { characters = b.refill.n, access_point = b.refill.ap, queued = b.refill.queued } or nil,   -- (issue #603)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
@@ -1290,6 +1335,217 @@ end
 local function slice_report(b)
 	log_json("SLICE", { tick = game.tick, memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count"),
 		backlogs = backlogs(), sched = sched_stats(false) })
+end
+
+--------------------------------------------------------------------------------
+--- issue #629: the tunnel scene. TUNNEL_MACHINES ME Molecular Assemblers on one network, all for one crafting pattern: either
+--- one pattern provider reaches them through ME P2P item tunnels (`C.tunnel`: an input tunnel facing it, an output tunnel on
+--- each machine), or TUNNEL_MACHINES / 4 providers have four of them next to each. Two jobs of the pattern keep them busy (none
+--- with `idle`): the providers' rescans and the job steps over the same machines, in the two layouts.
+--------------------------------------------------------------------------------
+
+local TUNNEL_MACHINES, TUNNEL_PER_ROW, TUNNEL_STOCK = 64, 8, 400000
+local function build_tunnels()
+	local b = storage.b
+	research_all(game.forces.player)
+	fit_lists()
+	local recipe = prototypes.recipe[PAIR_RECIPES[1]]
+	local rows = C.tunnel and TUNNEL_MACHINES / TUNNEL_PER_ROW or TUNNEL_MACHINES / 16
+	local width = C.tunnel and 3 * TUNNEL_PER_ROW + 2 or 18
+	new_surface(width + 32, 16 + 6 * rows)
+	b.machines, b.providers, b.job_keys, b.slots, b.cpus = {}, {}, {}, {}, {}
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	power_row(Y0 - 6, X0 - 22, X0 + width + 2)
+	for yy = Y0, Y0 + 6 * rows do place("me-cable", p1(X0 - 1, yy)) end            -- the spine
+	for x = X0, X0 + width - 1 do place("me-cable", p1(x, Y0)) end
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	for k = 0, 1 do                                                                   -- two CPUs, as the planner scene's
+		local cy = Y0 + 3 + 2 * k
+		b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, cy)))
+		for dx = 3, 17 do member(place("me-256k-crafting-storage", p1(X0 - dx, cy))) end
+		for dx = 18, 20 do member(place("me-crafting-co-processing-unit", p1(X0 - dx, cy))) end
+	end
+	local drive = member(place("me-drive", p1(X0 + 1, Y0 + 1)))
+	local input
+	if C.tunnel then
+		b.providers[1] = member(place("me-pattern-provider", p1(X0 + 4, Y0 + 1)))
+		local x, y = p1(X0 + 3, Y0 + 1)
+		input = member(place("me-item-p2p-tunnel", x, y, defines.direction.east))     -- (faces the provider)
+	end
+	local outputs = {}
+	for r = 0, rows - 1 do
+		local y = Y0 + 6 + 6 * r
+		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y)) end
+		if C.tunnel then
+			for i = 0, TUNNEL_PER_ROW - 1 do
+				local x = X0 + 1 + 3 * i
+				local tx, ty = p1(x, y + 1)
+				outputs[#outputs + 1] = member(place("me-item-p2p-tunnel", tx, ty, defines.direction.south))
+				b.machines[#b.machines + 1] = member(place("me-molecular-assembler", p1(x, y + 2)))
+			end
+		else
+			for i = 0, 3 do
+				local x = X0 + 2 + 4 * i
+				b.providers[#b.providers + 1] = member(place("me-pattern-provider", p1(x, y + 2)))
+				for _, d in ipairs({ { 0, 1 }, { -1, 2 }, { 1, 2 }, { 0, 3 } }) do
+					b.machines[#b.machines + 1] = member(place("me-molecular-assembler", p1(x + d[1], y + d[2])))
+				end
+			end
+		end
+		power_row(y + 3, X0 + width + 4, X0 + width + 4)
+	end
+	--- the graph in one pass, every module registers its blocks; then the frequency, the patterns, the stock
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	if input then
+		local f = remote.call("gregtorio-me-p2p", "make_input", input)
+		for _, o in ipairs(outputs) do
+			if not remote.call("gregtorio-me-p2p", "bind_output", o, f) then fail("an output tunnel was not bound") end
+		end
+	end
+	for _, prov in ipairs(b.providers) do give_pattern(prov, recipe.name) end
+	if drive then
+		local ing = recipe.ingredients[1]
+		insert_cell(drive, "me-256k-storage-cell", { [ing.name] = TUNNEL_STOCK }, 1)
+	end
+	if not C.idle then
+		for _ = 1, 2 do b.job_keys[#b.job_keys + 1] = { anchor = b.anchor, key = recipe.products[1].name } end
+	end
+	local net = remote.call(NET, "network", b.anchor)
+	log_json("SETUP", { scene = "tunnels", size = C.size, tunnel = C.tunnel or false, idle = C.idle or false, recipe = recipe.name,
+		providers = #b.providers, machines = #b.machines, members = #members, network_ok = net and net.ok or false,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+local function probe_tunnels(b)
+	local n = {}
+	for i, m in ipairs(b.machines) do n[i] = m.valid and m.products_finished or 0 end
+	return { tick = game.tick, crafted = n }
+end
+
+local function report_tunnels(b, p0, p1)
+	local secs = (p1.tick - p0.tick) / 60
+	local crafts, working = 0, 0
+	for i = 1, #b.machines do
+		local d = (p1.crafted[i] or 0) - (p0.crafted[i] or 0)
+		crafts = crafts + d
+		if d > 0 then working = working + 1 end
+	end
+	local reached = 0
+	for _, prov in ipairs(b.providers) do
+		local info = prov.valid and remote.call(AC, "provider_info", prov)
+		local slot = info and info.slots and info.slots[1]
+		reached = reached + (slot and slot.machines or 0)
+	end
+	return { seconds = secs, providers = #b.providers, machines = #b.machines, reached = reached, crafts_per_s = crafts / secs,
+		working = working }
+end
+
+--------------------------------------------------------------------------------
+--- issue #633: the carry scene. CARRY_ITEMS item lines (an infinity chest, a bulk inserter, then the input, and four steel
+--- chests as the sinks) and CARRY_FLUIDS fluid lines (an infinity pipe of water, then the input, and four infinity pipes that
+--- drain it) on one network, carried either by ME P2P tunnels on their own (`C.carry == "tunnels"`: an input tunnel and four
+--- output tunnels per line) or by buses (an import bus facing the inserter's chest or the source pipe, four export buses on
+--- the sinks, a drive for what passes through). The items the sinks got are the throughput.
+--------------------------------------------------------------------------------
+
+local CARRY_ITEMS, CARRY_FLUIDS, CARRY_PITCH = 40, 20, 12
+local function build_carry()
+	local b = storage.b
+	research_all(game.forces.player)
+	local tunnels = C.carry == "tunnels"
+	local lines = CARRY_ITEMS + CARRY_FLUIDS
+	local width = 10 * 3 + 4
+	new_surface(width + 32, 16 + CARRY_PITCH * math.ceil(lines / 3))
+	b.sinks, b.slots, b.job_keys = {}, {}, {}
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	local N_, S_, W_ = defines.direction.north, defines.direction.south, defines.direction.west
+	power_row(Y0 - 6, X0 - 22, X0 + 3 * width + 2)
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	local drive = member(place("me-drive", p1(X0 - 1, Y0 + 3)))
+	for yy = Y0, Y0 + CARRY_PITCH * math.ceil(lines / 3) do place("me-cable", p1(X0 - 1, yy)) end   -- the spine
+	local outs, ins, freq = {}, {}, 0
+	for i = 0, lines - 1 do
+		local fluid = i >= CARRY_ITEMS
+		local col, row = i % 3, math.floor(i / 3)
+		local x0, y0 = X0 + col * width, Y0 + 4 + row * CARRY_PITCH
+		for x = X0, X0 + 3 * width - 1 do if col == 0 then place("me-cable", p1(x, y0)) end end   -- the line's cable row
+		power_row(y0 + 5, x0 + 2, x0 + 2)
+		--- the source, south of the cable: the input (or the import bus) touches the cable
+		local inx, iny = p1(x0 + 1, y0 + 1)
+		if fluid then
+			local pipe = place("infinity-pipe", p1(x0 + 1, y0 + 2))
+			if pipe then pipe.set_infinity_pipe_filter{ name = "water", percentage = 1 } end
+			if tunnels then ins[#ins + 1] = member(place("me-fluid-p2p-tunnel", inx, iny, S_))
+			else
+				local bus = member(place("me-import-bus", inx, iny, S_))
+				if bus then b.slots[#b.slots + 1] = { bus = bus, filters = { "fluid/water" } } end
+			end
+		else
+			local src = place("infinity-chest", p1(x0 + 1, y0 + 3))
+			if src then src.set_infinity_container_filter(1, { name = "iron-plate", count = 100, mode = "at-least" }) end
+			local ix, iy = p1(x0 + 1, y0 + 2)
+			place("bulk-inserter", ix, iy, S_)
+			if tunnels then ins[#ins + 1] = member(place("me-item-p2p-tunnel", inx, iny, N_))
+			else
+				place("wooden-chest", p1(x0 + 1, y0 + 1))
+				local bx, by = p1(x0 + 2, y0 + 1)
+				member(place("me-import-bus", bx, by, W_))
+			end
+		end
+		--- four sinks north of the cable, an output (or an export bus) on each
+		local line_outs = {}
+		for k = 0, 3 do
+			local x = x0 + 3 + 2 * k
+			local ox, oy = p1(x, y0 - 1)
+			if fluid then
+				local sink = place("infinity-pipe", p1(x, y0 - 2))
+				if sink then sink.set_infinity_pipe_filter{ name = "water", percentage = 0, mode = "exactly" } end
+			else
+				local sink = place("steel-chest", p1(x, y0 - 2))
+				b.sinks[#b.sinks + 1] = sink
+			end
+			local name = tunnels and (fluid and "me-fluid-p2p-tunnel" or "me-item-p2p-tunnel") or "me-export-bus"
+			local e = member(place(name, ox, oy, N_))
+			if tunnels then line_outs[#line_outs + 1] = e
+			elseif e then b.slots[#b.slots + 1] = { bus = e, filters = { fluid and "fluid/water" or "iron-plate" } } end
+		end
+		outs[#outs + 1] = line_outs
+	end
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	if tunnels then
+		for i, input in ipairs(ins) do
+			local f = remote.call("gregtorio-me-p2p", "make_input", input)
+			for _, o in ipairs(outs[i]) do
+				if not (o and remote.call("gregtorio-me-p2p", "bind_output", o, f)) then fail("an output tunnel was not bound") end
+			end
+		end
+	else
+		for _, s in ipairs(b.slots) do remote.call(IO, "set_bus_filters", s.bus, s.filters) end
+		if drive then
+			insert_cell(drive, "me-256k-storage-cell", {}, 1)
+			insert_cell(drive, "me-256k-fluid-storage-cell", {}, 2)
+		end
+	end
+	local net = remote.call(NET, "network", b.anchor)
+	log_json("SETUP", { scene = "carry", size = C.size, carry = C.carry, item_lines = CARRY_ITEMS, fluid_lines = CARRY_FLUIDS,
+		sinks = #b.sinks, members = #members, network_ok = net and net.ok or false,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+local function probe_carry(b)
+	local n = 0
+	for _, s in ipairs(b.sinks) do n = n + (s.valid and s.get_item_count("iron-plate") or 0) end
+	return { tick = game.tick, items = n }
+end
+
+local function report_carry(b, p0, p1)
+	local secs = (p1.tick - p0.tick) / 60
+	return { seconds = secs, carry = C.carry, item_lines = CARRY_ITEMS, fluid_lines = CARRY_FLUIDS,
+		items_per_s = (p1.items - p0.items) / secs }
 end
 
 --------------------------------------------------------------------------------
@@ -2214,6 +2470,79 @@ local function burst_remove(list)
 	return n
 end
 
+--- me-network issue #670: `C.cable_ghosts` ME Cable ghosts in a square north of the burst (every ghost has up to four ghost
+--- neighbours), pasted in one tick (raise_built, as a paste raises on_built_entity per
+--- ghost) and removed in one tick (on_object_destroyed comes at the end of that tick or the next: the "-after" lines), then
+--- pasted again and built in one tick (revive with raise_revive, as robots build), the built cables removed
+local function cable_ghost_tick(b, t)
+	local s = surface()
+	local n = C.cable_ghosts
+	local side = math.ceil(math.sqrt(n))
+	local function paste(what)
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, side - 1 do
+			for x = 0, side - 1 do
+				if k < n then
+					k = k + 1
+					local g = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { p1(X0 - 1 + x, BURST_Y - 60 - y) },
+						force = "player", raise_built = true }
+					if g then made[#made + 1] = g end
+				end
+			end
+		end
+		p.stop()
+		b.cable_ghosts = made
+		log({ "", "DEVCHECK-BENCH-BURST " .. what .. " ", #made, " ", game.tick, " ", p })
+	end
+	local function after(what)
+		local p = helpers.create_profiler()
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST " .. what .. " 0 ", game.tick, " ", p })
+	end
+	if t == 330 then
+		s.request_to_generate_chunks({ X0 + side / 2, BURST_Y - 60 - side / 2 }, math.ceil(side / 64) + 2)
+		s.force_generate_chunk_requests()
+	elseif t == 331 then
+		paste("cable-ghost-paste")
+	elseif t == 332 then
+		after("cable-ghost-paste-after")
+	elseif t == 390 then
+		local p = helpers.create_profiler()
+		local k = 0
+		for _, g in ipairs(b.cable_ghosts or {}) do
+			if g.valid then
+				g.destroy()
+				k = k + 1
+			end
+		end
+		p.stop()
+		b.cable_ghosts = nil
+		log({ "", "DEVCHECK-BENCH-BURST cable-ghost-remove ", k, " ", game.tick, " ", p })
+	elseif t == 391 then
+		after("cable-ghost-remove-after")
+	elseif t == 450 then
+		paste("cable-ghost-paste2")
+	elseif t == 510 then
+		local p = helpers.create_profiler()
+		local built = {}
+		for _, g in ipairs(b.cable_ghosts or {}) do
+			if g.valid then
+				local _, e = g.revive{ raise_revive = true }
+				if e then built[#built + 1] = e end
+			end
+		end
+		p.stop()
+		b.cable_ghosts = built
+		log({ "", "DEVCHECK-BENCH-BURST cable-ghost-build ", #built, " ", game.tick, " ", p })
+	elseif t == 511 then
+		after("cable-ghost-build-after")
+	elseif t == 570 then
+		burst_remove(b.cable_ghosts or {})
+		b.cable_ghosts = nil
+	end
+end
+
 local function on_burst_tick()
 	local b = storage.b
 	local t = game.tick - b.burst_t0
@@ -2349,7 +2678,10 @@ local function on_burst_tick()
 		local p = helpers.create_profiler()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST ghost-after 0 ", game.tick, " ", p })
-	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area)) then   -- (after #560's assembler burst)
+	elseif (C.cable_ghosts or 0) > 0 and t >= 330 and t <= 580 then
+		cable_ghost_tick(b, t)
+	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area))
+		and (t > 580 or (C.cable_ghosts or 0) == 0) then   -- (after #560's assembler burst, and #670's cable ghosts)
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")
@@ -2381,6 +2713,8 @@ script.on_init(function()
 	storage.b = { phase = "warmup" }
 	if C.scene == "me" then build_me()
 	elseif C.scene == "planner" then build_planner()
+	elseif C.scene == "tunnels" then build_tunnels()                 -- (issue #629)
+	elseif C.scene == "carry" then build_carry()                     -- (issue #633)
 	elseif C.scene == "inserters" then build_inserters()
 	else build_robots() end
 end)
@@ -2414,6 +2748,8 @@ end
 local function probe(b)
 	if C.scene == "me" then return probe_me(b) end
 	if C.scene == "planner" then return { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} } end
+	if C.scene == "tunnels" then return probe_tunnels(b) end
+	if C.scene == "carry" then return probe_carry(b) end
 	return probe_native(b)
 end
 
@@ -2422,7 +2758,7 @@ end
 script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 	local b = storage.b
 	local tick = event.tick
-	if tick == C.warmup / 2 and C.scene == "me" and not C.noent then
+	if tick == C.warmup / 2 and (C.scene == "me" or C.scene == "tunnels") and not C.noent then
 		start_jobs(b)
 	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
@@ -2439,8 +2775,12 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		log("DEVCHECK-BENCH-PROBE1 " .. game.tick)
 		if C.scene == "me" then log_json("THROUGHPUT", report_me(b, b.p0, p1))
 		elseif C.scene == "planner" then log_json("THROUGHPUT", report_planner(b, b.p0, p1))
+		elseif C.scene == "tunnels" then log_json("THROUGHPUT", report_tunnels(b, b.p0, p1))
+		elseif C.scene == "carry" then log_json("THROUGHPUT", report_carry(b, b.p0, p1))
 		else log_json("THROUGHPUT", report_native(b, b.p0, p1)) end
-		if C.scene == "me" or C.scene == "planner" then log_json("SERVICE", service_report(b, b.p0, p1)) end
+		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" or C.scene == "carry" then
+			log_json("SERVICE", service_report(b, b.p0, p1))
+		end
 		b.p0 = nil
 		if C.profile and C.scene == "me" and not C.noent then engine_profile(b) end
 		if C.scene == "me" and C.latency and not C.profile and not C.noent then

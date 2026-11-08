@@ -40,7 +40,8 @@ M.no_arrival = false
 local SWEEP_PER_STEP = 200          -- members checked for validity per slow step
 local LEDS_PER_STEP_N = 50          -- drives whose lights are redrawn per slow step
 local BASE_POWER = 120000           -- W: controller
-local MEMBER_POWER = 4000           -- W: per member without its own power connection
+--- W: per member without its own power connection (issue #680: the startup setting, through the mod-data)
+local MEMBER_POWER = (prototypes.mod_data["fork-me-network"] and prototypes.mod_data["fork-me-network"].data.member_default) or 4000
 local CELL_TAG = "fork_me_cell"
 local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, partitions = { ["slot"] = { keys } } }
 --- issue #267: a cell's light is a hidden entity on the drive's (or chest's) position whose picture variation is its bay and
@@ -100,6 +101,8 @@ local function kinds()
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
+		if n.p2p_item_tunnel then k[n.p2p_item_tunnel] = "p2p-tunnel" end      -- issue #629: the ME P2P tunnels
+		if n.p2p_fluid_tunnel then k[n.p2p_fluid_tunnel] = "p2p-tunnel" end
 	end
 	k["me-pattern-provider"] = "provider"
 	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
@@ -164,6 +167,14 @@ function M.node_names()
 end
 
 function M.kind_of(name) return kinds()[name] end
+
+--- issue #670: the node of the member `entity` (nil when it is none: not registered, or marked for deconstruction)
+function M.node_of(entity)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[entity.unit_number]
+	if node and node.entity == entity then return node end
+	return nil
+end
 
 local function cell_spec(name) return mod_data().cells[name] end
 M.cell_spec = cell_spec
@@ -309,6 +320,10 @@ local function connects(a, b)
 	if b.kind == "underground" and side_of(b, a) ~= DIR_BIT[b.dir] then return false end
 	return true
 end
+M.side_of, M.connects = side_of, connects       -- (issue #670: the shapes of cable ghosts, scripts/fork-me-cableshape.lua)
+--- issue #670: function(entity, node) called when a member joined or left the graph (set by scripts/fork-me-cableshape.lua:
+--- the cable ghosts next to it follow)
+M.ghost_hook = nil
 
 --- render objects of an older version (a dashed line between paired ends): destroyed when the graph is rebuilt
 local function clear_link(node)
@@ -366,6 +381,12 @@ local function update_cable(s, node)
 		end
 	end
 	node.entity.graphics_variation = mask + 1
+end
+
+--- issue #670: the built cable `entity` takes its shape from the graph again (a paste over it gave it the blueprint's)
+function M.reshape_cable(entity)
+	local node = M.node_of(entity)
+	if node then update_cable(storage.fork_me_net, node) end
 end
 
 local recompute
@@ -589,6 +610,7 @@ local function add_node(s, entity, kind)
 	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
+	if M.ghost_hook then M.ghost_hook(entity, node) end   -- (issue #670)
 	if #order == 1 and not M.STATUS_KINDS[kind] then                  -- (issue #442: the creative energy cell too)
 		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
@@ -649,6 +671,7 @@ function remove_node_graph(s, unit)
 	end
 	table.sort(neighbours)
 	for _, u in ipairs(neighbours) do update_cable(s, s.nodes[u]) end
+	if M.ghost_hook and node.entity.valid then M.ghost_hook(node.entity, node) end   -- (issue #670)
 	if not net then return end
 	net.nodes[unit] = nil
 	net.n = net.n - 1
@@ -5013,7 +5036,7 @@ function M.set_toggle(entity, joined)
 	s.toggle_off = s.toggle_off or {}
 	if joined then
 		s.toggle_off[unit] = nil
-		if s.nodes[unit] then return false end
+		if s.nodes[unit] or (s.decon and s.decon[unit]) then return false end   -- (a marked bus stays out: M.set_marked)
 		add_node(s, entity, "toggle")
 	else
 		s.toggle_off[unit] = true
@@ -5021,6 +5044,100 @@ function M.set_toggle(entity, joined)
 		remove_node_graph(s, unit)
 	end
 	return true
+end
+
+--------------------------------------------------------------------------------
+--- A member marked for deconstruction carries no network: it leaves the graph at once, as if it were mined (the network
+--- splits as for a removed cable; a drive's cells and a storage bus's inventory leave the network's storage but stay with the
+--- block), and joins again when the mark is cancelled. Unlike a mined member it keeps everything else: its drive record and
+--- cells, its external cell, its quantum bridge and wireless link edges (`s.qlink`, `s.wlinks`), the records of the other
+--- modules. `s.decon` = { [unit] = entity } holds the marked members (rebuild and keep_graph skip them and read the marks from
+--- the map, `M.scan_decon`); M.on_removed of a marked one releases what it kept. An open toggle bus that is marked stays out
+--- when the mark goes (`s.toggle_off`).
+--------------------------------------------------------------------------------
+
+--- is `unit` a member that is out of the graph because it is marked for deconstruction?
+function M.is_marked(unit)
+	local s = storage.fork_me_net
+	return s ~= nil and s.decon ~= nil and s.decon[unit] ~= nil
+end
+
+--- the member `unit` (a node) leaves the graph for its mark: an underground end lets go of its partner first (the engine keeps
+--- them paired while the marked end stands, so the partner pairs with nothing else; M.on_removed lets it look again)
+function M.leave_marked(s, unit)
+	local node = s.nodes[unit]
+	if not node then return end
+	local pu = node.partner
+	clear_link(node)
+	node.partner = nil
+	local p = pu and s.nodes[pu]
+	if p and p.partner == unit then
+		p.partner = nil
+		clear_link(p)
+	end
+	if node.kind == "controller" and node.entity.valid then node.entity.custom_status = nil end   -- (a conflict it showed)
+	remove_node_graph(s, unit)
+end
+
+--- `entity` was marked for deconstruction (`marked` true) or its mark was cancelled. Returns true when the graph changed.
+function M.set_marked(entity, marked)
+	if not (entity and entity.valid and entity.unit_number) then return false end
+	local kind = kinds()[entity.name]
+	if not kind then return false end
+	local s = state()
+	local unit = entity.unit_number
+	s.decon = s.decon or {}
+	if marked then
+		if s.decon[unit] then return false end
+		s.decon[unit] = entity
+		if not s.nodes[unit] then return false end              -- (an open toggle bus)
+		M.leave_marked(s, unit)
+		return true
+	end
+	if not s.decon[unit] then return false end
+	s.decon[unit] = nil
+	if s.nodes[unit] then return false end
+	if kind == "toggle" and ((s.toggle_off and s.toggle_off[unit]) or not M.toggle_wants(entity)) then
+		s.toggle_off = s.toggle_off or {}
+		s.toggle_off[unit] = true
+		return false
+	end
+	add_node(s, entity, kind)
+	return true
+end
+
+--- the marks on the map (rebuild, keep_graph): `s.decon` made anew; returns the set it had before
+function M.scan_decon(s)
+	local old = s.decon or {}
+	local new = {}
+	local names = M.node_names()
+	for _, surface in pairs(game.surfaces) do
+		for _, e in pairs(surface.find_entities_filtered{ name = names, to_be_deconstructed = true }) do new[e.unit_number] = e end
+	end
+	s.decon = new
+	return old
+end
+
+--- the working network beside the marked (or any) member `entity`: the one of a member it would connect to, the smallest id
+--- first (where a marked ME Interface puts the fluid of its sides when it is mined); nil if there is none
+function M.network_beside(entity)
+	local s = storage.fork_me_net
+	if not (s and entity and entity.valid) then return nil end
+	if s.nodes[entity.unit_number] then return M.active_of(entity) end
+	local kind = kinds()[entity.name]
+	if not kind then return nil end
+	local tb = tile_box(entity)
+	local b = { tb[1], tb[2], tb[3], tb[4], kind = kind, dir = entity.direction }
+	local best
+	for _, e in pairs(entity.surface.find_entities_filtered{
+		area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = M.node_names(), force = entity.force }) do
+		local o = e.valid and e ~= entity and s.nodes[e.unit_number]
+		if o and o.entity == e and adjacent(b, o) and connects(b, o) then
+			local net = s.nets[o.net]
+			if net and M.usable(net) and (not best or net.id < best.id) then best = net end
+		end
+	end
+	return best
 end
 
 --- Issue #385: link the ME Quantum Bridges `a` and `b` (entities; `b` nil: unlink `a` from its partner). A link is a graph edge
@@ -5203,7 +5320,9 @@ function M.on_removed(entity, buffer)
 	if not (entity and entity.valid and entity.unit_number) then return end
 	local s = storage.fork_me_net
 	if s and s.toggle_off then s.toggle_off[entity.unit_number] = nil end   -- (issue #355)
-	if not (s and s.nodes[entity.unit_number]) then return end
+	local marked = s and s.decon and s.decon[entity.unit_number]           -- (out of the graph for its mark: M.set_marked)
+	if marked then s.decon[entity.unit_number] = nil end
+	if not (s and (s.nodes[entity.unit_number] or marked)) then return end
 	local d = s.drives[entity.unit_number]
 	if d then
 		for _, def in ipairs(unload_drive(s, d)) do
@@ -5217,7 +5336,63 @@ function M.on_removed(entity, buffer)
 	CH.gone(s, entity.unit_number)              -- (issue #229: an ME Chest's hidden parts)
 	controller_light_gone(s, entity.unit_number)   -- (issue #278)
 	M.ext_detach(entity.unit_number)               -- a storage bus: its inventory leaves the network
-	remove_node(s, entity.unit_number)
+	if s.nodes[entity.unit_number] then
+		remove_node(s, entity.unit_number)
+		return
+	end
+	--- a marked member: its links go as remove_node's do; the engine's partner of a marked underground end may pair with an end
+	--- further away once it is gone (the next slow step)
+	local unit = entity.unit_number
+	local qu = s.qlink and s.qlink[unit]
+	if qu then
+		s.qlink[unit] = nil
+		if s.qlink[qu] == unit then s.qlink[qu] = nil end
+	end
+	M.drop_wlinks(s, unit)
+	local pe = kinds()[entity.name] == "underground" and engine_partner(entity, entity.direction)
+	if pe and s.nodes[pe.unit_number] then
+		s.ug_dirty = s.ug_dirty or {}
+		s.ug_dirty[pe.unit_number] = true
+	end
+end
+
+--- Issue #628 (scripts/fork-me-wired.lua): member `old` (a unit) was replaced by entity `new` of another prototype at its
+--- place; its node, its edges, its place in the sweep and its network, its waits and its external cell (a storage bus) move to
+--- the new unit, so the graph and the storage engine do not change. The other modules move their records first.
+function M.rekey(old, new)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[old]
+	if not node then return end
+	local u = new.unit_number
+	s.nodes[old], s.nodes[u] = nil, node
+	node.entity = new
+	for v in pairs(node.adj) do
+		local other = s.nodes[v]
+		if other then other.adj[old], other.adj[u] = nil, true end
+	end
+	if node.li and s.nlist[node.li] == old then s.nlist[node.li] = u end
+	local net = node.net and s.nets[node.net]
+	if net then
+		if net.nodes[old] then net.nodes[old], net.nodes[u] = nil, true end
+		for _, field in pairs({ "wunits", "wait_use", "wait_room" }) do
+			local w = net[field]
+			if w and w[old] ~= nil then w[old], w[u] = nil, w[old] end
+		end
+		for _, field in pairs({ "wait_in", "wait_out", "wait_below" }) do
+			for _, w in pairs(net[field] or {}) do
+				if w[old] ~= nil then w[old], w[u] = nil, w[old] end
+			end
+		end
+	end
+	local cell = s.ext[old]
+	if cell then
+		--- the cell leaves under its old id and comes back under the new one (the totals and the index follow; a wait it fires
+		--- wakes a block that is moved already)
+		if net and net.cells[ext_cid(old)] == cell then net_cell(net, ext_cid(old), cell, -1) end
+		s.ext[old], s.ext[u] = nil, cell
+		if net then net_cell(net, ext_cid(u), cell, 1) end
+	end
+	s.version = (s.version or 0) + 1
 end
 
 --- a member whose entity vanished without an event: spill its cells at the stored position, unregister it
@@ -5539,6 +5714,101 @@ function M.clean_removed_items()
 	end
 end
 
+--- Issue #689: the old drive items (before issue #68) that the cells of drives and ME Chests hold are replaced, before the graph
+--- rebuild of on_configuration_changed computes every network's totals and index from the cells. `products(name, quality,
+--- count, data)` gives the stack definitions that replace `count` of the old item (an ME Drive, its cells, a card). They go into
+--- the same drive's item cells where there is room (an empty cell as its plain key, a cell with contents as a key with its
+--- tags, as M.storable keys them); the rest is returned with the drive's place: { { surface, position, defs } }. Returns the
+--- number of old items replaced and that list.
+function M.convert_legacy_drive_keys(products)
+	local s = state()
+	local legacy = mod_data().legacy_drives or {}
+	local found, spills = 0, {}
+	local units = {}
+	for unit in pairs(s.drives) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local d = s.drives[unit]
+		local defs = {}
+		local has
+		for slot = 1, drive_slots() do
+			local cell = d.slots[slot]
+			for key in pairs(cell and cell.items or {}) do
+				if legacy[(parse_key(key))] then has = true break end
+			end
+			if has then break end
+		end
+		--- (a drive in a network: its cells leave the network's totals and index while they change, and come back after)
+		local net = has and drive_net(s, unit)
+		local counted = {}
+		if net then
+			for slot = 1, drive_slots() do
+				local cid = unit .. ":" .. slot
+				if d.slots[slot] and net.cells[cid] == d.slots[slot] then
+					net_cell(net, cid, d.slots[slot], -1)
+					counted[slot] = true
+				end
+			end
+		end
+		for slot = 1, has and drive_slots() or 0 do
+			local cell = d.slots[slot]
+			local spec = cell and cell_spec(cell.name)
+			if spec and not fluid_cell(spec) and not spec.creative then
+				local keys = {}
+				for key in pairs(cell.items) do
+					if legacy[(parse_key(key))] then keys[#keys + 1] = key end
+				end
+				table.sort(keys)
+				for _, key in ipairs(keys) do
+					local n = math.floor(cell.items[key])
+					local data = cell.data and cell.data[key]
+					local name, q = parse_key(key)
+					cell_add(cell, spec, key, -cell.items[key])
+					if cell.data then cell.data[key] = nil end
+					for _, def in ipairs(products(name, q, n, data)) do defs[#defs + 1] = def end
+					found = found + n
+				end
+			end
+		end
+		if #defs > 0 then
+			s.dirty[unit] = true
+			local rest = {}
+			for _, def in ipairs(defs) do
+				local key = def.tags and key_of(def.name, def.quality, helpers.table_to_json({ tags = def.tags }))
+					or key_of(def.name, def.quality)
+				local left = def.count
+				for slot = 1, drive_slots() do
+					local cell = d.slots[slot]
+					local spec = cell and cell_spec(cell.name)
+					if left <= 0 then break end
+					if spec and item_exists(def.name) then
+						local n = math.min(left, math.floor(cell_room(cell, spec, key)))
+						if n > 0 then
+							cell_add(cell, spec, key, n)
+							if def.tags then cell.data[key] = { tags = def.tags } end
+							left = left - n
+						end
+					end
+				end
+				if left > 0 then
+					local copy = {}
+					for k, v in pairs(def) do copy[k] = v end
+					copy.count = left
+					rest[#rest + 1] = copy
+				end
+			end
+			if #rest > 0 then
+				local e = d.entity
+				local surface = e and e.valid and e.surface or (d.surface and game.surfaces[d.surface])
+				local position = e and e.valid and e.position or d.position
+				if surface and position then spills[#spills + 1] = { surface = surface, position = position, defs = rest } end
+			end
+		end
+		for slot in pairs(counted) do net_cell(net, unit .. ":" .. slot, d.slots[slot], 1) end
+	end
+	return found, spills
+end
+
 --- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same
 --- rules and prototypes (s.graph_sig), and with few members that changed without an event: those that vanished are taken out
 --- as the sweep takes them out (vanish), member entities that came without an event (the count of the map's member
@@ -5553,12 +5823,25 @@ function M.keep_graph(s)
 	local KEEP_CHANGES = 64
 	local sig = M.graph_sig()
 	if s.graph_sig ~= sig or not next(s.nodes) then return false end
+	--- the marks for deconstruction as the map has them: a marked member leaves (a save from before kept them), one whose mark
+	--- went without an event is found below as a member that came without one
+	M.scan_decon(s)
+	local leave = {}
+	for unit, e in pairs(s.decon) do
+		local node = s.nodes[unit]
+		if node and node.entity == e then leave[#leave + 1] = unit end
+	end
+	table.sort(leave)
+	for _, unit in ipairs(leave) do M.leave_marked(s, unit) end
 	local members, gone = 0, {}
 	for unit, node in pairs(s.nodes) do
 		if node.entity.valid then members = members + 1 else gone[#gone + 1] = unit end
 	end
 	local off = 0
 	for _ in pairs(s.toggle_off or {}) do off = off + 1 end
+	for unit in pairs(s.decon) do
+		if not (s.toggle_off and s.toggle_off[unit]) then off = off + 1 end
+	end
 	local names, on_map = M.node_names(), 0
 	for _, surface in pairs(game.surfaces) do on_map = on_map + surface.count_entities_filtered{ name = names } end
 	local new = on_map - members - off                      -- (members that came without an event; < 0: a stale open toggle)
@@ -5571,7 +5854,7 @@ function M.keep_graph(s)
 		for _, surface in pairs(game.surfaces) do
 			for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 				local unit = e.unit_number
-				if not s.nodes[unit] and not (s.toggle_off and s.toggle_off[unit]) then found[#found + 1] = e end
+				if not s.nodes[unit] and not (s.toggle_off and s.toggle_off[unit]) and not s.decon[unit] then found[#found + 1] = e end
 			end
 		end
 		table.sort(found, function(a, b) return a.unit_number < b.unit_number end)
@@ -5643,6 +5926,7 @@ function M.rebuild(full)
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
 	s.asm = {}                                             -- (issue #560)
 	local names = M.node_names()
+	M.scan_decon(s)                                        -- (marked members are no members: M.set_marked)
 	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
 	--- at 20 000 members); the members are sorted by unit number as before
 	local ents, surface_of, units = {}, {}, {}
@@ -5650,7 +5934,7 @@ function M.rebuild(full)
 		local index = surface.index
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local unit = e.unit_number
-			if not (s.toggle_off and s.toggle_off[unit]) then          -- (issue #355: an open toggle bus is no member)
+			if not (s.toggle_off and s.toggle_off[unit]) and not s.decon[unit] then   -- (issue #355: an open toggle bus is no member)
 				units[#units + 1] = unit
 				ents[unit] = e
 				surface_of[unit] = index

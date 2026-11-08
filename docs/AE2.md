@@ -24,8 +24,8 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | Storage cell (1k ... 16384k, Singularity) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
 | ME Terminal | the hub: storage, **crafting**, jobs, the drives and cells of the network; no pole needed (the controller draws its 8 kW), its screen is dark while the network does not work; can be walked over |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
-| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
-| ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
+| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over; take circuit wires (a circuit condition, issue #628) |
+| ME Storage Bus | 1x1, rotatable, can be walked over, takes circuit wires: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 16384k, Singularity) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 16384k and Singularity crafting storage, co-processing unit, 4x ... 4096x crafting accelerators, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
@@ -41,7 +41,7 @@ ME Chest, ME Drive, ME Interface, ME Terminal, the monitors, the ME IO Port, 1k/
 storage bus, underground cable), `me-storage-64k` (red to blue), `me-storage-256k` (red to purple), `me-storage-1024k`,
 `me-storage-4096k`, `me-storage-16384k` and `me-storage-singularity` (red to yellow, issue #414),
 `me-autocrafting` (red to blue), `me-upgrade-cards` (red to blue), `me-fluid-storage` (red to blue),
-`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
+`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-level-emitter` (red, green; issue #679), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
 blue), `me-co-processing` (red to purple), `me-quantum-crafting` and `me-quantum-bridge` (red to yellow). Their
 prerequisites and recipes are in **Recipes (standalone)**. Gregtorio Continued replaces the recipes and puts the
 technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`).
@@ -66,6 +66,12 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 over by cars and tanks: they collide through the same layer as the player); nothing can be built on them. The interface,
 drive, controller, provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
 
+**Marked for deconstruction:** an ME block marked for deconstruction (deconstruction planner, undo) carries the network
+no more from that moment, as if it were already removed: a marked cable or underground cable splits the network there, a marked
+drive's cells and a marked storage bus's inventory leave the network's storage (they stay in the block). Cancel the mark and the
+block joins again. When the robots mine it, it gives its contents as a mined block does (an ME Interface gives the fluid of its
+sides to the network when it is marked).
+
 The terminal's status line (and the ME Controller's status) tells what is wrong:
 
 | Status | Meaning |
@@ -80,6 +86,14 @@ A network that does not work stores nothing and gives nothing: interfaces and bu
 
 There are no channels (AE2's 8 or 32 devices per cable): any number of blocks on any cable. The controller's
 power draw grows with the network instead (see `docs/ME-REWORK.md`, "Channels: none").
+
+**Power** (issue #680): the numbers above and those of the blocks (the ME Quantum Bridge's 1 MW per end, the ME Wireless
+Link's 10 kW + 50 kW per started 32 tiles, the access point's 20 kW + 10 kW × b^(1 + b / 16), a member's 4 kW, the
+terminals' 8 kW, the level maintainer's 30 kW, the monitors' 2 kW, the ME IO Port's 5 kW, the toggle buses' 0.5 kW, the
+ME Chest's 4 kW from the grid, the Molecular Assembler's 375 kW) are the defaults of **startup mod settings** ("Power use:
+...", in kW; Settings → Mod settings → Startup). The entities, their buffers and flow limits, the descriptions, the
+controller's power breakdown and `/me-stats` follow them; the controller's own 120 kW and the crafting blocks are fixed.
+A mod that sets these numbers in its own data stage wins (Gregtorio Continued gives the Molecular Assembler its own).
 
 ## Storage cells and the ME Drive
 
@@ -314,17 +328,28 @@ click uses the tool and opens no window, as on a chest.
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
-| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), and by its circuit condition: while it does not hold, while it holds, until it turns true (issue #429)) with what a locked provider waits for and **Unlock**, the hint to its circuit connector, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), by the circuit network (issue #429: the mode is chosen in the circuit network panel, issue #639)) with what a locked provider waits for and **Unlock**, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
-| ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
+| ME Level Maintainer | five rows: item or fluid, amount, batch, stock and status (the circuit options and the conditions: the panel below) |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount, temperature, a fill bar and what its pipes hold too), status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
-the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
-same lamp condition, so blueprints and settings paste of the game keep it).
+the lamp window of the level maintainer is replaced, its circuit and logistic network settings are set in the panel below
+(they are the lamp's own conditions, so blueprints and settings paste of the game keep them).
+
+**The circuit and logistic network panel** (issue #639). As on a vanilla inserter, belt or lamp, the circuit and logistic
+network settings of the ME Import, Export and Storage Bus, the ME Interface, the ME Pattern Provider and the ME Level
+Maintainer are in a small panel **to the right of the block's window**, which moves, opens and closes with it. It is there
+only while the block has a red or green wire (**Circuit connection**: the networks it is connected to, **Enable if** with the
+condition and a line saying whether it holds, and the block's circuit modes: the export bus's **Pulse**, the interface's
+**Rows from the circuit** with the rows they make, the provider's **Lock crafting** mode by the circuit, the maintainer's
+**Amount from the circuit** per row and **Craft what the circuit asks**) or stands in the logistic area of a logistic network
+of its force, or is connected to one (**Logistic connection**: **Connect** and a condition on the network's contents). Nothing
+circuit-related is in the ME windows any more. The ME Toggle Bus and the ME Inverted Toggle Bus open the game's lamp window,
+which has the same settings. The ME Level Emitter and the ME Circuit Interface only send signals and have no panel.
 
 ## Wireless: the Wireless ME Terminal
 
@@ -374,15 +399,17 @@ confirm key), right click empties the row; no virtual signal can be chosen.
 * **Fluids** (issue #3 of ME Network; before, the ME Fluid Interface did this): pipes, pumps and tanks connect to
   any of the four sides. Each side is set in the window to **Import** (the default: everything piped in, the whole
   pipe network up to the next pump, goes into the network), **Off** (neither), or a **fluid row**: the network keeps
-  that side's tank filled with the row's fluid up to the row's amount (at most 5000 units; pipes connected without a
-  pump share the level with the tank). A new fluid row takes the first import side that has a pipe (else the first
+  that side filled with the row's fluid up to the row's amount, counted over the side's tank and the pipes connected to
+  it without a pump together (at most 5000 units, one tank's volume; with a long pipe behind the side the tank is only
+  partly full). What they hold beyond the amount (it was lowered) goes back into the network. A new fluid row takes the first import side that has a pipe (else the first
   import side); several sides can keep the same row. A side holds one fluid, so **up to four fluids at once** (AE2's
   interface holds 9 fluids; a 1x1 block has four sides). A fluid row that no side keeps does nothing. An import side
   whose pipes run round to an export side of the same interface imports nothing (no pumping in a circle).
   The window lists the fluids its sides hold (issue #311 of ME Network), one entry per side (a fluid in two sides is two
-  entries: each side has a tank of its own): the fluid with the game's tooltip, the amount of the side's volume with a
-  bar, its temperature when not the default, and what the tank and its pipes hold together when the pipes hold some
-  too. An import side shows its fluid only until it is imported (then it is in the network, and the side is empty).
+  entries: each side has a tank of its own): the fluid with the game's tooltip, the amount the side and its pipes hold
+  together (what a row counts) of the side's volume with a bar, its temperature when not the default, and what the
+  tank alone holds of it when the pipes hold some too. An import side shows its fluid only until it is imported (then
+  it is in the network, and the side is empty).
   Pointed at in the world, its tooltip lists them too (issue #322: the interface's status line, "Sides: [fluid]
   amount/volume ...", refreshed once a second while someone points at it).
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
@@ -763,6 +790,7 @@ The recipes that follow:
 | ME Logistic Interface (issue #531) | an ME Interface, a storage chest, a passive provider chest, 2 advanced circuits | (not in AE2) |
 | ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
+| ME P2P Tunnel - Items, - Fluids (issue #629) | 3 iron plates, a processing unit, 3 copper cables; one kind from the other (1 to 1) | the ME P2P Tunnel: 3 iron, an engineering processor, 3 fluix crystals (AE2-Unofficial); attuned with a chest or a bucket |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
 | ME Interface Terminal | an ME Terminal, an ME Interface, a processing unit | an illuminated panel, an interface, an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor) |
 | Blank Pattern (2) | 2 plastic bars, 3 copper cables, a stone, 2 iron plates, a copper plate | 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2 |
@@ -836,6 +864,7 @@ AE2, most cards):
 | ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
 | ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 AI core, 32 Fluix Cable, 4 glass |
 | ME Pattern Provider | 4 iron plate, 2 assembling machine 1, 2 automation core |
+| ME P2P Tunnel - Items, - Fluids | 3 iron plate, 1 processing unit, 3 quartz, 3 copper cable |
 | ME Blank Pattern | 2 glass, 3 rare metals, 1 quartz, 2 iron plate, 1 copper plate |
 | ME Molecular Assembler | 4 iron plate, 2 glass, 2 automation core, 1 assembling machine 1 |
 | ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 energy control unit |
@@ -891,6 +920,7 @@ brings, so its singularity tech card cannot be researched; there the ME Singular
 | ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
 | ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
 | ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Level Emitter (issue #679) | 200 × 30 s, red, green | 200 × 30 s, red, green |  |
 | ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
 | ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
 | ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
@@ -1230,6 +1260,59 @@ of cable. Like the ME Quantum Bridge (above), but with no limit of two (issue #5
   (within a second).
 * Recipe (standalone): a radar (AE2's wireless receiver), 2 advanced circuits, 4 fluix cables, 4 iron plates.
 
+## ME P2P Tunnels
+
+The **ME P2P Tunnel - Items** and **ME P2P Tunnel - Fluids** (issue #629, AE2-Unofficial's P2P tunnels for items and
+fluids; technology ME Autocrafting) let **one ME Pattern Provider serve machines that are not next to it**: a row of
+machines along a line, machines spread over a base, more machines than four sides give. GTNH players build it this way:
+an input tunnel on the provider's side, an output tunnel at each machine.
+
+* **The block:** 1x1, rotated like a bus (the plate points to the tile it faces), walked over like the buses, a member of
+  the ME network (the controller draws 4 kW for it, like a bus). It must be connected to the network like any ME block.
+* **Frequencies:** a frequency has **one input and any number of outputs**. A new tunnel is unbound. Bind them:
+  * **Settings paste:** Shift + right click a tunnel, Shift + left click others: they become outputs of its frequency (an
+    unbound tunnel you copy becomes the input of a new frequency first). Only between tunnels of the same kind.
+  * **ME Memory Card** (as AE2's): select a tunnel and it becomes the **input** (an output or an unbound tunnel gets a new
+    frequency, as in AE2), the card holds its frequency; alt + select the other tunnels: they become its **outputs** (the
+    input itself, if it is in the area, stays the input).
+  * **Its window:** the frequency (a number, Enter sets it), Input or Output, "New frequency" (this tunnel becomes the
+    input of a frequency no other tunnel has), "Unbind", and what it is: an input says how many outputs carry, an output
+    where its input is.
+* **What carries:** an output carries while it is in the **same ME network** as its input (AE2 keeps frequencies per
+  network) and is of the **same kind**. The network may span surfaces through an ME Quantum Bridge, so the outputs may stand
+  on another surface of the same network. A second input of a frequency waits ("taken") until the first one goes or gets
+  another frequency, as a third bridge of a frequency does.
+* **With a pattern provider:** turn an input tunnel so that it **faces the provider**, on any of its four sides. Every
+  machine or chest that an output of its frequency faces counts as if it stood next to the provider: the provider's
+  patterns are usable there, and crafting jobs spread over all of them and the provider's neighbours. Item ingredients go
+  through an **item tunnel**, fluid ingredients through a **fluid tunnel**: a pattern with both needs a machine that both
+  reach (an item and a fluid output on it, from an item and a fluid input on the provider). The provider's window says
+  "item ingredients through an item tunnel only" (or fluids) for a machine that the needed kind does not reach. Blocking
+  mode, the locks and the fluid boxes work per machine, as for neighbours.
+* **Results come back as from a neighbour:** the job takes a crafting machine's products and a processing machine's
+  outputs from the machine itself (nothing travels back through the tunnel; AE2's item tunnel is one way too). What a chest
+  gets comes back through your buses or interfaces, as for a chest next to the provider.
+* An output **removed while a job runs** on its machine loses nothing: the machine finishes, the job takes its products
+  and gives back what is left, and hands nothing more to that machine.
+* **Blueprints, copy and paste and clones** keep each tunnel's frequency and role (a copy of an input next to the original
+  is a second input and waits: give the copy a new frequency).
+* **On their own** (issue #633, as in GTNH): an input tunnel also carries without a provider. An **inserter** that puts items
+  into an item input (any side), or a **pipe** (or a machine's fluid output) in front of a fluid input, feeds it; what it gets
+  goes to what the outputs face: items into chests, machines, furnaces and labs, round robin over the outputs, fluid into
+  pipes, tanks and machines, split evenly by what each takes. It moves at the **bus speed** (the map settings "bus speed",
+  items and fluid per second). An input holds what waits: 4 stacks of items, 1000 units of fluid (an item input mined gives
+  its items into your inventory; destroyed, they are spilled). Its window says what it holds and whether it carries, waits
+  for an inserter or a pipe, or why not (no output faces something that takes it, no network, no power). An input that
+  waits for something is looked at less and less often, up to the idle limit (5 s by default): the first items may take
+  that long. The map settings "ME P2P Tunnel visits per tick" (at least 2, at most 8) set its budget; `/me-stats` shows its
+  queue. Nothing comes back through a tunnel.
+* **Not in this version:** tunnels that chain (an output facing another input), returns (AE2's fluid tunnel also sends what
+  is filled into an output back to the input's side), the ME, redstone, light and power tunnels of AE2 (the ME Quantum
+  Bridge and the ME Wireless Link join networks over distance).
+* Recipe (standalone, AE2-Unofficial's ME P2P Tunnel in the stand-ins): 3 iron plates, a processing unit, 3 copper cables,
+  for both kinds; a tunnel of one kind turns into the other in the crafting window (AE2 attunes a tunnel with a chest or a
+  bucket).
+
 ## Old saves
 
 **Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
@@ -1458,8 +1541,8 @@ locked provider". Machines are not locked: a machine gets its next batch only wh
 collected. The setting goes with blueprints, settings paste and clones (a lock in effect does not).
 
 **Locks by the circuit condition** (issue #429, AE2-Unofficial's Lock Crafting Card and its `LockCraftingMode`, here without a
-card: the maintainer's choice). The provider has the circuit connector of the buses (issue #412): a small connector in the
-block's south-east corner that takes wires and a condition (the game's lamp window). "Lock crafting" in the provider window:
+card: the maintainer's choice). The provider has the circuit condition of the buses (issue #412; since issue #628 it takes
+the wires itself and the condition is set in its window, below the slots). "Lock crafting" in the provider window:
 
 * **While the condition does not hold** (AE2: "lock while low"): nothing is handed over while the condition is false.
 * **While the condition holds** (AE2: "lock while high"): nothing is handed over while it is true.
@@ -1469,10 +1552,9 @@ block's south-east corner that takes wires and a condition (the game's lamp wind
 These lock every hand-over of the provider, into its chests and into its machines and assemblers (AE2's interface pushes
 nothing while locked). Without a wire, or with the condition switched off, they lock nothing (as an inserter's condition).
 The window says when the provider is locked by the condition; a job that waits for it shows the locked provider's wait. The
-connector reads the condition of each provider whose condition is on at most every 10 ticks (16 blocks per tick, the
+condition of each provider whose condition is on is read at most every 10 ticks (16 blocks per tick, the
 budget of issue #412); a provider without a lock mode pays nothing. Unlock and changing the mode release a lock until the
-condition turns true. The mode goes with blueprints, settings paste and clones, the connector with its wires and condition
-with blueprints and clones as on the buses.
+condition turns true. The mode goes with blueprints, settings paste and clones, the wires and the condition as on the buses.
 
 **Outputs** come back in two ways, and both count:
 
@@ -1673,7 +1755,7 @@ Settings paste, blueprints and clones carry the resource, the lock and the unit.
 
 ## Keeping items in stock: ME Level Maintainer
 
-Tech `me-automation` (needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
+Tech `me-automation` (needs `me-autocrafting`, `me-level-emitter` and Circuit network). The **ME Level Maintainer** is
 a 1x1 block and a member of the network; the controller draws its power (30 kW), it needs no pole and works exactly
 when its network does.
 
@@ -1704,15 +1786,18 @@ What the window says:
 | Waiting: the job is bigger than every Crafting CPU of this network | add crafting storage (or keep a smaller amount) |
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
 | No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
-| Switched off by the circuit condition | see below |
+| Switched off by the circuit condition | the circuit or the logistic condition does not hold (see below) |
 | The ME Controller has no power / Not connected to an ME network | the network does not work; the maintainer sleeps until it does |
 
 **Circuit network** (connect a red or green wire to the maintainer):
 
-* **On/off:** tick "Switch on and off by the circuit condition" in the window and set the condition
+* **On/off:** tick **Enable if** in the panel right of its window (issue #639) and set the condition
   (signal, comparator, number; it is the lamp's circuit condition). While the condition is false it
   starts nothing; a running job goes on.
-* **Amount from the circuit:** tick a row's box in the window. The signal of that row's item or fluid on
+* **Logistic network** (issue #639): standing in a logistic network's area, tick **Connect** in the panel and set a condition
+  on the network's contents (the lamp's own logistic condition). While it does not hold the maintainer starts nothing; with
+  both conditions on, only while both hold. Connected outside every logistic network, it is off, as a vanilla lamp is.
+* **Amount from the circuit:** tick a row's box in the panel. The signal of that row's item or fluid on
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
 * **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid
@@ -1724,35 +1809,54 @@ What the window says:
 another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
 and cloning keep them.
 
-## Circuit condition of the buses and the ME Interface (issue #412)
+## Circuit and logistic condition of the buses and the ME Interface (issues #412, #628, #639)
 
 AE2's **Redstone Card** (AE2-Unofficial: the import and export bus's redstone modes) is Factorio's circuit condition here, on
-the **ME Import Bus, ME Export Bus, ME Storage Bus and ME Interface**, without a card. Those blocks take no wires themselves,
-so each has a small **ME Circuit Connector** in the south-east corner of its tile (where the game draws the wire connector):
-hover over the corner to attach red or green wires and click it to open its window, the game's lamp window, with **Enable /
-disable** and the condition.
+the **ME Import Bus, ME Export Bus, ME Storage Bus and ME Interface** (and the ME Pattern Provider's locks), without a card.
+Since issue #628 the blocks take red and green wires **themselves**, like any combinator (one hitbox per block; the wire
+connector is drawn in the south-east corner of the tile). The condition is set in the circuit network panel right of the
+block's ME window (issue #639, shown while the block has a wire): **Enable if**, the signal ("Everything" and "Anything"
+too), the comparator and a number or a second signal, and a line that says whether it holds. The ME Interface's own contents are never on its wires (the script keeps the container's
+"read contents" off), so they do not mix with the signals its condition and its rows read.
+
+Until 0.5.11 the blocks could not take wires, so each had a small hidden **ME Circuit Connector** (a lamp) in that corner, a
+second selection box with the game's lamp window. Saves and blueprints are converted: when a save of 0.5.11 or before is
+loaded, every bus and pattern provider becomes the new block at its place with everything it had (settings, filters, cards,
+priorities, patterns, locks, running crafting jobs, its place in the network), and every old connector gives its wires and
+its condition to its block and is removed. An old blueprint (or copy) builds the new blocks; its connectors hand their wires
+and conditions to the blocks the same way.
 
 * While the condition is on, a wire is connected and the condition does not hold, the block is **off**: a bus moves nothing,
   a storage bus's chest, wagon or tank is no storage of the network (the terminal no longer shows what is in it), an
   interface neither fills its rows nor imports. Its window says "Off". Without a wire the condition does nothing, as on an
   inserter. AE2-Unofficial has the Redstone Card on the import and export bus only; the storage bus and the interface are
   an addition (the maintainer's choice).
-* **Pulse** (ME Export Bus, a checkbox in its window, AE2's "once per pulse"): the bus moves what one visit allows each time
-  the condition turns true, and nothing in between.
-* **Rows from the circuit** (ME Interface, a checkbox in its window): every item and fluid signal on the connector's wires
+* **Logistic network** (issue #639, as a vanilla inserter): a block that stands in the logistic area (the orange area) of a
+  logistic network of its force has the **Logistic connection** section in its panel: **Connect** and a condition on the
+  network's contents (an item signal counts the items of that quality in the network's chests; another signal, also
+  Everything and Anything, never holds, as in the game). While it does not hold the block is off, as by the circuit
+  condition. **With both conditions on, the block works only while both hold**; the pulse mode and the provider's locks read
+  both together. Measured on a real inserter: a block connected to the logistic network but outside every logistic network
+  (also inside a construction area only) is **off**, while a circuit condition without a wire does nothing; the panel keeps
+  the section while the block is connected, with "No network in range", so it can be switched back. A block looks its
+  logistic network up at most every 5 seconds (at once when that network is gone) and follows its contents within about 10
+  ticks.
+* **Pulse** (ME Export Bus, a checkbox in the circuit panel, AE2's "once per pulse"): the bus moves what one visit allows each
+  time the condition turns true, and nothing in between.
+* **Rows from the circuit** (ME Interface, a checkbox in the circuit panel): every item and fluid signal on the connector's wires
   with a positive value is a row of that amount, in the order of the names, as many as the interface has rows (a fluid row at
   most a side's volume). The window lists them. The rows set by hand stay and work again when the option is off. The
   interface's sides tied to a row follow the row's number.
-* A block follows its condition within about 10 ticks (up to 16 connectors are checked per tick); a block without a
-  condition, pulse or rows from the circuit costs nothing for it.
-* A block gets its connector the first time you point at it (or open its window): only blocks someone looked at have one,
-  which keeps a big network free of thousands of unused connectors.
-* Blueprints, copy/paste and clones hold the connector with its wires and condition, and the pulse and rows settings; a
-  settings paste from block to block copies the condition too. The connector of a mined block goes with it.
+* A block follows its condition within about 10 ticks (up to 16 blocks are checked per tick); a block without a
+  condition, logistic connection, pulse or rows from the circuit costs nothing for it, wired or not.
+* Blueprints, copy/paste and clones hold the wires, both conditions and the pulse and rows settings; a settings paste from
+  block to block (of the same kind) copies the conditions too, and so does the ME Memory Card. A blueprint made before
+  0.5.12 has no logistic part: the block it builds is not connected.
 
 ## Circuit network: ME Circuit Interface
 
-Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) connected to the
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science; before, ME
+Automation). The **ME Circuit Interface** is a constant combinator (no power) connected to the
 network. Connect red or green wires to it: they carry
 
 * every item of the network (with its quality) and every fluid, fluids rounded down to whole units (a fluid's
@@ -1774,7 +1878,9 @@ largest amounts first).
 
 ### ME Level Emitter
 
-Tech `me-automation` (issue #355, AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
+Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science, so an ME Interface or a
+bus can be switched by what the network holds long before autocrafting; before, ME Automation; issue #355,
+AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
 the network that gives **one signal**, its output signal with the value 1 (the green check unless another signal is set
 in its window), while the network holds **at least** the threshold of its item or fluid (**At or above**, AE2's "emit when
 levels are above or equal") or **less** than it (**Below**). With **Stored energy** it compares the energy the network's ME
@@ -1828,13 +1934,14 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards; patterns into its empty slots, as from a blueprint, issue #585) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
-| ME Import Bus, ME Export Bus | filters (items and fluids, also the ones kept beyond its Capacity Cards, issue #413); which cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
-| ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network), the circuit condition and its wires | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
+| ME Import Bus, ME Export Bus | filters (items and fluids, also the ones kept beyond its Capacity Cards, issue #413); which cards it has; the circuit condition and its wires | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
+| ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has; the circuit condition and its wires | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 | ME IO Port | the mode, which speed cards it has | yes (the cards from your inventory, then the network) | yes (the cards from the network); its cells are items, not settings |
+| ME P2P Tunnel (issue #629) | frequency, input or output | the destination becomes an output of the source's frequency | yes (a copy of an input next to it waits: one input per frequency) |
 
 **The copy-paste tool and blueprints pasted over blocks** (issue #383): the copy of Ctrl+C / Ctrl+X is a blueprint, so
 every block of the table above (and the monitors, the level emitter, the advanced level emitter and the toggle buses) keeps its settings when the copy is
@@ -1867,11 +1974,13 @@ cable; unlocked with ME Network). Take it in your hand:
 
 Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,
 the GregTech machines of Gregtorio Continued, the machines of every other mod) and **shift + left click** an ME block.
-The block is set up for the machine's recipe; what it had is replaced:
+The block is set up for the machine's recipe. The buses' filters are replaced; the ME Interface **adds** to its rows
+(issue #678 of ME Network), so pasting one machine three times keeps three crafts and two machines' recipes keep the
+ingredients of both. Its window's **Clear** button empties the rows to start over:
 
 | Paste onto | Result | Kept | Holds |
 |---|---|---|---|
-| ME Interface | config rows = the ingredients in the recipe's order, each with **one craft** of the recipe (issue #157 of ME Network; before: a full stack of each item and a side's volume of each fluid): the ingredient's amount per craft, a fluid's rounded up to whole units | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
+| ME Interface | each ingredient adds **one craft** of the recipe (issue #157 of ME Network: the ingredient's amount per craft, a fluid's rounded up to whole units) to the row that holds it (an item at the recipe's quality, a fluid at its temperature); one without a row takes the first free row, in the recipe's order (issue #678) | every other row, the sides | 9 rows (more with Interface Capacity Cards), 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
 | ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
@@ -1881,7 +1990,8 @@ The block is set up for the machine's recipe; what it had is replaced:
   bus takes in every quality).
 * A furnace that is not smelting gives its last recipe.
 * A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
-  import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
+  import side (the flying text says that it has no pipe yet). **Clear** empties every row; a side tied to a row imports
+  again, a side that is off stays off.
 * A flying text names what did not fit, a fluid row with no side left (every side off or tied: set one in the
   window), and a machine without a recipe. Nothing is changed when the recipe has nothing for the block (no
   ingredients; a storage bus on a chest and a recipe of fluids only, or on a tank and no fluid).
@@ -2048,7 +2158,7 @@ migration are described in `docs/ME-REWORK.md` (the design record of the rework)
 the networks (one connected component each, its controllers, status, drives, storage totals, bytes, types and
 an index item -> cells) and the drives with their cells (`storage.fork_me_net.drives[unit].slots`); every
 build and removal updates them, a breadth first search over the stored adjacency splits a network when a
-member is removed, and a sweep in the terminal step finds members removed without an event. The storage API
+member is removed (or marked for deconstruction: `N.set_marked`, `storage.fork_me_net.decon`), and a sweep in the terminal step finds members removed without an event. The storage API
 (`insert`, `extract`, `count`, `can_insert`, `contents`, `insert_stack`, `extract_to`, `stats`) works on a
 network and does nothing when the network does not work. `scripts/fork-me-io.lua` visits the interfaces and buses
 (since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`
@@ -2414,7 +2524,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface Interface Capacity Cards (up to 3, issue #196) and the Crafting Card, which the export bus takes too
   (issue #411; fluids and "craft only" since issue #426); in place of the redstone card the buses and the interface
-  have a circuit connector (issue #412: a second, small selection box in the block's corner); the
+  take circuit wires and a condition (issue #412; until 0.5.11 through a hidden connector with a second, small selection
+  box in the block's corner, issue #628); the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
   lacks, the internal name; upper and lower case are told apart in ASCII letters only); spoiling items, items with an inventory and damaged items cannot be stored. Old
@@ -2603,13 +2714,16 @@ from), gets mixed filters and faces a cable. The old fluid blocks and the old en
 
 The recipe paste test (issue #12 of ME Network, own network) checks that every crafting machine prototype lists the
 four ME blocks as pastable (with Gregtorio all GregTech machines too) and calls the paste handler with the event's
-shape: an item recipe and a quality recipe onto an interface (one stack each, the quality), a storage bus (quality
+shape: an item recipe onto an interface with a row (the row kept, one craft each; pasted again two; a second recipe
+adds its rows, issue #678) and a quality recipe onto an interface (the quality), a storage bus (quality
 keys, mode and priority kept) and an export bus (names, the quality message); a chemical reactor's fluid recipe onto an
 interface (the fluid row on the side with a pipe, an off side kept), onto an interface whose side is tied to that fluid
-(kept), then a recipe of two other fluids (the side imports again, two new rows on sides without a pipe, two messages),
+(the row grows, the side kept), then a recipe of two other fluids (two new rows on sides without a pipe, two messages),
+then Clear (no rows, the off side kept),
 onto the import bus (products) and export bus, onto storage buses on a chest (a recipe of fluids only: unchanged,
 message), on a pipe (fluids) and facing nothing (both); fixture recipes with 20 items and 5 fluids and with 2 items and
-5 fluids (rows, fluids and filters full, no side left); a furnace while smelting and its previous recipe once idle; an
+5 fluids (rows, fluids and filters full, no side left; pasted again onto the full interface: its rows grow, nothing
+lost, the message); a furnace while smelting and its previous recipe once idle; an
 assembler and a furnace without a recipe; a paste between two ME blocks is left to their own handlers. It reports
 `recipe paste test: ok`.
 

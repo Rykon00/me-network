@@ -87,6 +87,13 @@ local GX, GY = 200, 100                                 -- graph test
 local PX, PY = 235, 100                                 -- power test (no pole of the graph test reaches it)
 local CX, CY = 200, 125                                 -- cells, terminal and import/export test
 
+--- me-network issue #680: a power setting of the mod in W (`default` without it: a version before the settings), so the tests
+--- that check the controller's draw hold with other startup settings too (devcheck --startup)
+function power_setting_w(name, default)
+	local st = settings.startup["me-network-power-" .. name]
+	return st and st.value * 1000 or default
+end
+
 local function me_place(s, fails, what, name, x, y, extra)
 	local ok, e = pcall(function()
 		local def = { name = name, position = { x, y }, force = "player", raise_built = true }
@@ -267,7 +274,8 @@ function me_graph_test()
 		local n = net(a)
 		expect(same(a, d), "the drive is not in the controller's network")
 		expect(n and n.ok and n.members == 7 and n.controllers == 1, "network " .. serpent.line(n))
-		expect(n and n.power == 124000, "controller power " .. tostring(n and n.power) .. " W, expected 124000 (base + one drive)")
+		local want = 120000 + power_setting_w("member", 4000)
+		expect(n and n.power == want, "controller power " .. tostring(n and n.power) .. " W, expected " .. want .. " (base + one drive)")
 		expect(remote.call(NET, "cable_variation", cable(9)) == 11 and remote.call(NET, "cable_variation", cable(7)) == 11,
 			"cable pictures " .. remote.call(NET, "cable_variation", cable(9)) .. "/" .. remote.call(NET, "cable_variation", cable(7)))
 		local id = n and n.id
@@ -737,6 +745,32 @@ function me_terminal_test()
 	remote.call(NET, "extract", t, "iron-plate", 7)
 	expect(remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true) == size + 7 and main.get_item_count("iron-plate") == 0
 		and count("iron-plate") == 1000, "storing all plates of the inventory: " .. count("iron-plate"))
+	--- issue #676: control + click takes as much as fits into the inventory, control + right click half (rounded up), capped
+	--- by what fits; the rest stays in the network
+	local stone = prototypes.item["stone"].stack_size
+	main.insert{ name = "stone", count = 7 * stone }
+	local got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(got == 3 * size and main.get_item_count("iron-plate") == 3 * size and count("iron-plate") == 1000 - 3 * size,
+		"control click with 3 free slots: took " .. tostring(got) .. ", network " .. count("iron-plate"))
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	local want = math.min(500, 10 * size)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want and count("iron-plate") == 1000 - want, "control + right click: took " .. tostring(got) .. " of 1000, want " .. want)
+	local have, held = count("iron-plate"), main.get_item_count("iron-plate")
+	local room = main.count_empty_stacks() * size + (size - held % size) % size
+	local want2 = math.min(math.ceil(have / 2), room)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want2 and count("iron-plate") == have - want2, "second control + right click: took " .. tostring(got) .. " of " .. have .. ", want " .. want2)
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	main.insert{ name = "stone", count = 10 * stone }
+	local none, why = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(none == nil and why == "inventory-full" and count("iron-plate") == 1000, "control click into a full inventory: " .. tostring(none) .. " " .. tostring(why))
+	none, why = remote.call(TERM, "take", cursor[1], main, t, "fluid/water", "all")
+	expect(none == nil and why == "fluid-by-hand", "control click on a fluid: " .. tostring(why))
+	main.clear()
+	expect(count("iron-plate") == 1000, "plates lost by the control clicks: " .. count("iron-plate"))
 	--- search and sort
 	local found = remote.call(TERM, "entries", t, "copper", "count")
 	expect(#found == 1 and found[1].name == "copper-plate", "search 'copper': " .. serpent.line(found))
@@ -793,7 +827,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
-	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
+	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, control + click all and half (issue #676), store cursor and inventory, search, sort, unstorable")
 end
 
 --- an ME Drive with four cells of `tier` (default 16k; `fluid`: fluid cells) at x, y, holding `items` ({ name -> count })
@@ -1072,6 +1106,8 @@ qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me
 --- me-network issue #602: the terminal's sort preference, sorts by mod and tier, rows kept at 0 (sortprefs.lua)
 sortprefs602 = require("sortprefs")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
+--- me-network issue #677: config slots take the item in the cursor (cursorslot.lua)
+cursorslot677 = require("cursorslot")({ me_place = me_place, power = power, me_report = me_report, me_connect = me_connect })
 --- me-network issue #603: the wireless refill (wrefill.lua)
 wrefill603 = require("wrefill")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
@@ -1090,6 +1126,15 @@ gridfluid261 = require("gridfluid")({ me_place = me_place, power = power, me_rep
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #313: an interface's import side that holds fluid is visited again (ifacewake.lua)
 ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #626: a fluid row counts the side's whole segment, a surplus goes back (ifacesegment.lua)
+ifacesegment626 = require("ifacesegment")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #629: ME P2P tunnels, a provider serving the machines their outputs face (p2p.lua)
+p2p629 = require("p2p")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #633: ME P2P tunnels that carry on their own (p2pflow.lua)
+p2pflow633 = require("p2pflow")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #311: the interface window shows the fluids its sides hold (ifacefluids.lua)
 ifacefluids311 = require("ifacefluids")({ me_place = me_place, power = power, me_report = me_report,
@@ -1125,6 +1170,13 @@ lifauto537 = require("lifauto")({ me_place = me_place, cable_row = cable_row, po
 --- me-network issue #538: the ME Logistic Interface's construction supply (lifbuild.lua)
 lifbuild538 = require("lifbuild")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- Task-Ingame #661 (issue #659): the ME windows of ghosts, built by construction robots (ghostbuild.lua)
+ghostbuild661 = require("ghostbuild")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #670: the shapes of ME Cable from blueprints and of cable ghosts (cableshape.lua)
+cableshape670 = require("cableshape")({ me_report = me_report })
+--- me-network issue #674: turned blueprints over ME blocks whose direction does not show (turnblocks.lua)
+turnblocks674 = require("turnblocks")({ me_report = me_report, me_place = me_place, cable_row = cable_row, power = power,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1152,6 +1204,9 @@ voidcell354 = require("voidcell")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #336: the ME Interface Terminal (ifaceterm.lua)
 ifaceterm336 = require("ifaceterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- deconstruction marks: a marked member carries no network (marked.lua)
+markeddecon = require("marked")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #355: the toggle buses and the level emitter (togglebus.lua)
 togglebus355 = require("togglebus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
@@ -1170,6 +1225,9 @@ craftcard411 = require("craftcard")({ me_place = me_place, cable_row = cable_row
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #412: the circuit connector of the buses and the interface (circuitbus.lua)
 circuitbus412 = require("circuitbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #639: the logistic network condition and the circuit and logistic network panel (panel639.lua)
+panel639 = require("panel639")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #414: the storage cells above 256k and the Singularity cell (bigcells.lua)
 bigcells414 = require("bigcells")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
@@ -1322,6 +1380,7 @@ local function tests_running()
 	entries50.running(check)
 	qualityterm514.running(check)
 	sortprefs602.running(check)
+	cursorslot677.running(check)
 	wrefill603.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
@@ -1331,6 +1390,9 @@ local function tests_running()
 	gridfluid261.running(check)
 	ifacewake313.running(check)
 	ifacefluids311.running(check)
+	ifacesegment626.running(check)
+	p2p629.running(check)
+	p2pflow633.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
 	nativeinv542.running(check)
@@ -1349,6 +1411,7 @@ local function tests_running()
 	buscards413.running(check)
 	craftcard411.running(check)
 	circuitbus412.running(check)
+	panel639.running(check)
 	bigcells414.running(check)
 	bigcpus415.running(check)
 	ptermex416.running(check)
@@ -1376,11 +1439,15 @@ local function tests_running()
 	monitors353.running(check)
 	voidcell354.running(check)
 	togglebus355.running(check)
+	markeddecon.running(check)
 	sbusmode155.running(check)
 	lsbus506.running(check)
 	lif531.running(check)
 	lifauto537.running(check)
 	lifbuild538.running(check)
+	ghostbuild661.running(check)
+	cableshape670.running(check)
+	turnblocks674.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -2322,6 +2389,7 @@ script.on_nth_tick(10, function()
 	entries50.tick()
 	qualityterm514.tick()
 	sortprefs602.tick()
+	cursorslot677.tick()
 	wrefill603.tick()
 	holderlists59.tick()
 	crafter59.tick()
@@ -2331,6 +2399,9 @@ script.on_nth_tick(10, function()
 	gridfluid261.tick()
 	ifacewake313.tick()
 	ifacefluids311.tick()
+	ifacesegment626.tick()
+	p2p629.tick()
+	p2pflow633.tick()
 	providers158.tick()
 	pastecraft157.tick()
 	nativeinv542.tick()
@@ -2349,6 +2420,7 @@ script.on_nth_tick(10, function()
 	buscards413.tick()
 	craftcard411.tick()
 	circuitbus412.tick()
+	panel639.tick()
 	bigcells414.tick()
 	bigcpus415.tick()
 	ptermex416.tick()
@@ -2376,11 +2448,15 @@ script.on_nth_tick(10, function()
 	monitors353.tick()
 	voidcell354.tick()
 	togglebus355.tick()
+	markeddecon.tick()
 	sbusmode155.tick()
 	lsbus506.tick()
 	lif531.tick()
 	lifauto537.tick()
 	lifbuild538.tick()
+	ghostbuild661.tick()
+	cableshape670.tick()
+	turnblocks674.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -2923,6 +2999,50 @@ function fluid_cell_test()
 	total = 0
 	for _, cell in pairs(bi) do for _, v in pairs(cell.items) do total = total + v end end
 	expect(bi[5] and near(total, 40000), "an old item with more fluid than four cells hold: " .. serpent.line(bi))
+	--- issue #689: the conversion of 0.6.0 replaces the old drive items a save holds: in a chest, on the ground, in the network
+	local chest = s.create_entity{ name = "iron-chest", position = { FX + 20.5, FY + 6.5 }, force = "player" }
+	local ci = chest.get_inventory(defines.inventory.chest)
+	ci[1].set_stack{ name = "me-drive-1k", count = 2 }
+	ci[2].set_stack{ name = "me-fluid-drive-1k", count = 1 }
+	ci[2].tags = { fork_me_fluids = { water = 40000 } }
+	ci[3].set_stack{ name = "me-drive-256k", count = 1 }
+	local gpos = { FX + 24.5, FY + 6.5 }
+	s.create_entity{ name = "item-on-ground", position = gpos, stack = { name = "me-drive-4k", count = 1 } }
+	local net_drives = remote.call(NET, "count", t, "me-drive")
+	local net_cells = remote.call(NET, "count", t, "me-1k-storage-cell")
+	expect(remote.call(NET, "insert", t, "me-drive-1k", 1) == 1, "an old drive item not stored in the network")
+	local converted = remote.call("gregtorio-me-legacy-drives", "convert")
+	expect(converted == 6, "old drive items converted: " .. tostring(converted) .. " (expected 6)")
+	local cc = {}
+	for i = 1, #ci do
+		if ci[i].valid_for_read then cc[ci[i].name] = (cc[ci[i].name] or 0) + ci[i].count end
+	end
+	expect(ci[1].valid_for_read and ci[1].name == "me-drive" and ci[1].count == 2, "the drive in the old item's slot: " .. serpent.line(cc))
+	expect(cc["me-drive"] == 4 and cc["me-1k-storage-cell"] == 8 and cc["me-256k-storage-cell"] == 4
+		and (cc["me-1k-fluid-storage-cell"] or 0) >= 5 and not cc["me-drive-1k"] and not cc["me-fluid-drive-1k"]
+		and not cc["me-drive-256k"] and (not prototypes.item["acceleration-card"] or cc["acceleration-card"] == 1),
+		"chest after the conversion: " .. serpent.line(cc))
+	local fluid_total = 0
+	for i = 1, #ci do
+		local st = ci[i]
+		if st.valid_for_read and st.name == "me-1k-fluid-storage-cell" then
+			local stored = st.tags and st.tags.fork_me_cell
+			for _, v in pairs(stored and stored.items or {}) do fluid_total = fluid_total + v end
+		end
+	end
+	expect(near(fluid_total, 40000), "the old fluid drive's fluid in its cells: " .. fluid_total)
+	local gc = {}
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do
+		gc[g.stack.name] = (gc[g.stack.name] or 0) + g.stack.count
+	end
+	expect(gc["me-drive"] == 1 and gc["me-4k-storage-cell"] == 4 and not gc["me-drive-4k"], "ground after the conversion: " .. serpent.line(gc))
+	expect(remote.call(NET, "count", t, "me-drive-1k") == 0 and remote.call(NET, "count", t, "me-drive") == net_drives + 1
+		and remote.call(NET, "count", t, "me-1k-storage-cell") == net_cells + 4,
+		"network after the conversion: drives " .. remote.call(NET, "count", t, "me-drive") .. ", cells "
+		.. remote.call(NET, "count", t, "me-1k-storage-cell") .. ", old " .. remote.call(NET, "count", t, "me-drive-1k"))
+	expect(remote.call("gregtorio-me-legacy-drives", "convert") == 0, "a second conversion found old items")
+	chest.destroy()
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do g.destroy() end
 	inv.destroy()
 	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses, old fluid drive items")
 end
@@ -3688,9 +3808,11 @@ function unified_test()
 	step(i, 6)
 	local inv = i.get_inventory(defines.inventory.chest)
 	expect(inv.get_item_count("iron-plate") == 20, "item row: " .. inv.get_item_count("iron-plate") .. " plates")
+	--- (issue #626: the row counts the side's segment, its tank and the pipe behind it; the tank holds its share)
 	local east = tanks(i)[2].get_fluid(1)
-	expect(east and east.name == "water" and near(east.amount, 1000, 0.5), "fluid row: the east side holds " .. serpent.line(east))
 	local seg = fluid_segment(tanks(i)[2], 1) or {}
+	expect(east and east.name == "water" and east.amount < 1000 - 0.5 and near(seg.water, 1000, 1),
+		"fluid row: the east side holds " .. serpent.line(east) .. ", its segment " .. tostring(seg.water))
 	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
 		.. ", in the east segment " .. tostring(seg.water))
 	--- (issue #159: the steam keeps its 165 degrees)
@@ -4435,6 +4557,11 @@ function circuit_test()
 	end
 	if st.done then return end
 	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	--- issue #660: how long a phase waits for the wire, from the queue (never from measured time): the map holds more circuit
+	--- interfaces than the budget visits in their interval, so each comes round once per (units / budget) seconds; a change
+	--- needs at most two rounds (the network's list made at one visit, written at the next) and an interval
+	local q = remote.call(C38, "queues")
+	local limit = math.max(200, 2 * math.ceil(q.cq * 60 / math.max(q.rate, 1)) + q.interval)
 	local wired = on_wire()
 	if st.phase == "all" then
 		local want = expected(nil)
@@ -4445,7 +4572,7 @@ function circuit_test()
 			remote.call(C38, "set_circuit_filters", ci, { "iron-plate", "fluid/water" })
 			return next_phase("filtered")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
 			return finish()
 		end
@@ -4457,7 +4584,7 @@ function circuit_test()
 			remote.call(NET, "store_in_drive", drive, "iron-plate", 25)
 			return next_phase("change")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the filtered wire: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
 			return finish()
 		end
@@ -4465,9 +4592,10 @@ function circuit_test()
 		if wired["iron-plate"] == 225 then
 			expect(table_size(wired) == 2, "the filtered wire after the change: " .. serpent.line(wired))
 			if #problems > 0 then return finish() end
-			return finish(st.all .. " signals, then 2 filtered, change seen after " .. (game.tick - st.phase_tick) .. " ticks")
+			return finish(st.all .. " signals, then 2 filtered, change seen after " .. (game.tick - st.phase_tick) .. " ticks ("
+				.. q.cq .. " circuit interfaces at " .. q.rate .. " updates per second: a phase waits at most " .. limit .. " ticks)")
 		end
-		if game.tick > st.phase_tick + 200 then
+		if game.tick > st.phase_tick + limit then
 			expect(false, "the wire did not follow the change: " .. serpent.line(wired))
 			return finish()
 		end
@@ -4534,7 +4662,6 @@ function settings_test()
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
 	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
-	built["me-circuit-connector"] = nil             -- (issue #412: the interface's circuit connector comes with it)
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
 	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)
@@ -5020,15 +5147,26 @@ function paste_test()
 	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
 	local gear = {}
 	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
-	local function gear_rows(q)
+	--- (rows `first` and `first` + 1, `n` crafts each)
+	local function gear_rows(q, first, n)
 		local r = "iron-gear-crafting-table"
-		return "1=" .. gear[1] .. "@" .. q .. ":" .. per_craft(r, gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. per_craft(r, gear[2])
+		first, n = first or 1, n or 1
+		return first .. "=" .. gear[1] .. "@" .. q .. ":" .. n * per_craft(r, gear[1]) .. " " .. (first + 1) .. "=" .. gear[2] .. "@" .. q
+			.. ":" .. n * per_craft(r, gear[2])
 	end
-	--- an item recipe onto an interface: its rows are replaced, one craft each (issue #157)
+	--- an item recipe onto an interface (issue #678: the paste adds): the copper row stays, the ingredients take the free
+	--- rows, one craft each (issue #157); pasted again, two crafts each; a second recipe (the gear at another quality) gets
+	--- rows of its own; "Clear" empties them all
 	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
 	local msgs = remote.call(RP, "paste", m1, i2)
-	local want = gear_rows("normal")
+	local want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 1)
 	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", m1, i2)
+	want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 2)
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "the same recipe pasted twice: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", m2, i2)
+	want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 2) .. " " .. gear_rows("uncommon", 4, 1)
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "a second recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
 	--- a quality recipe: the rows, the storage bus filters and (issue #291) the export bus filters take its quality (mode
 	--- and priority stay)
 	msgs = remote.call(RP, "paste", m2, i3)
@@ -5055,15 +5193,22 @@ function paste_test()
 		.. per_craft("phenolic-circuit-board", "phenol")
 	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
 		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
-	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
-	--- fluid rows get the next import sides, which have no pipe (the player is told)
+	--- issue #678: a fluid that has a row gets one craft more there and keeps its side, the item takes the first free row;
+	--- then a second recipe: its two fluid rows get the next free rows and import sides, which have no pipe (the player is
+	--- told); "Clear" empties the rows, the side that is off stays off
 	remote.call(IO, "set_interface_config", i4, { [5] = { type = "fluid", name = "phenol", amount = 100 } }, { [1] = "off", [3] = 5 })
 	msgs = remote.call(RP, "paste", r1, i4)
-	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
+	want = "1=resin-circuit-board@normal:" .. per_craft("phenolic-circuit-board", "resin-circuit-board") .. " 5=fluid/phenol:"
+		.. (100 + per_craft("phenolic-circuit-board", "phenol"))
+	expect(#keys(msgs) == 0 and config_line(i4) == want and sides(i4) == line({ [1] = "off", [3] = 5 }),
+		"a fluid's row grows and keeps its side: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", r2, i4)
-	want = "1=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 2=fluid/hydrogen:" .. per_craft("hydrochloric-acid", "hydrogen")
-	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
-		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	want = want:gsub(" 5=", " 2=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 3=fluid/hydrogen:"
+		.. per_craft("hydrochloric-acid", "hydrogen") .. " 5=")
+	expect(config_line(i4) == want and sides(i4) == line({ "off", 2, 5, 3 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
+		"two more fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	expect(remote.call(GUI, "clear_interface", i4) and config_line(i4) == "" and sides(i4) == line({ "off" }),
+		"Clear: " .. config_line(i4) .. " sides " .. sides(i4))
 	--- the fluid recipe onto the buses and storage buses
 	msgs = remote.call(RP, "paste", r1, e1)
 	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", e1).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
@@ -5105,6 +5250,15 @@ function paste_test()
 	msgs = remote.call(RP, "paste", mx, i5)
 	expect(line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
 		"too many ingredients onto an interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
+	--- issue #678: pasted again onto the full interface: the rows that are there grow, nothing is lost, the player is told
+	local before5 = remote.call(IO, "get_interface_config", i5)
+	msgs = remote.call(RP, "paste", mx, i5)
+	local after5, grown = remote.call(IO, "get_interface_config", i5), true
+	for i, c in pairs(before5) do
+		if not (after5[i] and after5[i].name == c.name and after5[i].amount > c.amount) then grown = false end
+	end
+	expect(grown and line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
+		"the recipe pasted again onto a full interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
 	local fnames, fl = fill("zz-devcheck-paste-fluids")
 	msgs = remote.call(RP, "paste", mf, i6)
 	expect(fl == 4 and line(row_names(i6)) == line(fnames) and line(keys(msgs)) == line({ "no-pipe", "no-pipe", "no-pipe", "no-pipe", "fluids-full" })
@@ -5150,6 +5304,7 @@ function paste_test()
 	--- issue #157: one craft needs more of a fluid than a side holds: the row holds a side's volume, the player is told
 	local mbig = s.find_entity("zz-devcheck-paste-machine", { PAX + 46.5, PAY + 6.5 })
 	if mbig then
+		expect(remote.call(GUI, "clear_interface", i2) and config_line(i2) == "", "Clear: " .. config_line(i2))   -- (issue #678)
 		msgs = remote.call(RP, "paste", mbig, i2)
 		local big = prototypes.recipe["zz-devcheck-paste-big"].ingredients
 		local bitem, bfluid = big[1].type == "item" and big[1] or big[2], big[1].type == "fluid" and big[1] or big[2]
@@ -5244,6 +5399,7 @@ script.on_init(function()
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sortprefs602.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cursorslot677.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
@@ -5252,6 +5408,9 @@ script.on_init(function()
 	for _, f in pairs(gridfluid261.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacesegment626.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(p2p629.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(p2pflow633.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(nativeinv542.setup(s)) do fails[#fails + 1] = f end
@@ -5269,6 +5428,7 @@ script.on_init(function()
 	for _, f in pairs(buscards413.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(craftcard411.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(circuitbus412.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(panel639.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcells414.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end
@@ -5296,11 +5456,15 @@ script.on_init(function()
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(voidcell354.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(togglebus355.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(markeddecon.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(ghostbuild661.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(cableshape670.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(turnblocks674.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wrefill603.setup(s)) do fails[#fails + 1] = f end

@@ -67,12 +67,6 @@ local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
 local AC = require("scripts.fork-me-autocraft")
 local Conn = require("scripts.fork-me-connector")
---- issue #412: the connector module puts a block's off state into its record (the visit reads `rec.coff` only)
-N.off_setters.io = function(unit, off)
-	local s = storage.fork_me_io
-	local rec = s and s.recs[unit]
-	if rec then rec.coff = off or nil end
-end
 
 local M = {}
 
@@ -239,6 +233,19 @@ local function wake(unit)
 end
 M.wake = wake
 N.wakers.io = wake
+--- issue #412: the connector module puts a block's off state into its record (the visit reads `rec.coff` only). Issue #664:
+--- a change of it wakes the block (the scheduler's front list, no tick of its own), so its next visit writes its status line:
+--- an interface or bus with nothing to do is only probed, and a probe never looks at the condition, so it kept "Working."
+--- after its condition switched it off (and "Off" until its next visit after it was switched on again)
+N.off_setters.io = function(unit, off)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	if not rec then return end
+	off = off or nil
+	if rec.coff == off then return end
+	rec.coff = off
+	wake(unit)
+end
 
 local function kind(entity) return entity and entity.valid and N.kind_of(entity.name) end
 
@@ -769,11 +776,23 @@ local function destroy_tanks(rec)
 	rec.tanks = nil
 end
 
---- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits); returns the
---- amount moved and a status.
-local function tank_to_network(t, held, net)
-	local segment = T.segment_contents(t, 1)
-	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
+--- Issue #626: what a side's whole fluid segment holds (its tank and the pipes joined to it without a pump; a segment
+--- holds one fluid), at least the tank's own share; 0 without `held` (the tank's fluid)
+local function side_amount(t, held)
+	if not held then return 0 end
+	local B = N.bound(t)
+	local f = B.has_fluid_segment(1) and B.get_fluid_segment_fluid(1)
+	return math.max(held.amount, f and f.amount or 0)
+end
+
+--- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits; `limit`: at most
+--- that much, issue #626); returns the amount moved and a status.
+local function tank_to_network(t, held, net, limit)
+	local available = limit
+	if not available then
+		local segment = T.segment_contents(t, 1)
+		available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
+	end
 	local room = N.can_insert_fluid(net, held.name, available, held.temperature)          -- (issue #159: its temperature)
 	if room <= EPS then return 0, "full" end
 	local removed = N.bound(t).extract_fluid{ name = held.name, amount = room }
@@ -840,8 +859,20 @@ local function mix_check(rec, net, name)
 	end
 end
 
---- keep a side's tank at its row's amount of the row's fluid; returns the status, the amount moved and what the
---- side still lacks, and the storage key it waits for (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
+--- Issue #626: the amount a side tied to fluid row `row` keeps, counted over its whole fluid segment (side_amount): the
+--- row's amount, at most one tank's volume (clean_config). The cap stays one tank: a row means the same with or without
+--- pipes behind the side, and its pipes share the level (a row of 5000 with a long pipe fills the tank only partly).
+local function fluid_target(row)
+	return math.min(row.amount, volume())
+end
+
+--- issue #626: a side holds more than its row only beyond this (segment counts are rounded: no filling and taking back
+--- of the last unit at every visit)
+local SURPLUS_SLACK = 1
+
+--- keep a side's fluid segment at its row's amount of the row's fluid (filled from the network, the surplus taken back,
+--- issue #626); returns the status, the amount moved and what the side still lacks, and the storage key it waits for
+--- (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
 --- priority lack is left in the network)
 local function export_side(t, held, row, net, p)
 	local moved = 0
@@ -852,8 +883,14 @@ local function export_side(t, held, row, net, p)
 		if held and held.amount <= EPS then held = nil end
 		if held and not holds_key(held, fk) then return "blocked", moved, 0 end
 	end
-	local want = math.min(row.amount, volume()) - (held and held.amount or 0)
+	local target = fluid_target(row)
+	local have = side_amount(t, held)
 	local first = N.fluid_storage_key(fk)
+	if have > target + SURPLUS_SLACK then              -- a lowered row, or a segment an older version over-filled
+		local n, why = tank_to_network(t, held, net, have - target)
+		return why, moved + n, 0, why == "full" and N.fluid_key(held.name, held.temperature) or first
+	end
+	local want = target - have
 	if want <= EPS then return "ok", moved, 0, first end
 	local keys, n = export_keys(net, row.name, fk, nil, nil, held and held.temperature)
 	if n == 0 then
@@ -943,11 +980,14 @@ local function interface_sides(rec, net, config, short, dt)
 				if why == "empty-network" and rec.ccard and lack > EPS then
 					craft(rec, net, N.fluid_storage_key(row_key(config[setting])), lack)
 				end
+			elseif why == "full" then                                -- (issue #626: a surplus the network has no room for)
+				N.wait_for(net, key, "io", rec.entity.unit_number, false)
+				N.wait_room(net, "io", rec.entity.unit_number)
 			end
 			key = key or row_key(config[setting])
 			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
 			if n + lack > EPS then                                   -- the side is drained at (n + lack) per dt
-				local tt = math.min(config[setting].amount, volume()) * dt / (n + lack)
+				local tt = fluid_target(config[setting]) * dt / (n + lack)
 				if tt < time then time = tt end
 			end
 		elseif held then
@@ -2254,7 +2294,7 @@ local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true
 --- what the probe of a blocked block compares against: the items the source or the interface holds (one engine
 --- call), plus the fluid of an interface's sides (not of one that does not look at them, `rec.sidle`: probe_work looks
 --- at those at the idle limit, issue #313) or of the source's boxes. The second value of an interface: an import side
---- holds fluid that waits (issue #313).
+--- holds fluid that waits (issue #313), or a side tied to a row holds a surplus that waits for room (issue #626).
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
@@ -2269,10 +2309,11 @@ local function probe_mark(rec)
 					local f = N.bound(t).get_fluid(1)
 					if f then
 						n = n + math.floor(f.amount)
-						--- (the safety net: an import side that waits for room or was not looked at; not one that feeds an
-						--- export side, "loop", or holds what the network does not take, which a visit cannot change)
+						--- (the safety net: an import side that waits for room or was not looked at, or a side tied to a row
+						--- whose surplus waits for room, issue #626; not one that feeds an export side, "loop", or holds what
+						--- the network does not take, which a visit cannot change)
 						local why = rec.fstatus and rec.fstatus[d]
-						if type(setting) ~= "number" and f.amount > EPS and (why == nil or why == "import" or why == "full") then
+						if f.amount > EPS and (why == "full" or type(setting) ~= "number" and (why == nil or why == "import")) then
 							held = true
 						end
 					end
@@ -2637,7 +2678,8 @@ function M.on_removed(entity, mined)
 	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
 	if not rec then return end
 	if rec.kind == "interface" then
-		local net = mined and N.active_of(entity)
+		--- (a member marked for deconstruction is out of the graph: the network beside it takes the fluid)
+		local net = mined and (N.active_of(entity) or (N.is_marked(entity.unit_number) and N.network_beside(entity)) or nil)
 		for _, t in pairs(net and rec.tanks or {}) do
 			local held = t.valid and t.get_fluid(1)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
@@ -2652,6 +2694,19 @@ function M.on_removed(entity, mined)
 		cards.detach(rec)
 	end
 	drop(s, entity.unit_number)
+end
+
+--- the block was marked for deconstruction, before it leaves the graph (control.lua): an ME Interface's sides give their fluid
+--- to the network while it still is the block's (marked, the block works no more)
+function M.on_marked(entity)
+	local s = storage.fork_me_io
+	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
+	if not (rec and rec.kind == "interface") then return end
+	local net = N.active_of(entity)
+	for _, t in pairs(net and rec.tanks or {}) do
+		local held = t.valid and t.get_fluid(1)
+		if held and held.amount > EPS then tank_to_network(t, held, net) end
+	end
 end
 
 function M.on_rotated(entity)
@@ -2765,6 +2820,20 @@ function M.clean_removed_items()
 	end
 end
 
+--- Issue #628 (scripts/fork-me-wired.lua, before on_configuration_changed): bus `old` (a unit) was replaced by entity `new` at
+--- its place: its record moves to the new unit (the rebuild below keeps it by unit number)
+function M.rekey(old, new)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[old]
+	if not rec then return end
+	local u = new.unit_number
+	s.recs[old], s.recs[u] = nil, rec
+	rec.entity, rec.target = new, nil
+	for i, unit in ipairs(s.list) do if unit == old then s.list[i] = u end end
+	if s.lpos then s.lpos[old], s.lpos[u] = nil, s.lpos[old] end
+	if s.prio and s.prio[old] then s.prio[old], s.prio[u] = nil, s.prio[old] end
+end
+
 --- rebuild the records from the world; filters of buses, the config and sides of interfaces are kept by unit
 --- number; interfaces get their side tanks (an interface of a save from before issue #3: `fresh`)
 function M.on_configuration_changed()
@@ -2787,9 +2856,12 @@ function M.on_configuration_changed()
 				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
 				if o then rec.gtext, rec.gcard = o.gtext, o.gcard M.bus_gf(rec) end                                       -- issue #363
+				--- issue #628: the pulse mode, craft only and the Crafting Card's jobs were lost at every update before
+				if o then rec.pulse, rec.conly, rec.cjobs = o.pulse, o.conly, o.cjobs end
 			end
 			if rec.kind == "interface" then
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
+				if o then rec.ccfg, rec.cjobs = o.ccfg, o.cjobs end   -- (issue #628: the rows from the circuit were lost at every update)
 				if o and o.config then split_rows(rec, clean_config(o.config)) end
 				if o and o.extra then
 					local all = {}

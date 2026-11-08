@@ -84,8 +84,9 @@ return function(H)
 			hand, inv = st.hand, st.inv
 			local n1 = net()
 			expect(remote.call(NET, "same_network", ctrl, pt), "the pattern terminal is not in the controller's network")
-			expect(n1 and n0 and n1.power == n0.power + 8000, "the controller draws " .. tostring(n1 and n1.power) .. " W, "
-				.. tostring(n0 and n0.power + 8000) .. " expected (pattern terminal 8 kW)")
+			local tw = power_setting_w("terminal", 8000)
+			expect(n1 and n0 and n1.power == n0.power + tw, "the controller draws " .. tostring(n1 and n1.power) .. " W, "
+				.. tostring(n0 and n0.power + tw) .. " expected (pattern terminal " .. tw .. " W)")
 			expect(#s.find_entities_filtered{ type = "electric-pole", position = pt.position, radius = 10 } == 0, "an electric pole within 10 tiles of the pattern terminal")
 			expect(s.can_place_entity{ name = "character", position = pt.position }, "a character cannot stand on the pattern terminal")
 			expect(remote.call(PT, "problem", pt) == nil, "the pattern terminal has the problem " .. tostring(remote.call(PT, "problem", pt)))

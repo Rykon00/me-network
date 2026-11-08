@@ -26,6 +26,7 @@
 --------------------------------------------------------------------------------
 
 local ME = ME_NETWORK
+local WIRED = require("prototypes.wired")      -- (issue #628)
 local ENTITY_PATH = ME.entity_path
 local ICON_FORK = ME.icons .. "fork/"
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
@@ -129,28 +130,37 @@ ME.add_item{
 
 
 --------------------------------------------------------------------------------
---- PATTERN PROVIDER (passive marker, no power: it only tells the network which machine to use)
+--- PATTERN PROVIDER (passive marker, no power: it only tells the network which machine to use). Issue #628: a display panel
+--- that takes circuit wires itself (the lock modes read them, prototypes/wired.lua); the simple entity of 0.5.11 and before
+--- under its legacy name
 --------------------------------------------------------------------------------
 
-data:extend({ {
+local PROVIDER_PICTURE = {
+	filename = ME.hd_entity_path .. "me-pattern-provider.png",
+	priority = "extra-high",
+	width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
+}
+WIRED.block{
+	name = "me-pattern-provider", icon = ME.hd_icons .. "me-pattern-provider.png", icon_size = 64, health = 150,
+	sprites = PROVIDER_PICTURE,
+	description = { "entity-description.me-pattern-provider" },
+}
+data:extend({ WIRED.legacy({
 	type = "simple-entity-with-force",
-	name = "me-pattern-provider",
+	name = "me-pattern-provider" .. WIRED.LEGACY_SUFFIX,
 	icon = ME.hd_icons .. "me-pattern-provider.png",
 	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-provider" },
+	placeable_by = { item = "me-pattern-provider", count = 1 },
 	max_health = 150,
 	corpse = "small-remnants",
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
-	picture = {
-		filename = ME.hd_entity_path .. "me-pattern-provider.png",
-		priority = "extra-high",
-		width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
-	},
+	picture = table.deepcopy(PROVIDER_PICTURE),
 	localised_description = { "entity-description.me-pattern-provider" },
-} })
+}, "me-pattern-provider") })
 
 
 
@@ -161,7 +171,7 @@ data:extend({ {
 --- screens). Its two slots and its window: scripts/fork-me-patternterm.lua.
 --------------------------------------------------------------------------------
 
-local PATTERN_TERMINAL_POWER = 8000             -- W drawn through the ME Controller, like the ME Terminal's
+local PATTERN_TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller, the ME Terminal's (issue #680)
 
 data:extend({ {
 	type = "simple-entity-with-force",
@@ -184,7 +194,7 @@ data:extend({ {
 		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
-	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
+	localised_description = { "entity-description.me-pattern-terminal", ME.kw(PATTERN_TERMINAL_POWER) },
 } })
 --- issue #416: the ME Pattern Terminal Ex, the same block (its kind is the pattern terminal's: power, screen, walkable) with a
 --- picture of its own (tools/gen_ae2_sprites.py --pattern-terminal: the screen's frame in amber)
@@ -194,7 +204,7 @@ pt_ex.icon = ME.hd_icons .. "me-pattern-terminal-ex.png"
 pt_ex.minable = { mining_time = 0.2, result = "me-pattern-terminal-ex" }
 pt_ex.placeable_by = { item = "me-pattern-terminal-ex", count = 1 }
 for i, p in ipairs(pt_ex.pictures) do p.filename = ME.hd_entity_path .. "me-pattern-terminal-ex.png" end
-pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", tostring(PATTERN_TERMINAL_POWER / 1000) }
+pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", ME.kw(PATTERN_TERMINAL_POWER) }
 data:extend({ pt_ex })
 
 --------------------------------------------------------------------------------
@@ -203,7 +213,7 @@ data:extend({ pt_ex })
 --- scripts/fork-me-ifaceterm.lua. It has no slots and no settings.
 --------------------------------------------------------------------------------
 
-local INTERFACE_TERMINAL_POWER = 8000           -- W drawn through the ME Controller, like the ME Terminal's
+local INTERFACE_TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller, the ME Terminal's (issue #680)
 
 data:extend({ {
 	type = "simple-entity-with-force",
@@ -226,7 +236,7 @@ data:extend({ {
 		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
-	localised_description = { "entity-description.me-interface-terminal", tostring(INTERFACE_TERMINAL_POWER / 1000) },
+	localised_description = { "entity-description.me-interface-terminal", ME.kw(INTERFACE_TERMINAL_POWER) },
 } })
 
 --------------------------------------------------------------------------------
@@ -239,7 +249,7 @@ for _, c in pairs(data.raw["assembling-machine"]["assembling-machine-2"].craftin
 	if not c:find("fluid") then item_categories[#item_categories + 1] = c end
 end
 ME.make_molecular_assembler{ base = "assembling-machine-2", crafting_categories = item_categories,
-	crafting_speed = 2.5, energy_usage = "375kW" }
+	crafting_speed = 2.5, energy_usage = ME.energy(ME.power_w("molecular-assembler")) }   -- (issue #680: a startup setting)
 
 
 
@@ -397,9 +407,9 @@ maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
 maintainer.collision_box = ME.solid_box()                  -- (issue #268)
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
-local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+local MAINTAINER_POWER = ME.power_w("level-maintainer")   -- W drawn through the ME Controller (issue #128; #680: a setting)
 maintainer.energy_source = { type = "void" }
-maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
+maintainer.energy_usage_per_tick = ME.energy(math.max(1, MAINTAINER_POWER))
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
@@ -412,7 +422,7 @@ maintainer.stateless_visualisation = { render_layer = "lower-object",
 maintainer.draw_stateless_visualisations_in_ghost = true
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
-maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
+maintainer.localised_description = { "entity-description.me-level-maintainer", ME.kw(MAINTAINER_POWER) }
 data:extend({ maintainer })
 data:extend({
 	{ type = "sprite", name = "me-level-maintainer-screen-on", filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
@@ -480,7 +490,7 @@ data:extend({ circuit })
 --- combinator (redstone torch).
 --------------------------------------------------------------------------------
 
-local TOGGLE_POWER = 500                 -- W drawn through the ME Controller while joined
+local TOGGLE_POWER = ME.power_w("toggle-bus")   -- W drawn through the ME Controller while joined (issue #680: a setting)
 for i, def in ipairs({
 	{ "me-toggle-bus", I{ "fluix-cable", 2, "copper-cable", 2, "power-switch", 1 } },
 	{ "me-inverted-toggle-bus", I{ "me-toggle-bus", 1 } },
@@ -512,7 +522,7 @@ for i, def in ipairs({
 	bus.draw_stateless_visualisations_in_ghost = true
 	bus.fast_replaceable_group = "me-toggle-bus"
 	bus.next_upgrade = nil
-	bus.localised_description = { "entity-description." .. name, tostring(TOGGLE_POWER) }
+	bus.localised_description = { "entity-description." .. name, string.format("%.0f", TOGGLE_POWER) }
 	data:extend({ bus })
 end
 data.raw["mod-data"]["fork-me-network"].data.names.toggle_bus = "me-toggle-bus"
@@ -593,12 +603,17 @@ end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
 	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-pattern-terminal-ex", "me-interface-terminal", "me-blank-pattern",
-		"me-molecular-assembler" }) }
+		"me-molecular-assembler", "me-item-p2p-tunnel", "me-fluid-p2p-tunnel", "me-item-p2p-tunnel-attune",   -- (issue #629)
+		"me-fluid-p2p-tunnel-attune" }) }
 
---- issue #38: level maintainer and circuit interface, bigger CPUs
-ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter",   -- (#355)
-		"me-advanced-level-emitter" } }                                                                                         -- (#443)
+--- issue #679: the level emitter and the circuit interface early, with red and green science (a signal from what the network
+--- holds, to switch an ME Interface or a bus off at a threshold), before autocrafting; migrations/me-network-level-emitter-tech.lua
+--- researches it in a save that has ME Automation
+ME.add_technology{ name = "me-level-emitter", prerequisites = { "me-network", "circuit-network" }, unit = ME.unit(2, 200),
+	recipes = { "me-level-emitter", "me-circuit-interface" } }
+--- issue #38: level maintainer, bigger CPUs; the toggle buses (#355) and the advanced level emitter (#443)
+ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "me-level-emitter", "circuit-network" },
+	unit = ME.unit(3, 500), recipes = { "me-level-maintainer", "me-toggle-bus", "me-inverted-toggle-bus", "me-advanced-level-emitter" } }
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
@@ -630,6 +645,9 @@ end
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
 ME.crafting_block_tech["me-pattern-terminal-ex"] = "me-autocrafting"         -- (issue #416, the same way)
 ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)
+for _, name in ipairs({ "me-item-p2p-tunnel", "me-fluid-p2p-tunnel", "me-item-p2p-tunnel-attune", "me-fluid-p2p-tunnel-attune" }) do
+	ME.crafting_block_tech[name] = "me-autocrafting"                              -- (issue #629, the same way)
+end
 for _, name in ipairs({ "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" }) do   -- (issue #355, the same way)
 	ME.crafting_block_tech[name] = "me-automation"
 end

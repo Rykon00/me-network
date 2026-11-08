@@ -32,7 +32,7 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   since 0.5.1 they map to `me-1k-crafting-storage` and have no prototype any more).
   Their recipes are gone: see
   `replace_recipe` and "Recipes of removed items" below.
-- Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-automation`,
+- Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-level-emitter` (issue #679), `me-automation`,
   `me-co-processing`, `me-quantum-crafting`, `me-fluid-storage`, `me-fluid-storage-256k`, `me-upgrade-cards` (0.3.0:
   after `me-storage-64k`, whose cost it takes in `data-final-fixes.lua` unless a mod sets it with `set_technology`).
   Since 0.3.0 (issue #6) `me-autocrafting` unlocks the crafting unit, the 1k and 4k crafting storage and the monitor,
@@ -196,7 +196,10 @@ part to its state once a second. With an empty view (me-network's own) there is 
 
 The ME Import, Export and Storage Bus show where they work by a marker: the plate on the side they face and their
 arrows. Since issue #282 it is a layer of its own over each direction's picture (`me-<bus>-<direction>-marker.png`,
-the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Where the
+the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Since issue
+#628 the three buses are `display-panel` prototypes (they take circuit wires themselves), so their pictures are the
+`sprites` of `data.raw["display-panel"]["me-import-bus"]` and so on (until 0.5.11 the `picture` of a
+`simple-entity-with-force`; the hidden `me-<bus>-legacy` prototypes keep that for old saves). Where the
 marker is drawn is the mod-data `fork-me-network`'s `bus_view`, the square of the 64 px picture that is the bus's face,
 in px from its top left; me-network's own is `{ x = 0, y = 0, size = 58 }`. A mod whose bus has another face sets it in
 its `data.lua` or `data-updates.lua`:
@@ -214,6 +217,9 @@ The ME Logistic Interface (issue #531) is built the same way, but as a solid blo
 `me-logistic-interface-marker.png` (orange corner marks and its three chests) the second layer on the 54 px face at its top
 left (not moved by the bus view); its icons are the base and the marker. Its three hidden chests
 (`me-logistic-interface-provider`, `-requester`, `-storage`) have no picture.
+The ME P2P Tunnels (issue #629, `me-item-p2p-tunnel`, `me-fluid-p2p-tunnel`) are rotated like the buses: each direction's
+picture is the casing (`<tunnel>-<direction>.png`) with the marker (`<tunnel>-<direction>-marker.png`, the plate on the side
+it faces and the tunnel's mouth) as its second layer, moved by the bus view like the buses' markers.
 
 ## Krastorio 2
 

@@ -19,6 +19,7 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local picker = require("scripts.fork-me-picker")
+local W = require("scripts.fork-me-windows")       -- (loaded before this module: control.lua; issue #677, W.pick)
 
 local M = {}
 
@@ -340,7 +341,7 @@ G.on("mon_key", function(event, player, el)
 	end
 	local d = M.get(entity)
 	if d.locked then return end
-	picker.open(player, { callback = "mon_key", data = { unit = entity.unit_number }, kinds = { item = true, fluid = true },
+	W.pick(player, { callback = "mon_key", data = { unit = entity.unit_number }, kinds = { item = true, fluid = true },
 		preset = picker.preset_of(d.key), quality = true })
 end)
 

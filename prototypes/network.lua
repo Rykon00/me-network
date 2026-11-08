@@ -57,11 +57,12 @@ local UNDERGROUND_REACH = 10        -- max_underground_distance of the undergrou
 local NO_PIPELINE_EXTENT = 4294967295  -- uint32 maximum of FluidBox::max_pipeline_extent
 --- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
 local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
-local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
+local CHEST_WATTS = ME.power_w("chest")   -- W: what it draws from the power grid on its own (issue #680: a startup setting)
 local CHEST_FLUID_VOLUME = 1000
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
 --- buses and the ME Terminal (prototypes/api.lua)
 local WALKABLE = ME.WALKABLE
+local WIRED = require("prototypes.wired")      -- (issue #628: the blocks that take circuit wires themselves)
 
 
 
@@ -377,7 +378,8 @@ data:extend({ {
 		filename = HD_ENTITY .. "me-network-controller.png",
 		priority = "high", width = 128, height = 128, scale = 0.5,
 	},
-	localised_description = { "entity-description.me-network-controller" },
+	localised_description = { "entity-description.me-network-controller", ME.kw(ME.power_w("member")), ME.kw(ME.power_w("terminal")),
+		ME.kw(ME.power_w("level-maintainer")) },                -- (issue #680)
 } })
 data.raw.item["me-controller"].place_result = CONTROLLER
 
@@ -424,7 +426,7 @@ data:extend({ {
 	inventory_size = 1,
 	inventory_type = "normal",
 	picture = { filename = HD_ENTITY .. "me-chest.png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-chest" },
+	localised_description = { "entity-description.me-chest", ME.kw(CHEST_WATTS) },
 }, {
 	type = "electric-energy-interface",
 	name = CHEST_POWER,
@@ -441,14 +443,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = "100kJ",                    -- 25 s on its own (AE2: 500 AE)
-		input_flow_limit = "40kW",
+		buffer_capacity = ME.energy(CHEST_WATTS * 25, "J"),   -- 25 s on its own (AE2: 500 AE)
+		input_flow_limit = ME.energy(CHEST_WATTS * 10),
 		output_flow_limit = "0W",
 		render_no_network_icon = false,
 		render_no_power_icon = false,
 	},
 	energy_production = "0W",
-	energy_usage = tostring(CHEST_WATTS) .. "W",
+	energy_usage = ME.energy(CHEST_WATTS),
 	localised_name = { "entity-name.me-chest" },
 }, {
 	type = "storage-tank",
@@ -500,6 +502,10 @@ data:extend({ {
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	inventory_size = INTERFACE_SLOTS,
 	inventory_type = "with_filters_and_bar",
+	--- issue #628: it takes circuit wires itself (the condition, the rows from the circuit); the script keeps its contents off the
+	--- wire (read_contents, scripts/fork-me-connector.lua), so they never mix with the signals its rows read
+	circuit_connector = { WIRED.connector()[1] },
+	circuit_wire_max_distance = 9,
 	picture = {                                       -- issue #3: with its four pipe sides (tools/gen_ae2_sprites.py --unified)
 		filename = HD_ENTITY .. "me-interface-unified.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
@@ -552,12 +558,18 @@ for _, bus in pairs({
 		--- AE2: an annihilation (import) or formation core (export), 2 iron, a piston
 		recipe = { energy_required = 2, ingredients = I{ "electronic-circuit", 1, "iron-plate", 2, "fast-inserter", 1 } },
 	}
-	block{
+	--- issue #628: a display panel that takes the wires itself, walkable like the cable (issue #129); the simple entity of
+	--- 0.5.11 and before under its legacy name (prototypes/wired.lua)
+	WIRED.block{
 		name = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
 		description = { "entity-description." .. bus.name },
-		--- walkable like the cable (issue #129): drawn under the character
-		extra = { picture = bus_picture(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
+		sprites = bus_picture(bus.name), collision_mask = WALKABLE,
 	}
+	WIRED.legacy(block{
+		name = bus.name .. WIRED.LEGACY_SUFFIX, item = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
+		description = { "entity-description." .. bus.name },
+		extra = { picture = bus_picture(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
+	}, bus.name)
 end
 
 --------------------------------------------------------------------------------
@@ -576,6 +588,21 @@ ME.add_item{
 	place_result = UNDERGROUND,
 	recipe = { energy_required = 1, amount = 2, ingredients = I{ "fluix-cable", 8, "iron-plate", 2 } },   -- (not in AE2)
 }
+--- The underground cable's picture: the cable's arm on the side it faces (the cable sheet's variation with only that side's bit, so
+--- a graphics mod that replaces the cable sheet, the texture mod's AE2 cable, replaces the arm as well) under the tunnel mouth
+--- (me-underground-cable-<direction>.png, tools/gen_ae2_sprites.py --underground)
+local function underground_pictures()
+	local out = four_way(UNDERGROUND, true)
+	local BIT = { north = 1, east = 2, south = 4, west = 8 }
+	for dir, mouth in pairs(out) do
+		out[dir] = { layers = {
+			{ filename = HD_ENTITY .. "me-cable.png", priority = "extra-high", width = 64, height = 64, scale = 0.5, x = BIT[dir] * 64 },
+			mouth,
+		} }
+	end
+	return out
+end
+
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
 --- shows the pairing on hover and while placing. Its connections are the vanilla underground pipe's (the above
@@ -593,7 +620,10 @@ data:extend({ {
 	max_health = 80,
 	is_military_target = false,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	--- the vanilla underground pipe's collision box: with a square one (+-0.35 until 0.5.12) the game's preview of a blueprint drew
+	--- its underground cables red over underground cables or their ghosts that stand there (the paste built fine); the maintainer's
+	--- test of one variant per property in the game found this one
+	collision_box = { { -0.29, -0.29 }, { 0.29, 0.2 } },
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 45,
 	collision_mask = WALKABLE,
@@ -607,9 +637,21 @@ data:extend({ {
 			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable", hide_connection_info = true },
 		},
 	},
-	pictures = four_way(UNDERGROUND, true),
+	pictures = underground_pictures(),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
+--- The game draws a pipe-to-ground's visualization over it while a pipe, underground or blueprint is held; both are the underground
+--- pipe's normal (blue) one, as for a cable (the red preview of blueprints over underground cables was the collision box above; the
+--- maintainer's test that found it had this as well)
+do
+	local vanilla = data.raw["pipe-to-ground"]["pipe-to-ground"]
+	local vis = vanilla and vanilla.visualization
+	if vis then
+		local ug = data.raw["pipe-to-ground"][UNDERGROUND]
+		ug.visualization = table.deepcopy(vis)
+		ug.disabled_visualization = table.deepcopy(vis)
+	end
+end
 
 --------------------------------------------------------------------------------
 --- ME STORAGE BUS (rotatable: the arrow side faces the chest or cargo wagon whose inventory becomes network
@@ -626,12 +668,17 @@ ME.add_item{
 	place_result = STORAGE_BUS,
 	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2 } },   -- (AE2: an interface, 2 pistons)
 }
-block{
+WIRED.block{                                                  -- (issue #628, as the import and export bus)
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
+	description = { "entity-description." .. STORAGE_BUS },
+	sprites = bus_picture(STORAGE_BUS), collision_mask = WALKABLE,
+}
+WIRED.legacy(block{
+	name = STORAGE_BUS .. WIRED.LEGACY_SUFFIX, item = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
 	extra = { picture = bus_picture(STORAGE_BUS),
 		render_layer = "lower-object", collision_mask = WALKABLE },
-}
+}, STORAGE_BUS)
 
 --- Issue #381: the buses' icons (item and entity; the recipes show the item's) carry a badge with their direction: into
 --- the network (import), out of it (export), both ways (storage bus), as a layer of its own over the block's icon
@@ -639,10 +686,92 @@ block{
 --- which all look alike) keeps it. The badge's file names are kept stable for that.
 for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
 	local icons = { { icon = HD_ICON .. bus .. ".png", icon_size = 64 }, { icon = HD_ICON .. bus .. "-badge.png", icon_size = 64 } }
-	for _, proto in pairs({ data.raw.item[bus], data.raw["simple-entity-with-force"][bus] }) do
+	for _, proto in pairs({ data.raw.item[bus], data.raw["display-panel"][bus],
+		data.raw["simple-entity-with-force"][bus .. WIRED.LEGACY_SUFFIX] }) do
 		proto.icon, proto.icon_size, proto.icons = nil, nil, table.deepcopy(icons)
 	end
 end
+
+--------------------------------------------------------------------------------
+--- ME P2P TUNNELS (me-network issue #629; AE2-Unofficial's P2P Tunnel - Items and - Fluids, parts/p2p/PartP2PItems.java and
+--- PartP2PLiquids.java): rotatable 1x1 blocks, walked over like the buses, members of the network (the default 4 kW through
+--- the controller). A frequency has one input and any number of outputs of the same kind in the input's network; a pattern
+--- provider that an input faces serves the machines and chests its outputs face (runtime: scripts/fork-me-p2p.lua; guide:
+--- docs/AE2.md "ME P2P Tunnels"). Recipe: AE2-Unofficial's ME P2P Tunnel (recipes/network/parts/tunnels.recipe: 3 iron,
+--- an engineering processor, 3 fluix crystals) with the stand-ins, for both kinds: AE2 attunes an ME P2P tunnel with a chest
+--- or a bucket and uses nothing up, so a recipe turns one kind into the other. Pictures: the casing and, as a layer of its own
+--- placed by the bus view, the plate on the side it faces and the tunnel's mouth (tools/gen_ae2_sprites.py --p2p-tunnels).
+--------------------------------------------------------------------------------
+
+local P2P_TUNNELS = { { name = "me-item-p2p-tunnel", order = "e-p2p-a" }, { name = "me-fluid-p2p-tunnel", order = "e-p2p-b" } }
+for i, t in ipairs(P2P_TUNNELS) do
+	ME.add_item{
+		name = t.name,
+		icon = HD_ICON .. t.name .. ".png",
+		icon_size = 64,
+		subgroup = "fork-me-autocrafting",
+		order = t.order,
+		stack_size = 50,
+		place_result = t.name,
+		recipe = { energy_required = 2, ingredients = I{ "iron-plate", 3, "processing-unit", 1, "copper-cable", 3 } },
+	}
+	block{
+		name = t.name, icon = HD_ICON .. t.name .. ".png", icon_size = 64,
+		description = { "entity-description." .. t.name },
+		extra = { picture = bus_picture(t.name), render_layer = "lower-object", collision_mask = WALKABLE },
+	}
+	--- attuned from the other kind (AE2: a right click with a chest or a bucket)
+	ME.add_recipe{ name = t.name .. "-attune", result = t.name, energy_required = 0.5, ingredients = I{ P2P_TUNNELS[3 - i].name, 1 },
+		subgroup = "fork-me-autocrafting", order = t.order .. "-attune", auto_recycle = false }
+end
+
+--- Issue #633: what a tunnel that is not an output carries on its own (scripts/fork-me-p2p.lua makes the part on its tile): the
+--- item tunnel's chest that inserters drop into, the fluid tunnel's tank whose one pipe connection is the tunnel's front (made
+--- in the tunnel's direction, made again when it turns). Not selectable, no collision, not in blueprints; inserters and pipes
+--- reach them (probed headless, Factorio 2.1.24).
+local P2P_CHEST_SLOTS, P2P_TANK_VOLUME = 4, 1000
+local NOTHING = { filename = "__core__/graphics/empty.png", priority = "extra-high", width = 1, height = 1 }
+data:extend({ {
+	type = "container",
+	name = "me-item-p2p-tunnel-buffer",
+	icon = HD_ICON .. P2P_TUNNELS[1].name .. ".png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	hidden_in_factoriopedia = true,
+	selectable_in_game = false,
+	is_military_target = false,
+	max_health = 200,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },
+	inventory_size = P2P_CHEST_SLOTS,
+	picture = NOTHING,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name." .. P2P_TUNNELS[1].name },
+}, {
+	type = "storage-tank",
+	name = "me-fluid-p2p-tunnel-tank",
+	icon = HD_ICON .. P2P_TUNNELS[2].name .. ".png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	hidden_in_factoriopedia = true,
+	selectable_in_game = false,
+	is_military_target = false,
+	max_health = 200,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },
+	fluid_box = {
+		volume = P2P_TANK_VOLUME,
+		pipe_connections = { { direction = defines.direction.north, position = { 0, 0 }, hide_connection_info = true } },
+	},
+	window_bounding_box = { { 0, 0 }, { 0, 0 } },
+	flow_length_in_ticks = 360,
+	pictures = { picture = NOTHING },
+	two_direction_only = false,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name." .. P2P_TUNNELS[2].name },
+} })
 
 --------------------------------------------------------------------------------
 --- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
@@ -776,7 +905,7 @@ data:extend({
 --- screen lies one layer above it (`lower-object-above-shadow`) and covers it, both below the character.
 --------------------------------------------------------------------------------
 
-local TERMINAL_POWER = 8000             -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+local TERMINAL_POWER = ME.power_w("terminal")   -- W drawn through the ME Controller (issue #128; #680: a startup setting)
 
 local terminal = table.deepcopy(data.raw.lamp["small-lamp"])
 terminal.name = "me-terminal"
@@ -789,7 +918,7 @@ terminal.dying_explosion = nil
 terminal.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 terminal.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 terminal.energy_source = { type = "void" }
-terminal.energy_usage_per_tick = (TERMINAL_POWER / 1000) .. "kW"
+terminal.energy_usage_per_tick = ME.energy(math.max(1, TERMINAL_POWER))
 terminal.always_on = true
 terminal.collision_mask = WALKABLE         -- issue #129: walkable like the cable (its screen is drawn under the character)
 terminal.light = nil
@@ -802,7 +931,7 @@ terminal.stateless_visualisation = { render_layer = "lower-object",
 terminal.draw_stateless_visualisations_in_ghost = true
 terminal.fast_replaceable_group = nil
 terminal.next_upgrade = nil
-terminal.localised_description = { "entity-description.me-terminal", tostring(TERMINAL_POWER / 1000) }
+terminal.localised_description = { "entity-description.me-terminal", ME.kw(TERMINAL_POWER) }
 data:extend({ terminal })
 data.raw.item["me-terminal"].place_result = "me-terminal"
 
@@ -843,6 +972,20 @@ data:extend({ {
 	linked_game_control = "focus-search",
 	consuming = "none",
 } })
+
+--- Issues #673, #674: the rotate and flip keys (linked to the game's own; R, Shift + R, H, V by default): while a blueprint with ME
+--- Cable or another ME block whose direction does not show is held, scripts/fork-me-cableturn.lua turns those blocks around the
+--- player to the direction they will land with, so the game does not refuse the paste
+for _, key in ipairs({ { "fork-me-cable-rotate", "rotate" }, { "fork-me-cable-reverse-rotate", "reverse-rotate" },
+	{ "fork-me-cable-flip-horizontal", "flip-horizontal" }, { "fork-me-cable-flip-vertical", "flip-vertical" } }) do
+	data:extend({ {
+		type = "custom-input",
+		name = key[1],
+		key_sequence = "",
+		linked_game_control = key[2],
+		consuming = "none",
+	} })
+end
 
 --- Issue #527: the settings paste of the ME Quantum Bridge and the ME Wireless Link (prototypes/paste.lua, KEYS), on the
 --- game's copy and paste keys (Shift + right click, Shift + left click by default); the game's own paste goes on
@@ -890,6 +1033,7 @@ data:extend({ {
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 			logistic_storage_bus = LOGISTIC_STORAGE_BUS,                          -- (issue #506: kind "storage-bus")
+			p2p_item_tunnel = P2P_TUNNELS[1].name, p2p_fluid_tunnel = P2P_TUNNELS[2].name,   -- (issue #629: kind "p2p-tunnel")
 			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
 			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
@@ -901,6 +1045,7 @@ data:extend({ {
 		--- issue #128: the power (W) the ME Controller draws for a block that has no power connection of its own, by kind;
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
 		member_power = { terminal = TERMINAL_POWER },
+		member_default = ME.power_w("member"),       -- (issue #680: the power of a member without a number of its own)
 		underground_reach = UNDERGROUND_REACH,
 		drive_view = DRIVE_VIEW,
 		--- issue #278: how a graphics mod shows the ME Controller's state (docs/API.md "The controller view"): an Animation
@@ -965,7 +1110,7 @@ ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
 --- Interface; the throughput monitor a level emitter more); Gregtorio gives them GTNH's.
 --------------------------------------------------------------------------------
 
-local MONITOR_POWER = 2000               -- W drawn through the ME Controller
+local MONITOR_POWER = ME.power_w("monitor")   -- W drawn through the ME Controller (issue #680: a startup setting)
 local MONITOR_RECIPES = {
 	["me-storage-monitor"] = { "me-terminal", 1, "advanced-circuit", 1 },
 	["me-conversion-monitor"] = { "me-storage-monitor", 1, "me-interface", 1 },
@@ -997,7 +1142,7 @@ for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throu
 			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
 			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 		},
-		localised_description = { "entity-description." .. name, tostring(MONITOR_POWER / 1000) },
+		localised_description = { "entity-description." .. name, ME.kw(MONITOR_POWER) },
 	} })
 	data.raw["mod-data"]["fork-me-network"].data.member_power[name:gsub("^me%-", "")] = MONITOR_POWER
 end
@@ -1017,7 +1162,7 @@ end
 --- the plastic bar, is made in no game of Gregtorio Continued, whose compat file gives the block its GT recipe later.
 --------------------------------------------------------------------------------
 
-local IO_PORT, IO_PORT_POWER = "me-io-port", 5000     -- W drawn through the ME Controller
+local IO_PORT, IO_PORT_POWER = "me-io-port", ME.power_w("io-port")   -- W drawn through the ME Controller (issue #680)
 ME.add_item{ name = IO_PORT, icon = HD_ICON .. "me-io-port.png", icon_size = 64, subgroup = "fork-me-drives", order = "c",
 	stack_size = 10, place_result = IO_PORT,
 	recipe = { energy_required = 5, ingredients = I{ "me-drive", 1, "fluix-cable", 2, "iron-plate", 2, "advanced-circuit", 1 } } }
@@ -1035,7 +1180,7 @@ data:extend({ {
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	picture = { filename = HD_ENTITY .. "me-io-port.png", priority = "high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
+	localised_description = { "entity-description.me-io-port", ME.kw(IO_PORT_POWER) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
 data.raw["mod-data"]["fork-me-network"].data.names.logistic_interface = LOGISTIC_INTERFACE   -- (issue #531)
@@ -1053,7 +1198,7 @@ ME.crafting_block_tech[IO_PORT] = "me-network"
 --- whose compat file gives the block its GT recipe), unlocked late (utility science).
 --------------------------------------------------------------------------------
 
-local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", 1000000
+local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", ME.power_w("quantum-bridge")   -- (issue #680: a startup setting)
 ME.add_item{ name = QBRIDGE, icon = HD_ICON .. "me-quantum-bridge.png", icon_size = 64, subgroup = "fork-me-network", order = "e",
 	stack_size = 10, place_result = QBRIDGE,
 	recipe = { energy_required = 30, ingredients = I{ "iron-plate", 32, "electronic-circuit", 20, "processing-unit", 8,
@@ -1075,14 +1220,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = tostring(QBRIDGE_WATTS * 2) .. "J",     -- (two seconds of its drain)
-		input_flow_limit = tostring(QBRIDGE_WATTS * 2) .. "W",
+		buffer_capacity = ME.energy(QBRIDGE_WATTS * 2, "J"),     -- (two seconds of its drain)
+		input_flow_limit = ME.energy(QBRIDGE_WATTS * 2),
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",
-	energy_usage = tostring(QBRIDGE_WATTS) .. "W",
+	energy_usage = ME.energy(QBRIDGE_WATTS),
 	picture = { filename = HD_ENTITY .. "me-quantum-bridge.png", priority = "high", width = 192, height = 192, scale = 0.5 },
-	localised_description = { "entity-description.me-quantum-bridge", tostring(QBRIDGE_WATTS / 1000000) },
+	localised_description = { "entity-description.me-quantum-bridge", ME.kw(QBRIDGE_WATTS / 1000) },   -- (MW)
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.quantum_bridge = QBRIDGE
 data.raw["mod-data"]["fork-me-network"].data.quantum_bridge = { watts = QBRIDGE_WATTS }
@@ -1097,7 +1242,8 @@ ME.add_technology{ name = "me-quantum-bridge", prerequisites = { "me-storage-256
 --- AE2: a wireless receiver is a radar, as for the access point), unlocked with ME Wireless Link after ME Wireless.
 --------------------------------------------------------------------------------
 
-local WLINK_NAME, WLINK = "me-wireless-link", { base = 10000, per_chunk = 50000, range = 512 }
+local WLINK_NAME, WLINK = "me-wireless-link", { base = ME.power_w("wireless-link"), per_chunk = ME.power_w("wireless-link-per-32-tiles"),
+	range = 512 }                                         -- (issue #680: the power from startup settings)
 ME.add_item{ name = WLINK_NAME, icon = HD_ICON .. "me-wireless-link.png", icon_size = 64, subgroup = "fork-me-network", order = "f",
 	stack_size = 50, place_result = WLINK_NAME,
 	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 2, "fluix-cable", 4, "iron-plate", 4 } } }
@@ -1118,15 +1264,14 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = tostring(WLINK.base * 2) .. "J",           -- (two seconds of its drain; the runtime sets it with the drain)
-		input_flow_limit = tostring(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2) .. "W",
+		buffer_capacity = ME.energy(WLINK.base * 2, "J"),           -- (two seconds of its drain; the runtime sets it with the drain)
+		input_flow_limit = ME.energy(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2),
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",
-	energy_usage = tostring(WLINK.base) .. "W",
+	energy_usage = ME.energy(WLINK.base),
 	picture = { filename = HD_ENTITY .. "me-wireless-link.png", priority = "high", width = 64, height = 64, scale = 0.5 },
-	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), tostring(WLINK.base / 1000),
-		tostring(WLINK.per_chunk / 1000) },
+	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), ME.kw(WLINK.base), ME.kw(WLINK.per_chunk) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.wireless_link = WLINK_NAME
 data.raw["mod-data"]["fork-me-network"].data.wireless_link = WLINK

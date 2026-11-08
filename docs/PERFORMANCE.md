@@ -4333,3 +4333,297 @@ does nothing for them):
 The check reports the script average at 100 and the allocation at both sizes: the refill's work, about 0.15 ms and 8 KB
 (the compiled filters and the inventory contents the engine hands over) per tick for 100 players with ten requests each,
 whose items are used up every five seconds. One player costs about a hundredth of it.
+
+## Fluid rows count the side's segment (issue #626)
+
+A side tied to a fluid row reads its segment's fluid (`has_fluid_segment`, `get_fluid_segment_fluid`: two engine calls
+more per visit of such a side) and fills it only up to the row's amount; a surplus goes back. `bench --check origin/main
+--sizes 1000,5000` (three rounds in turns):
+
+| | origin/main | #626 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.396 / 2.19 | 0.397 / 2.17 |
+| 5000: script avg / p99 (ms) | 1.077 / 3.21 | 1.031 / 3.09 |
+| Lua alloc KB per tick (1000 / 5000) | 41.61 / 61.83 | 41.71 / 61.79 |
+| items/s (1000 / 5000) | 33 230 / 165 700 | 33 270 / 165 100 |
+| fluid/s (1000 / 5000) | 241 000 / 1 200 000 | 205 800 / 1 004 000 |
+
+The check fails on fluid/s, as it should: the bench's `iface_fout` endpoints are interface sides piped straight into an
+empty storage tank of 25 000 with no consumer. Before, a row of 5000 kept going until the side's own tank held 5000, so
+each of them took 30 000 (the bug); now it takes 5000. The drop, about 35 000 per second at 1000 over the 60 s window
+(2.1 million; the scene has 100 such sinks, up to 25 000 more each) and five times that at 5000, is that over-fill. Script time and allocation are
+within the noise.
+
+## ME P2P tunnels for pattern providers (issue #629)
+
+A provider's rescan now also reads the machines its input tunnels reach. What it costs:
+
+* Which outputs of a frequency carry (in the input's network, of its kind) is derived when a tunnel is built, removed, turned
+  or bound, or the ME graph changes (`resolved` in `scripts/fork-me-p2p.lua`), never per visit. The input tunnels that face a
+  provider are found by one table lookup of its tile (`facing`); a provider without tunnels pays that lookup and nothing else.
+* The machine an output faces is kept in its record and looked for again only when it is gone or the tunnel turned, as a bus
+  keeps its target. A neighbour is still found by `find_entities_filtered` at every rescan.
+* A provider that reaches machines through tunnels takes one more slot of the round robin rescan per started 4 of them
+  (`EXT.rescan_debt`, `storage.fork_ae2.pdebt`): one provider with 64 machines is rescanned every 34 ticks, as often per
+  machine as 16 providers with 4 neighbours each (every 32 ticks).
+
+`bench --tunnels-only --idle` (new scene `tunnels`: 64 ME Molecular Assemblers making one crafting pattern, two jobs of it,
+three runs, median):
+
+| | 1 provider, 64 machines through tunnels | 16 providers, 4 neighbours each |
+|---|---|---|
+| script avg / p99 / max (ms), jobs running | 0.047 / 0.68 / 1.34 | 0.075 / 0.47 / 0.95 |
+| script avg / p99 / max (ms), idle | 0.031 / 0.65 / 1.14 | 0.059 / 0.28 / 0.57 |
+| crafts/s | 120 | 120 |
+
+On average the tunnels cost less: an output's machine is kept, a neighbour is looked for at every rescan. The p99 and the
+maximum are higher: a rescan of 64 machines happens at once, every 34 ticks, instead of 16 rescans of 4. That rescan takes
+about 0.6 ms (about 10 µs a machine, the same as a neighbour's), with the force's recipe table read once for all of its
+views (before: 0.77 ms p99). Both layouts make the same 120 crafts/s: the two jobs' hand-outs per step limit them, not the
+providers.
+
+Networks without tunnels: every rescan pays one lookup of the provider's tile and a field per view. `bench --check origin/main
+--sizes 1000,5000` (three rounds in turns) passes:
+
+| | origin/main | #629 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.363 / 2.05 | 0.361 / 2.00 |
+| 5000: script avg / p99 (ms) | 0.931 / 2.85 | 0.926 / 2.83 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, provider crafts/s (5000) | 165 100, 329.5 | 165 100, 329.5 |
+
+## The blocks take circuit wires themselves (issue #628)
+
+The ME Import, Export and Storage Bus and the ME Pattern Provider are display panels, the ME Interface a container with a
+circuit connector; the hidden connector of issue #412 is gone. A block without a condition, pulse mode, rows from the
+circuit or a circuit lock still has no record in the check list and costs nothing per tick, wired or not; a listed block's
+check reads its own wires (`get_signal` on red and green, `get_circuit_network` for the wire check) instead of a lamp's
+control behavior. The build handler asks one table more (`scripts/fork-me-wired.lua`: is it an old block or its ghost) and
+the connector module looks for an old connector's ghost waiting at the block's place only while one waits.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; the scenes have no condition):
+
+| | origin/main | #628 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.368 / 2.05 | 0.368 / 2.07 |
+| 5000: script avg / p99 (ms) | 0.959 / 2.93 | 0.969 / 2.99 (rounds 0.965, 1.016, 0.969) |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+| burst build / remove ms (1000) | 82.3 / 79.2 | 86.5 / 81.2 |
+| burst build / remove ms (5000) | 89.9 / 84.7 | 95.5 / 79.0 |
+| load first tick ms (1000 / 5000) | 3.24 / 6.71 | 3.27 / 7.31 |
+
+No regression beyond the noise; the build burst is about 5 % slower in both sizes (within the noise of the check, ±3 to 4
+ms): the engine builds a display panel with its wire connectors where it built a simple entity. `bench --sizes 5000 --idle
+--runs 3` of each (one after the other): the idle 5000 scene 0.361 ms (origin/main) against 0.347 ms, p99 1.07 against
+1.05, the same.
+
+A save of 0.5.11 is converted once at its first load (every bus and provider built anew and its state moved, the old
+connectors handed over, in on_configuration_changed); how long that takes for a large save was not measured.
+
+## ME P2P tunnels on their own (issue #633)
+
+An input tunnel that is no output is a unit of a queue of its own (`p2p`, budget "ME P2P Tunnel visits per tick", at least 2,
+at most 8). A visit reads its hidden chest or tank and hands what it holds to the entities the outputs face (kept in the
+output's record like a bus's target); one that moved all the bus speed allowed comes back after 10 ticks, one that moved
+some after 20, an empty or blocked one is probed at an interval doubling from 30 ticks up to the idle limit.
+
+`bench --carry-only` (new scene `carry`: 40 item lines, a bulk inserter from an infinity chest into the input and four steel
+chests as sinks, and 20 fluid lines, an infinity pipe of water into the input and four draining infinity pipes; carried by
+the tunnels, or by an import bus and four export buses on a drive):
+
+| | ME P2P tunnels on their own | import bus + 4 export buses |
+|---|---|---|
+| script avg / p99 / max (ms) | 0.090 / 0.32 / 0.76 | 0.594 / 1.34 / 2.25 |
+| items into the sinks per second | 1201 | 1202 |
+| visits per tick | p2p 2.10, probes 0.27 | (the io queue) |
+
+One run on a quiet machine. The three-run median, taken while the game itself ran on the same machine, has every number about
+three times as high and the same order (0.27 against 1.64 ms avg). The bulk inserters limit both ways to the same item rate;
+the fluid is not counted (the sinks drain it). A tunnel visit hands a whole chest or tank over in one go and keeps no stock, a
+bus pair moves each item into the network's cells and out again.
+
+`bench --check origin/main --sizes 1000,5000` (the provider's neighbour search and `T.is_me` read one name more; the game ran
+on the machine too, so the noise is wide): passes, nothing worse (script avg 1.18 / 0.78 ms at 1000, 3.02 / 3.08 at 5000;
+items/s, fluid/s, provider crafts/s and the allocation per tick equal).
+
+## The logistic network condition and the circuit panel (issue #639)
+
+A block connected to the logistic network is one more block in the connector's check list of issue #412 (16 checks per tick,
+each block at most every 10 ticks; no tick handler of its own). Its check reads its logistic network's count of the condition's
+item (`LuaLogisticNetwork.get_item_count`, with an ItemWithQualityID made once per signal and kept outside `storage`) besides the
+circuit condition; the network itself is looked up (`find_logistic_network_by_position`) at most every 300 ticks per block and
+kept in the block's record (`lnet`, `lnext`: the save/load check of `devcheck runtime` sees the same checks), at once when it
+became invalid. A block without any condition or circuit mode still has no record and costs nothing. The panel is built and
+refreshed with the window (once a second, while it is open).
+
+Measured per call on this machine (10 000 calls, headless): `find_logistic_network_by_position` 0.86 µs, `get_item_count` 0.41
+µs with a kept id and 0.81 µs with a new table, `get_circuit_network` on both wires 0.70 µs.
+
+`bench --check origin/main --sizes 1000,5000` (the scenes have no condition; three rounds in turns):
+
+| | origin/main | #639 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.371 / 2.08 | 0.370 / 2.05 |
+| 5000: script avg / p99 (ms) | 0.933 / 2.83 | 0.927 / 2.85 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+| burst build / remove ms (5000) | 94.2 / 78.0 | 96.2 / 78.0 |
+
+`regressions beyond the noise: 0` (the first tick after the load at 5000, 6.7 against 14.6 ms, is within its noise of ±4 ms).
+
+`bench --check origin/main --sizes 1000,5000 --conditions` (new variant: every import and export bus of the scene, 600 at 1000
+and about 3000 at 5000, gets a circuit condition without a wire and, in #639, a logistic condition that holds, "iron plate >= 0",
+in the logistic area of unpowered roboports without collision on the buses' tiles, which both versions get; so origin/main
+checks the circuit condition of the same list and the difference is the logistic part):
+
+| | origin/main | #639, first version | #639 |
+|---|---|---|---|
+| 1000: script avg / p99 (ms) | 0.467 / 2.30 | 0.511 / 2.23 (alloc 52.5) | 0.518 / 2.35 |
+| 5000: script avg / p99 (ms) | 1.110 / 3.27 | 1.175 / 3.15 (alloc 77.9) | 1.192 / 3.34 |
+| Lua alloc KB per tick (1000 / 5000) | 44.47 / 64.54 | 52.50 / 77.92 | 46.73 / 68.59 |
+| gc avg ms (1000 / 5000) | 0.042 / 0.061 | 0.048 / 0.058 | 0.042 / 0.063 |
+| items/s, fluid/s | 33 270, 205 800 / 165 100, 1 004 000 | the same | the same |
+
+(The origin/main column is of the last run; its script avg was 0.427 and 1.048 ms in the run of the first version, the machine's
+noise between runs.) The first version made a table for `get_item_count`, read `prototypes.item` per check and looked the
+network up every 120 ticks: 8 to 13 KB more allocation per tick. With the kept ids and the 300 ticks the cost of a check with
+both conditions is about 3 to 5 µs more than one with the circuit condition alone: 0.05 ms per tick at 1000 and 0.08 ms at 5000
+while every bus has both conditions (the 16 checks per tick are the cost's limit, whatever the number of blocks), 2 to 4 KB of
+allocation per tick, the GC the same, the throughput identical. `bench --check` reports these as regressions: they are the price
+of the feature where it is used on every bus, not a cost of the scenes without it.
+
+## The status line follows a switch of the condition (issue #664)
+
+The I/O module's off setter (`N.off_setters.io`, called by the connector's checks of issue #412 every time a block is
+checked) wakes the block when its off state changes: `Sched.wake` on its own queue, so its next visit (the next tick, through
+the queue's budget) writes the status line. Before, an interface or bus with nothing to do was only probed, and a probe never
+looks at the condition, so its line kept "Working." after a switch-off. A block whose condition does not change costs what it
+cost before (one comparison in the setter); a switch costs one visit of the block, which then parks (off) or works (on).
+
+`bench --check origin/main --sizes 1000,5000` (the scenes have no condition; three rounds in turns):
+
+| | origin/main | #664 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.382 / 2.12 | 0.385 / 2.11 |
+| 5000: script avg / p99 (ms) | 1.000 / 3.04 | 0.997 / 2.96 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.70 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`bench --check origin/main --sizes 1000,5000 --conditions` (every import and export bus with a condition that holds; no switch):
+
+| | origin/main | #664 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.480 / 2.19 | 0.485 / 2.23 |
+| 5000: script avg / p99 (ms) | 1.123 / 3.12 | 1.147 / 3.26 |
+| Lua alloc KB per tick (1000 / 5000) | 46.73 / 68.59 | 46.73 / 68.59 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+Both: `regressions beyond the noise: 0`. The 5000 working copy of the second run has one slow round (1.211 ms against 1.106 and
+1.147; the allocation and the visits are identical), within the noise the check measures.
+
+## Removed circuit interfaces and maintainers leave their queues at once (issue #660)
+
+A removed ME Circuit Interface or ME Level Maintainer was dropped only when its queue came to it (`visit_circuit` /
+`visit_maintainer` find the entity invalid): until then it held its place, and for the circuit interfaces that place is one of
+the "updates per second" (10) of the whole map. The mining and destroy paths now call `fork-me-circuit.lua` `M.on_removed`, which
+drops the record and its queue entry (`Sched.forget`; what the lists still hold of it is a stale entry that `Sched.run` passes
+over without counting it against the budget). The runtime map holds 13 to 14 circuit interfaces, more than the budget visits
+in their 60-tick interval, so each comes round once per 1.3 to 1.4 s; its circuit test now derives its wait from that (two rounds
+and an interval: 216 ticks at 13), and the 8 maintainers and circuit interfaces that the copy-paste test builds and removes in
+one tick (before: they stayed, 14 -> 22 circuit interfaces) no longer delay it.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; the build burst removes 1000 buses and interfaces, no
+circuit interface or maintainer, so the numbers measure that the removal paths cost nothing more):
+
+| | origin/main | #660 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.383 / 2.08 | 0.374 / 2.07 |
+| 5000: script avg / p99 (ms) | 0.972 / 2.96 | 1.017 / 2.99 |
+| Lua alloc KB per tick (1000 / 5000) | 41.70 / 61.79 | 41.71 / 61.79 |
+| burst build / remove ms (5000) | 98.0 / 85.9 | 94.7 / 87.5 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`regressions beyond the noise: 0` (the 5000 script average differs within its spread of ±0.05 to ±0.08 ms).
+
+## The shape of ME Cable from blueprints and of cable ghosts (issue #670)
+
+A cable ghost now takes the shape it will have when built, and the cables under a paste take their shape from the graph again
+(`scripts/fork-me-cableshape.lua`). The costs:
+
+* **A ghost made** (a paste raises one on_built_entity per ghost): the ghost is recorded (its tile box, kind, direction, the
+  shape last set; `script.register_on_object_destroyed`) in `storage.fork_me_cableshape.g`, put into a lookup by tile (`IDX`,
+  derived, built again on the first use after a load) and queued. On the next tick the queue is shaped, at most 1000 ghosts a
+  tick: one `find_entities_filtered` for built members per chunk of the batch (not per ghost: the first version searched per
+  ghost, members and ghosts together, and cost 380 ms for the paste below), the ghost neighbours from the lookup. Ghosts of the
+  batch get no arm from their neighbours of the batch (they compute their whole shape), and the shape is written only when it
+  changes (the last value is kept in the record).
+* **A ghost gone** (on_object_destroyed, end of the tick or the next): out of the lookup; the live cable ghosts next to it (the
+  lookup; a gone one is skipped, its own event comes) take the arm toward its box, searched for members only when there is one.
+* **A member that joins or leaves the graph** (`N.ghost_hook` from add_node and remove_node_graph): nothing while its surface
+  has no ME ghost (one table read); else the lookup of the tiles around it, no search.
+* **A paste** (on_pre_build): the area its cables land on is noted; on the next tick the built cables and cable ghosts there
+  take their shape again (one search each).
+
+**Bench** (`bench --cable-ghosts N`, new): after the build burst N ME Cable ghosts in a square (every ghost has up to four
+ghost neighbours) are pasted in one tick (raise_built, as a paste raises on_built_entity per ghost), removed in one tick
+(`destroy`, as undo removes them; the removal's on_object_destroyed is in the tick's whole update), pasted again and built in one
+tick (revive with raise_revive, as robots build: robots spread this over many ticks). `bench --sizes 1000 --runs 1
+--cable-ghosts 5000`, origin/main four runs, the working copy two (the final version), in turns:
+
+| ms (5000 cable ghosts) | origin/main | #670 |
+|---|---|---|
+| paste: tick script | 112 to 117 | 162 to 168 |
+| the tick after the paste (the first 1000 shaped) | 1.4 | 16 to 18 |
+| remove: tick script / whole update | 4.4 / 5.5 | 5.8 / 49 |
+| build: tick script / whole update | 264 to 280 / 265 to 281 | 361 to 374 / 404 to 418 |
+
+So a 5000-cable paste costs about 50 ms more in its own tick (10 us per ghost: the record) and then about 17 ms on each of the
+five ticks after it; the maintainer's whole base has 1767 cables. Without ghosts nothing changes:
+
+`bench --check origin/main` (sizes 100, 1000, 5000, three rounds in turns):
+
+| | origin/main | #670 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.385 / 2.12 | 0.386 / 2.13 |
+| 5000: script avg / p99 (ms) | 1.006 / 3.03 | 1.010 / 3.00 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| burst build / remove ms (5000) | 97.7 / 84.6 | 97.6 / 85.2 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+`regressions beyond the noise: 0`.
+
+## Turned cable blueprints over ME Cable (issue #673)
+
+**What changed:** a new module, scripts/fork-me-cableturn.lua. While a player holds a blueprint with cable, one
+`find_entities_filtered` over the cables within 128 tiles and a direction write for each one that differs: when the
+blueprint comes into the cursor, on every rotate or flip key, and after the player moved 32 tiles. Nothing per tick and nothing
+for players without such a blueprint (the position event returns at once). `on_player_setup_blueprint` reads and, only when a
+cable is stored turned, writes the new blueprint's entities once.
+
+**Measured** (the remote `align` on the server of a real-client test, `helpers.create_profiler`): 16 200 cables within the
+radius (every second tile of 180 x 180):
+
+| ms per key | #673 |
+|---|---|
+| all 16 200 turned | 21.9 |
+| none to turn (the search only) | 14.9 to 16.7 |
+
+The bench has no players: none of this runs there.
+
+## Turned blueprints over ME blocks whose direction does not show (issue #674)
+
+**What changed:** the same module now takes the drive and the other direction-agnostic blocks, and their ghosts, so one key costs a
+search by 37 names (instead of the cable's one) and a second search by ghost name. Still nothing per tick and nothing for a player
+without such a blueprint. A paste with crafting blocks or variation screens costs one more search of the noted area
+(`scripts/fork-me-cableshape.lua`), and the variations written back on the next tick.
+
+**Measured** (the remote `align` from `on_init`, headless, `helpers.create_profiler`, three runs): 16 200 cables and 1 800 drives within
+the radius (every second tile of 180 x 180, a drive on every ninth odd column):
+
+| ms per key | #673 (cable only) | #674 |
+|---|---|---|
+| all blocks turned | | 29.5 to 36.5 |
+| none to turn (the searches only) | 13.6 to 17.0 | 21.0 to 31.7 |
+
+Measured with 36 names, before the Pattern Provider joined the list. A key is a person pressing it, so this stays a cost of a moment, not of the running base; the bench has no players, none of it runs there.

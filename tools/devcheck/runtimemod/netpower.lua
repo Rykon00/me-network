@@ -3,7 +3,8 @@
 --- One network at a power source with a substation; the terminal and the level maintainer sit 24 tiles away at the end of a cable
 --- row, far outside every pole's supply area (their lamps have a void energy source: no electric network of their own).
 --- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer) (issue #145: the legacy
----   Crafting CPU of this check is gone)
+---   Crafting CPU of this check is gone); issue #680: by the startup settings' numbers (devcheck --startup sets others), and
+---   the entities' energy, buffers and the mod-data agree with the settings
 --- * they work with no pole: the terminal has no problem, its screen is lit (a sprite render object of the mod's, under the
 ---   character: layer lower-object-above-shadow since issue #258, and its light), the maintainer is stocked
 --- * the controller's power is cut (at tick 300, so that the dark network is still dark after the save and load of the
@@ -27,6 +28,12 @@ local NET, TERM, CIRC, IO = "gregtorio-me-network", "gregtorio-me-terminal", "gr
 local BX, BY = -300, -200
 local START, CUT, DARK_CHECK, BACK, END = 90, 300, 580, 600, 1100
 local TERMINAL_X, MAINTAINER_X = 26, 27            -- tiles right of BX, on the cable row's row (BY - 1)
+
+--- issue #680: a power setting in W (the default without the setting: a version before it)
+local function setting_w(name, default)
+	local st = settings.startup["me-network-power-" .. name]
+	return st and st.value * 1000 or default
+end
 
 return function(H)
 	local me_place, me_report, power, cable_row = H.me_place, H.me_report, H.power, H.cable_row
@@ -72,8 +79,39 @@ return function(H)
 		local function maint() return maintainer and remote.call(CIRC, "get_maintainer", maintainer) end
 
 		if st.phase == "join" then
+			local MEMBER, TERMINAL, MAINT = setting_w("member", 4000), setting_w("terminal", 8000), setting_w("level-maintainer", 30000)
+			local function near(a, b) return a and math.abs(a - b) <= 1e-6 * math.max(1, math.abs(b)) end
+			--- issue #680: what the prototypes and the mod-data say is what the settings say
+			if settings.startup["me-network-power-member"] then
+				local md = prototypes.mod_data["fork-me-network"].data
+				local qb, wl, ch = prototypes.entity["me-quantum-bridge"], prototypes.entity["me-wireless-link"], prototypes.entity["me-chest-power"]
+				--- (W: the prototype's energy usage per tick times 60; an energy interface's through its `energy_usage`)
+				local function usage(e)
+					if not e then return nil end
+					local ok, v = pcall(function() return e.energy_usage end)
+					if ok and v and v > 0 then return v * 60 end
+					ok, v = pcall(function() return e.get_max_energy_usage() end)
+					return ok and v and v * 60 or nil
+				end
+				expect(md.member_default == MEMBER and md.member_power.terminal == TERMINAL and md.member_power.maintainer == MAINT
+					and md.member_power["storage-monitor"] == setting_w("monitor") and md.member_power["io-port"] == setting_w("io-port")
+					and md.member_power.toggle == setting_w("toggle-bus") and md.member_power["pattern-terminal"] == TERMINAL,
+					"the mod-data's member power: " .. serpent.line({ md.member_default, md.member_power }))
+				expect(md.quantum_bridge.watts == setting_w("quantum-bridge") and near(usage(qb), setting_w("quantum-bridge"))
+					and near(qb.electric_energy_source_prototype.buffer_capacity, setting_w("quantum-bridge") * 2),
+					"the quantum bridge: " .. serpent.line({ md.quantum_bridge, usage(qb) }))
+				expect(md.wireless_link.base == setting_w("wireless-link") and md.wireless_link.per_chunk == setting_w("wireless-link-per-32-tiles")
+					and near(usage(wl), setting_w("wireless-link")), "the wireless link: " .. serpent.line({ md.wireless_link, usage(wl) }))
+				expect(md.wireless.base_power == setting_w("access-point") and md.wireless.power_per_booster == setting_w("access-point-booster"),
+					"the access point: " .. serpent.line({ md.wireless.base_power, md.wireless.power_per_booster }))
+				expect(md.chest.watts == setting_w("chest") and near(usage(ch), setting_w("chest")),
+					"the ME Chest: " .. serpent.line({ md.chest.watts, usage(ch) }))
+				local asm = prototypes.entity["me-molecular-assembler"]
+				expect(script.active_mods["gregtorio-continued"] or near(usage(asm), setting_w("molecular-assembler")),
+					"the molecular assembler: " .. tostring(usage(asm)))
+			end
 			local n0 = info()
-			expect(n0 and n0.ok and n0.power == 124000, "the network before: " .. serpent.line(n0))
+			expect(n0 and n0.ok and n0.power == 120000 + MEMBER, "the network before: " .. serpent.line(n0) .. " (the drive " .. MEMBER .. " W)")
 			local function place(name, x, extra)
 				local def = { name = name, position = { BX + x + 0.5, BY - 0.5 }, force = "player", raise_built = true }
 				for k, v in pairs(extra or {}) do def[k] = v end
@@ -81,15 +119,15 @@ return function(H)
 			end
 			st.terminal = place("me-terminal", TERMINAL_X)
 			local n1 = info()
-			expect(n1 and n1.power == n0.power + 8000, "the controller draws " .. tostring(n1 and n1.power) .. " W with a terminal, "
-				.. (n0.power + 8000) .. " expected (terminal 8 kW)")
+			expect(n1 and n1.power == n0.power + TERMINAL, "the controller draws " .. tostring(n1 and n1.power) .. " W with a terminal, "
+				.. (n0.power + TERMINAL) .. " expected (terminal " .. TERMINAL .. " W)")
 			st.maintainer = place("me-level-maintainer", MAINTAINER_X)
 			local n2 = info()
-			expect(n2 and n2.power == n0.power + 38000, "the controller draws " .. tostring(n2 and n2.power) .. " W with a level maintainer too, "
-				.. (n0.power + 38000) .. " expected (maintainer 30 kW)")
+			expect(n2 and n2.power == n0.power + TERMINAL + MAINT, "the controller draws " .. tostring(n2 and n2.power)
+				.. " W with a level maintainer too, " .. (n0.power + TERMINAL + MAINT) .. " expected (maintainer " .. MAINT .. " W)")
 			--- issue #149: the breakdown by kind adds up to the total, biggest first, with the controller's base as a row
 			local rows = n2 and n2.power_rows or {}
-			local sum, want, sorted = 0, { controller = 120000, maintainer = 30000, terminal = 8000, drive = 4000 }, true
+			local sum, want, sorted = 0, { controller = 120000, maintainer = MAINT, terminal = TERMINAL, drive = MEMBER }, true
 			for i, row in ipairs(rows) do
 				sum = sum + row.w
 				if i > 1 and rows[i - 1].w < row.w then sorted = false end
@@ -265,7 +303,8 @@ return function(H)
 				expect(maint() and maint().status == "stocked", "the maintainer with the power back: " .. serpent.line(maint()))
 				expect(tick - st.back_at <= 150, "the power came back, the screen was lit " .. (tick - st.back_at) .. " ticks later")
 				local n = info()
-				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
+				local want = 120000 + setting_w("member", 4000) + setting_w("terminal", 8000) + setting_w("level-maintainer", 30000)
+				expect(n and n.power == want, "the controller's draw at the end: " .. serpent.line(n) .. ", " .. want .. " W expected")
 				st.lit_after = tick - st.back_at
 				maintainer_lit(true, "with the power back")
 				controller_lit("on", "with the power back")

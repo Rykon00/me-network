@@ -12,7 +12,7 @@ local NET = "gregtorio-me-network"
 local BX, BY = 250, 60                -- (inside the cleared test area, TEST_RADIUS of control.lua; clear of the other tests)
 local START, TIMEOUT = 150, 300
 local ACCEL, N_ACCEL = "me-crafting-accelerator-4096x", 8
-local POWER = 120000 + 4000 + N_ACCEL * 2000000         -- (controller, drive, accelerators)
+local POWER = 120000 + power_setting_w("member", 4000) + N_ACCEL * 2000000   -- (controller, drive, accelerators; #680: the setting)
 local BUFFER_TICKS = 30                                 -- (N.BUFFER_TICKS)
 
 return function(H)

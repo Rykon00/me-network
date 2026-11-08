@@ -185,7 +185,7 @@ return function(H)
 		for _, row in ipairs(remote.call(GUI, "controller_data", find("me-network-controller", 7, 0)).power_rows or {}) do
 			if row.key == "interface-terminal" then found = row end
 		end
-		expect(found and found.n == 1 and found.w == 8000, "its power: " .. serpent.line(found))
+		expect(found and found.n == 1 and found.w == power_setting_w("terminal", 8000), "its power: " .. serpent.line(found))
 		expect(remote.call(GUI, "has_window", it), "it opens a window")
 
 		inv.destroy()

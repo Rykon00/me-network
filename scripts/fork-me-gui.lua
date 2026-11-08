@@ -44,6 +44,8 @@ function M.entity_by_unit(unit)
 	local s = storage.fork_me_net
 	local node = s and s.nodes and s.nodes[unit]
 	if node and node.entity and node.entity.valid then return node.entity end
+	local marked = s and s.decon and s.decon[unit]          -- (a member out of the graph for its deconstruction mark)
+	if marked and marked.valid then return marked end
 	for _, fn in ipairs(lookups) do
 		local found = fn(unit)
 		if found and found.valid then return found end
@@ -142,6 +144,11 @@ function M.window_of(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then return frame, frame.tags.fork_me_window end
 	return nil
+end
+
+--- Issue #639: the flow of a window's circuit and logistic network panel (right of the window; G.open_window)
+function M.side_of(frame)
+	return frame and frame.valid and frame.fork_me_side or nil
 end
 
 --- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
@@ -279,7 +286,8 @@ end
 
 --- the pane's inventory element (named "fork_me_inv"), or nil
 local function pane_element(frame)
-	local body = frame and frame.valid and frame.fork_me_body
+	local main = frame and frame.valid and frame.fork_me_main
+	local body = main and main.fork_me_body
 	local pane = body and body.fork_me_pane
 	local scroll = pane and pane.fork_me_inv_scroll
 	return scroll and scroll.fork_me_inv
@@ -449,18 +457,26 @@ function M.open_window(player, name, caption, tags, pane)
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
-	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
-	local bar = frame.add{ type = "flow", direction = "horizontal" }
+	--- issue #639: the screen element is a frame without graphics holding the window (`fork_me_main`) and, to its right, the
+	--- circuit and logistic network panel (`fork_me_side`, M.side_of; hidden until a window's refresh fills it), so the panel
+	--- moves, opens and closes with the window as the game's own does (a script cannot read a window's width to place a frame
+	--- of its own next to it)
+	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "horizontal", style = "invisible_frame",
+		tags = t }
+	local main = frame.add{ type = "frame", name = "fork_me_main", direction = "vertical" }
+	local side = frame.add{ type = "flow", name = "fork_me_side", direction = "vertical", visible = false }
+	side.style.left_margin = 4
+	local bar = main.add{ type = "flow", direction = "horizontal" }
 	bar.drag_target = frame
 	bar.style.horizontal_spacing = 8
-	bar.add{ type = "label", caption = caption, style = "frame_title", ignored_by_interaction = true }
+	bar.add{ type = "label", name = "fork_me_title", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
 	drag.style.horizontally_stretchable = true
 	drag.style.height = 24
 	drag.style.right_margin = 4
 	bar.add{ type = "sprite-button", style = "frame_action_button", sprite = "utility/close",
 		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
-	local body = frame.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
+	local body = main.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
 	body.style.horizontal_spacing = 12
 	if pane ~= false then build_pane(body, windows[name] and windows[name].hint, player) end
 	local inner = body.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
@@ -883,8 +899,14 @@ end
 
 --- The open key on an entity, or the vanilla window of an entity that has one: open the ME window instead.
 --- Returns true when the entity has an ME window.
+--- issue #659: function(player, ghost) -> true when it opened the ME window of a ghost (scripts/fork-me-ghostwin.lua)
+M.ghost_open = nil
+--- issue #659: the ghost whose stand-in `entity` is (nil: none; scripts/fork-me-ghostwin.lua sets it)
+M.ghost_of = function(entity) return nil end
+
 function M.open_entity(player, entity)
 	if not (entity and entity.valid) then return false end
+	if entity.type == "entity-ghost" then return M.ghost_open ~= nil and M.ghost_open(player, entity) or false end
 	local open = openers[entity.name] or (M.kind_of and openers[M.kind_of(entity.name) or ""])
 	if not open then return false end
 	local b = storage.fork_me_gui_bypass
@@ -1127,6 +1149,14 @@ function M.window_list()
 		out[name] = { pane = true, shift = def.shift ~= nil, control = def.control ~= nil, message = def.message ~= nil }
 	end
 	return out
+end
+
+--- issue #659: the name and definition of the window of entities named `entity_name` (nil: none)
+function M.window_for(entity_name)
+	local open = openers[entity_name] or (M.kind_of and openers[M.kind_of(entity_name) or ""])
+	if not open then return nil end
+	for name, def in pairs(windows) do if def.open == open then return name, def end end
+	return nil
 end
 
 --- the window definition of an entity's window (the tests' clicks)

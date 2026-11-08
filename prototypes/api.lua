@@ -35,6 +35,15 @@ M.technology_path = M.root .. "graphics/technology/hd/"       -- (issue #222: th
 --- issue #154: the 64 px pictures of the 3D style (tools/gen_ae2_sprites.py --hd): icons 64 x 64, entity pictures at scale 0.5
 M.hd_icons = M.root .. "graphics/icons/hd/"
 M.hd_entity_path = M.entity_path .. "hd/"
+--- Issue #680: the power use of a block from its startup setting "me-network-power-<name>" (kW, settings.lua), in W; a number
+--- of watts as an energy string of the prototypes ("1500W": whole watts, never an exponent); the kW of a description ("4",
+--- "0.5")
+function M.power_w(name) return settings.startup["me-network-power-" .. name].value * 1000 end
+function M.energy(w, unit) return string.format("%.0f", w) .. (unit or "W") end
+function M.kw(w)
+	local k = w / 1000
+	return k == math.floor(k) and string.format("%.0f", k) or tostring(k)
+end
 --- what can be walked over (the ME cable, since issue #129 the buses and the ME Terminal): a building's collision mask without the
 --- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
 --- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).

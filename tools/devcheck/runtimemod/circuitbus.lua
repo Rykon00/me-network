@@ -1,12 +1,15 @@
---- Runtime test of me-network issue #412: the circuit connector of the ME Import, Export and Storage Bus and the ME Interface.
+--- Runtime test of me-network issue #412: the circuit condition of the ME Import, Export and Storage Bus and the ME Interface;
+--- since issue #628 on the blocks' own wires (until 0.5.11 a hidden lamp at each block's position, the connector).
 --- A network with iron plates; an export bus on chest A (filter iron-plate), an import bus on chest B (stone), a storage bus on
---- chest C (wood), an ME Interface; a constant combinator K (signal A, iron plate 7) wired to every block's connector:
----   * every block has a connector at its position, a hidden lamp; a connector without a block is removed;
+--- chest C (wood), an ME Interface; a constant combinator K (signal A, iron plate 7) wired to every block:
+---   * an old connector (a lamp of 0.5.11 with a wire to K and the condition) built at the export bus hands its wire and its
+---     condition to the bus and goes; an old connector without a block is removed; the other blocks are wired themselves;
 ---   * the buses' condition "A > 0" while K is off: the buses are off (parked), A gets nothing, B keeps its stone, the
 ---     network does not see C's wood; K on: they are on again, A gets plates, the stone comes in, the wood is seen;
 ---   * pulse mode of the export bus: one visit per rise of the condition, nothing in between;
----   * the interface's rows from the circuit: it keeps the 7 plates K's signal asks for;
----   * a removed bus takes its connector with it.
+---   * the interface's rows from the circuit: it keeps the 7 plates K's signal asks for (its own contents are not on its
+---     wire: they would make 14);
+---   * a removed bus takes its condition's record with it.
 --- Loaded by control.lua: require("circuitbus")(H) returns { setup, tick, running }.
 
 local NET, IO, CONN = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-connector"
@@ -24,7 +27,7 @@ return function(H)
 
 	function T.setup(s)
 		local fails = {}
-		local what = "circuit connector"
+		local what = "circuit condition"
 		power(s, fails, what, BX, BY)
 		local ctrl = me_place(s, fails, what, "me-network-controller", BX + 7, BY)
 		local drive = H.me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 200 })
@@ -45,6 +48,33 @@ return function(H)
 		local lone = s.create_entity{ name = CONNECTOR, position = { BX + 20.5, BY + 3.5 }, force = "player" }
 		if lone then remote.call(CONN, "on_built", lone) end
 		if lone and lone.valid then fails[#fails + 1] = what .. ": a connector without a block stayed" end
+		--- issue #628: a blueprint of 0.5.11 in the library (no migration renamed it): a bus, its connector with the condition
+		--- and a wire to a constant combinator; built and revived, the bus has the wire and the condition, no connector is left
+		local red = defines.wire_connector_id.circuit_red
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "blueprint" }
+		inv[1].set_blueprint_entities{
+			{ entity_number = 1, name = "me-import-bus", position = { 0.5, 0.5 }, direction = defines.direction.south },
+			{ entity_number = 2, name = CONNECTOR, position = { 0.5, 0.5 }, wires = { { 2, red, 3, red } },
+				control_behavior = { circuit_enabled = true, circuit_condition = { first_signal = SIG, comparator = "<", constant = 3 } } },
+			{ entity_number = 3, name = "constant-combinator", position = { 0.5, 3.5 }, wires = { { 3, red, 2, red } } },
+		}
+		local area = { { BX + 21, BY + 3 }, { BX + 26, BY + 10 } }
+		inv[1].build_blueprint{ surface = s, force = "player", position = { BX + 23, BY + 6 }, raise_built = true }
+		for _, g in pairs(s.find_entities_filtered{ area = area, type = "entity-ghost" }) do
+			if g.valid then g.revive{ raise_revive = true } end
+		end
+		inv.destroy()
+		local bus = s.find_entities_filtered{ area = area, name = "me-import-bus" }[1]
+		local left = s.find_entities_filtered{ area = area, name = CONNECTOR }
+		local got = bus and remote.call(CONN, "condition", bus) or {}
+		local n = bus and bus.get_wire_connector(red, true).connection_count
+		if not (bus and #left == 0 and n == 1 and got[1] == true and got[2] and got[2].comparator == "<" and got[2].constant == 3) then
+			fails[#fails + 1] = what .. ": an old library blueprint built: " .. serpent.line({ bus ~= nil, #left, n, got })
+		end
+		for _, e in pairs(s.find_entities_filtered{ area = area }) do
+			if e.valid and e.type ~= "character" then e.destroy{ raise_destroy = true } end
+		end
 		return fails
 	end
 
@@ -61,9 +91,9 @@ return function(H)
 		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
 		local function finish()
 			st.done = true
-			me_report("CIRCUITBUS", "Circuit connector of the buses and the interface", problems, "a connector per block, "
-				.. "a lone one removed; the condition switches the three buses off and on; pulse mode; the interface's rows from the "
-				.. "circuit; a removed bus takes its connector")
+			me_report("CIRCUITBUS", "Circuit condition of the buses and the interface", problems, "an old connector hands "
+				.. "over, a lone one removed; the condition switches the three buses off and on; pulse mode; the interface's rows from the "
+				.. "circuit; a removed bus takes its record")
 		end
 		local ctrl = find("me-network-controller", 7, 0)
 		local E, I, S, F = find("me-export-bus", XS[1], 0.5), find("me-import-bus", XS[2], 0.5), find("me-storage-bus", XS[3], 0.5),
@@ -74,7 +104,6 @@ return function(H)
 		local a, b, c = A.get_inventory(defines.inventory.chest), B.get_inventory(defines.inventory.chest),
 			C.get_inventory(defines.inventory.chest)
 		local function count(name) return remote.call(NET, "count", ctrl, name) end
-		local function conn(e) return remote.call(CONN, "connector", e) end
 		local function off(e) return remote.call(CONN, "is_off", e) end
 		local function emit(on)
 			local cb = K.get_or_create_control_behavior()
@@ -82,26 +111,29 @@ return function(H)
 		end
 
 		if st.phase == "start" then
-			--- a connector per block, at its position
-			for _, e in pairs({ E, I, S, F }) do
-				local cn = conn(e)
-				expect(cn and cn.valid and cn.name == CONNECTOR and cn.position.x == e.position.x and cn.position.y == e.position.y,
-					e.name .. " has its connector: " .. line(cn and cn.valid and cn.position))
-			end
 			local cb = K.get_or_create_control_behavior()
 			if cb.sections_count == 0 then cb.add_section() end
 			cb.get_section(1).set_slot(1, { value = { type = SIG.type, name = SIG.name, quality = "normal" }, min = 1 })
 			cb.get_section(1).set_slot(2, { value = { type = "item", name = "iron-plate", quality = "normal" }, min = 7 })
 			cb.enabled = false
 			local w = defines.wire_connector_id.circuit_red
-			for _, e in pairs({ E, I, S, F }) do
-				local cn = conn(e)
-				if cn then cn.get_wire_connector(w, true).connect_to(K.get_wire_connector(w, true), false) end
-				if e ~= F and cn then
-					local ccb = cn.get_or_create_control_behavior()
-					ccb.circuit_enable_disable = true
-					ccb.circuit_condition = { first_signal = SIG, comparator = ">", constant = 0 }
-				end
+			--- the export bus: an old connector with the wire and the condition hands them over
+			local old = s.create_entity{ name = CONNECTOR, position = E.position, force = "player" }
+			if old then
+				old.get_wire_connector(w, true).connect_to(K.get_wire_connector(w, true), false)
+				local ccb = old.get_or_create_control_behavior()
+				ccb.circuit_enable_disable = true
+				ccb.circuit_condition = { first_signal = SIG, comparator = ">", constant = 0 }
+				remote.call(CONN, "on_built", old)
+			end
+			expect(old and not old.valid, "the old connector at the export bus is removed")
+			expect(E.get_wire_connector(w, true).connection_count == 1, "the export bus has the old connector's wire")
+			local got = remote.call(CONN, "condition", E)
+			expect(got[1] == true and got[2] and got[2].comparator == ">" and got[2].first_signal and got[2].first_signal.name == SIG.name,
+				"the export bus has the old connector's condition: " .. line(got))
+			for _, e in pairs({ I, S, F }) do
+				e.get_wire_connector(w, true).connect_to(K.get_wire_connector(w, true), false)
+				if e ~= F then remote.call(CONN, "set_condition", e, true, { first_signal = SIG, comparator = ">", constant = 0 }) end
 				remote.call(CONN, "update", e)
 			end
 			st.phase, st.tick = "arm", game.tick
@@ -168,16 +200,18 @@ return function(H)
 			if game.tick < st.tick + 90 then return end
 			expect(a.get_item_count("iron-plate") == st.first, "no visit while the condition stays true: " .. st.first .. " -> "
 				.. a.get_item_count("iron-plate"))
-			--- a removed bus takes its connector with it
+			--- a removed bus takes its condition's record with it
 			local R = find("me-export-bus", 18.5, 0.5)
-			local rc = R and conn(R)
+			if R then remote.call(CONN, "set_condition", R, true, { first_signal = SIG, comparator = ">", constant = 0 }) end
+			local before = remote.call(CONN, "stats").hosts
 			if R then R.destroy{ raise_destroy = true } end
-			expect(rc and not rc.valid, "the connector of a removed bus is gone")
+			local after = remote.call(CONN, "stats").hosts
+			expect(R and after == before - 1, "the record of a removed bus is gone: " .. before .. " -> " .. after)
 			return finish()
 		end
 	end
 
-	function T.running(check) check(storage.circuitbus412 and storage.circuitbus412.done, "Circuit connector of the buses and the interface") end
+	function T.running(check) check(storage.circuitbus412 and storage.circuitbus412.done, "Circuit condition of the buses and the interface") end
 
 	return T
 end
