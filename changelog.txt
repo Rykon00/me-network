@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
-Version: 0.5.12
+Version: 0.6.0
+Date: 2026-11-08
   Features:
     - Startup settings for the power use of the ME blocks (issue #680, "Power use: ..." in kW, the defaults are the numbers of before): the ME Quantum Bridge per end, the ME Wireless Link (base and per 32 tiles), the ME Wireless Access Point (base and per booster), a network member, the terminals, the ME Level Maintainer, the monitors, the ME IO Port, the toggle buses, the ME Chest from the grid and the ME Molecular Assembler. The blocks, their buffers, their descriptions and the ME Controller's power breakdown follow them.
     - Config slots take the item in your hand (issue #677, as AE2's ghost slots and vanilla filter slots): click a slot of the ME Interface, the ME Import, Export and Storage Bus filters, the ME Level Maintainer, the ME Circuit Interface, the ME Logistic Interface, the cell partition, the ME Cell Workbench, the ME Level Emitters or the monitors with an item in the cursor and it takes that item (with its quality where the slot takes one); the item stays in your hand. A new interface row gets the amount a row chosen in the picker gets, a row that held something keeps its amount. With an empty hand, a blueprint, a planner or a wire the picker opens as before; right click still clears the slot. Also in the windows of ghosts.
