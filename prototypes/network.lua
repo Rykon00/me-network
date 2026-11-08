@@ -973,9 +973,9 @@ data:extend({ {
 	consuming = "none",
 } })
 
---- Issue #673: the rotate and flip keys (linked to the game's own; R, Shift + R, H, V by default): while a blueprint with ME
---- Cable is held, scripts/fork-me-cableturn.lua turns the cables around the player to the direction its cables will land
---- with, so the game does not refuse the paste
+--- Issues #673, #674: the rotate and flip keys (linked to the game's own; R, Shift + R, H, V by default): while a blueprint with ME
+--- Cable or another ME block whose direction does not show is held, scripts/fork-me-cableturn.lua turns those blocks around the
+--- player to the direction they will land with, so the game does not refuse the paste
 for _, key in ipairs({ { "fork-me-cable-rotate", "rotate" }, { "fork-me-cable-reverse-rotate", "reverse-rotate" },
 	{ "fork-me-cable-flip-horizontal", "flip-horizontal" }, { "fork-me-cable-flip-vertical", "flip-vertical" } }) do
 	data:extend({ {
