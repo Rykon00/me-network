@@ -10,7 +10,7 @@
     python tools/devcheck/devcheck.py all --with-mod Krastorio2 [--mods-from DIR]
                                                             # issue #591: with a third-party mod and its required
                                                             # dependencies (check --base-only: without Space Age)
-    python tools/devcheck/devcheck.py migrate --from-ref v0.5.0
+    python tools/devcheck/devcheck.py migrate --from-ref v0.6.0
                                                             # a save of an older version loaded with the working copy
     python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
                                                             # bases of 100, 1000 and 5000 endpoints (docs/PERFORMANCE.md)
@@ -59,8 +59,8 @@ MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
 # `runtime` creates its map with this seed, so a run is reproducible; `--seed N` or `--seed random` picks another
 DEFAULT_SEED = 3115102263
-# issue #146: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
-CUT_OFF = (0, 5, 0)
+# issues #146, #690: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
+CUT_OFF = (0, 6, 0)
 # (issue #487: Factorio 2.1 adds the built-in mod recycler, which space-age and quality depend on)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails", "recycler"}
 # the Factorio version the mods are written for (info.json factorio_version; the dependency mods are picked by it)
@@ -1921,10 +1921,10 @@ def migrate_run(a):
         startup_setting(ITEMS_SETTING, "new")
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
-    # issue #146: a save from before the cut-off must be refused when it loads, with the message that names 0.5.0
+    # issues #146, #690: a save from before the cut-off must be refused when it loads, with the message that names 0.6.0
     old_version = json.loads((old / "info.json").read_text(encoding="utf-8"))["version"]
     if tuple(int(n) for n in old_version.split(".")[:3]) < CUT_OFF:
-        refused = "no longer converts saves from before 0.5.0" in log
+        refused = "no longer converts saves from before 0.6.0" in log
         print(f"old save of {old_version} (before the cut-off {'.'.join(map(str, CUT_OFF))}) loaded with the working copy: "
               + ("refused with the message" if refused and not ran else "NOT REFUSED" if ran else "failed without the message"))
         if not refused:
@@ -3025,8 +3025,8 @@ def main():
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
-    p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
-                   "one than the cut-off 0.5.0 must be refused: issue #146)")
+    p.add_argument("--from-ref", default="v0.6.0", help="the git tag or commit of the old version (default v0.6.0; an older "
+                   "one than the cut-off 0.6.0 must be refused: issues #146, #690)")
     p.add_argument("--bump", action="store_true",
                    help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
                         "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "

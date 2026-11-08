@@ -202,6 +202,10 @@ local function setup_unified(s)
 	--- the new technology ME Level Emitter researched, which now unlocks the level emitter and the circuit interface
 	local auto = game.forces.player.technologies["me-automation"]
 	if auto then auto.researched = true end
+	--- (a version that has ME Level Emitter already, 0.6.0 and later: its save ran the migration when it was made, and a player
+	--- researches it before ME Automation, its prerequisite)
+	local le = game.forces.player.technologies["me-level-emitter"]
+	if le then le.researched = true end
 	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
 		local m = place(s, fails, "me-molecular-assembler", x, -0.5)
 		local p = place(s, fails, "me-pattern-provider", x, 0.5)

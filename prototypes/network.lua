@@ -26,23 +26,20 @@
 local ME = ME_NETWORK
 local ENTITY_PATH = ME.entity_path
 local ICON_PATH = ME.icons
-local ICON_FORK = ICON_PATH .. "fork/"
 
---- cell tier -> "k", the extra ingredient of the old drive item (it is given back when such an item is placed, if that
---- item exists)
+--- cell tier -> "k"
 local CELLS = {
 	{ tier = "1k",   k = 1 },
 	{ tier = "4k",   k = 4 },
 	{ tier = "16k",  k = 16 },
 	{ tier = "64k",  k = 64 },
-	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
+	{ tier = "256k", k = 256 },
 	--- issue #414: AE2-Unofficial's 1024k, 4096k and 16384k cells (core/api/definitions/ApiItems.java, ItemAdvancedStorageCell:
-	--- 63 types, k * 1024 bytes, k * 8 bytes per type); no old drive item of their tier (`new`)
-	{ tier = "1024k", k = 1024, new = true },
-	{ tier = "4096k", k = 4096, new = true },
-	{ tier = "16384k", k = 16384, new = true },
+	--- 63 types, k * 1024 bytes, k * 8 bytes per type)
+	{ tier = "1024k", k = 1024 },
+	{ tier = "4096k", k = 4096 },
+	{ tier = "16384k", k = 16384 },
 }
-local OLD_CELLS_PER_DRIVE = 4
 local DRIVE_SLOTS = 10              -- AE2's ME Drive
 local MAX_TYPES = 63                -- AE2: types per cell
 local INTERFACE_SLOTS = 18          -- AE2: 9 config + 9 storage slots
@@ -96,7 +93,7 @@ local ROWS = {
 	"fork-me-capacity-speed-cards", -- the capacity and speed cards
 	"fork-me-wireless",             -- the wireless access point, booster, terminal, module and the charger
 	"fork-me-components",           -- the storage housing and the storage components
-	"fork-me-fluid-drives",         -- (only the hidden old fluid drive items)
+	"fork-me-fluid-drives",         -- (empty since issue #690 removed the old fluid drive items; kept for other mods)
 }
 for i, name in ipairs(ROWS) do
 	data:extend({ { type = "item-subgroup", name = name, group = ME.GROUP, order = string.format("%02d", i) } })
@@ -172,10 +169,10 @@ end
 
 
 --------------------------------------------------------------------------------
---- STORAGE CELLS (item-with-tags: the contents travel in the tags) AND THE OLD DRIVE ITEMS
+--- STORAGE CELLS (item-with-tags: the contents travel in the tags)
 --------------------------------------------------------------------------------
 
-local cell_data, legacy_drives = {}, {}
+local cell_data = {}
 
 for i, c in ipairs(CELLS) do
 	local cell = "me-" .. c.tier .. "-storage-cell"
@@ -200,25 +197,6 @@ for i, c in ipairs(CELLS) do
 	cell_data[cell] = { tier = c.tier, bytes = bytes, per_type = per_type, types = MAX_TYPES }
 	item.localised_description = { "item-description.fork-me-storage-cell", c.tier, tostring(bytes),
 		tostring(MAX_TYPES), tostring((bytes - per_type) * 8) }
-	if not c.new then                                 -- (issue #414: no old drive item of the new tiers)
-		--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
-		--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
-		local old = "me-drive-" .. c.tier
-		ME.add_item{
-			type = "item",
-			name = old,
-			icon = ICON_FORK .. old .. ".png",
-			icon_size = 32,
-			subgroup = "fork-me-drives",
-			order = "z" .. order,
-			stack_size = 10,
-			place_result = DRIVE,
-			hidden = true,
-			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-			recipe = false,
-		}
-		legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
-	end
 end
 
 --- Issue #414: AE2-Unofficial's Singularity cell (ItemExtremeStorageCell "Singularity": one type, Long.MAX_VALUE / 16 bytes,
@@ -1026,7 +1004,6 @@ data:extend({ {
 	name = "fork-me-network",
 	data = {
 		cells = cell_data,
-		legacy_drives = legacy_drives,
 		drive_slots = DRIVE_SLOTS,
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
@@ -1318,4 +1295,12 @@ do
 			scale = 0.5, flags = { "icon" } }
 	end
 	data:extend(list)
+end
+
+--- Issue #690: the old drive items of before issue #68 (me-drive-<tier>, me-fluid-drive-<tier>) are gone. 0.6.0 replaced every one
+--- a save held by an ME Drive with its cells (issue #689), and saves of older versions are refused (control.lua, CUT_OFF). What
+--- the network may still store of them (an old item inside a loose cell, which 0.6.0 did not open) counts as an ME Drive.
+for _, tier in ipairs({ "1k", "4k", "16k", "64k", "256k" }) do
+	ME.replace_item("me-drive-" .. tier, DRIVE)
+	ME.replace_item("me-fluid-drive-" .. tier, DRIVE)
 end
