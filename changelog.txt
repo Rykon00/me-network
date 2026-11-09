@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.6.1
+Date: 2026-11-09
+  Bugfixes:
+    - An ME Storage Bus on a machine whose fluid boxes go away with its recipe (an assembling machine whose recipe with a fluid is removed or changed) no longer stops the game with an error ("Passed index is out of range" in get_fluid_segment_id, "does not have fluids" since Factorio 2.1): the machine's fluid leaves the network and the bus looks at what is in front of it again, so it takes the machine's fluid when a recipe with a fluid is back.
+---------------------------------------------------------------------------------------------------
 Version: 0.6.0
 Date: 2026-11-08
   Features:
