@@ -1220,6 +1220,7 @@ RUNTIME_TESTS = (
     ("IFACEWAKE", "ME interface wake (issue #313)"),
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
     ("IFACESEGMENT", "ME interface fluid row over its segment (issue #626)"),
+    ("BUSBOXRANGE", "ME storage bus on a machine that loses its fluid boxes"),
     ("P2P", "ME P2P tunnels with a pattern provider (issue #629)"),
     ("P2PFLOW", "ME P2P tunnels on their own (issue #633)"),
     ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),

@@ -1130,6 +1130,9 @@ ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_rep
 --- me-network issue #626: a fluid row counts the side's whole segment, a surplus goes back (ifacesegment.lua)
 ifacesegment626 = require("ifacesegment")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- a storage bus on a machine whose fluid boxes go away with its recipe (busboxrange.lua)
+busboxrange = require("busboxrange")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #629: ME P2P tunnels, a provider serving the machines their outputs face (p2p.lua)
 p2p629 = require("p2p")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1391,6 +1394,7 @@ local function tests_running()
 	ifacewake313.running(check)
 	ifacefluids311.running(check)
 	ifacesegment626.running(check)
+	busboxrange.running(check)
 	p2p629.running(check)
 	p2pflow633.running(check)
 	providers158.running(check)
@@ -2400,6 +2404,7 @@ script.on_nth_tick(10, function()
 	ifacewake313.tick()
 	ifacefluids311.tick()
 	ifacesegment626.tick()
+	busboxrange.tick()
 	p2p629.tick()
 	p2pflow633.tick()
 	providers158.tick()
@@ -5409,6 +5414,7 @@ script.on_init(function()
 	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacesegment626.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(busboxrange.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(p2p629.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(p2pflow633.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end

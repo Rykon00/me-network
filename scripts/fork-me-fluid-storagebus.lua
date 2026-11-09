@@ -122,6 +122,11 @@ local function wagon_here(rec)
 end
 M.wagon_here = wagon_here
 
+--- does the target still have the bus's fluid box? A crafting machine's boxes come and go with its recipe (the box
+--- functions raise an error for a box that is not there); a wagon has no boxes to lose
+local function box_there(rec, t) return rec.wagon or rec.box <= t.fluids_count end
+M.box_there = box_there
+
 local function live_key(rec)
 	local t = rec.target
 	if not (t and t.valid and rec.box) then return nil end
@@ -129,6 +134,7 @@ local function live_key(rec)
 		if not wagon_here(rec) then return nil end
 		return "w" .. t.unit_number, false
 	end
+	if not box_there(rec, t) then return nil end
 	local id = T.segment_id(t, rec.box)
 	if id then
 		local key = seg_keys[id]
@@ -407,8 +413,8 @@ function M.visit(rec, cascade)
 	local e = rec.entity
 	if not e.valid then return false end
 	local t = rec.target
-	--- (issue #417: a fluid wagon that left: the tile in front is looked at again)
-	if not (t and t.valid and rec.dir == e.direction and rec.box) or (rec.wagon and not wagon_here(rec)) then
+	--- (issue #417: a fluid wagon that left: the tile in front is looked at again; so for a machine that lost the box)
+	if not (t and t.valid and rec.dir == e.direction and rec.box and box_there(rec, t)) or (rec.wagon and not wagon_here(rec)) then
 		if M.resolve_visit and rec.ext ~= OLD_KIND then return M.resolve_visit(rec, cascade) end
 		local changed = N.ext_sync(rec.unit, {})
 		rec.status = "no-target"
