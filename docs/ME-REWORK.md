@@ -49,7 +49,7 @@ any 1x1 entity (it cannot cross belts or pipes).
 **The network on hover (issue #699).** The game shows a pipe system in its grey visualization while a part of it is hovered,
 and the underground cable's pair with it, but the cable is no pipe (a pipe network costs time in its size at every removal,
 issue #697). `scripts/fork-me-highlight.lua` draws the like: while a player hovers a member, a walk through the graph from that
-member (no search of the surface) draws the cables of its network within 64 x 40 tiles as grey lines, one per straight run
+member (no search of the surface) draws the cables of its network within 64 x 40 tiles as lines in the cable's purple, one per straight run
 (a render object costs about 10 us, so not one picture per cable), the underground ends with the pipe-to-ground's
 visualization and a pair as a dashed line. The walk takes at most 200 steps a tick (all players together) and draws as it
 goes, so the highlight spreads from the cursor; render objects for that player only, gone when the selection changes.

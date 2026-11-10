@@ -4,7 +4,7 @@
 ---     Underground Cable is a pipe-to-ground in a connection category of its own, so the game draws that for an underground
 ---     pair; the ME Cable is no pipe (issue #697: as a pipe every removal costs time in the size of the network), so the game
 ---     draws nothing for it. This module draws the like itself: while a player hovers a built member of a network, the ME
----     Cables of that network around it are drawn as grey lines through the middle of their tiles (to the edge of a block
+---     Cables of that network around it are drawn as purple lines (the colour of the cable) through the middle of their tiles (to the edge of a block
 ---     they connect to), every underground cable gets the pipe-to-ground visualization of its direction (`__base__/graphics/
 ---     entity/pipe-to-ground/visualization.png`) and a pair a dashed line between its ends.
 ---   * What it costs (2.1.24, docs/PERFORMANCE.md, issue #699): a render object about 10 us to make, so a straight run of
@@ -34,8 +34,9 @@ local WALK = 8                       -- tiles the walk through the graph may lea
 local REUSE = 16                     -- tiles the hovered entity may move within the same network before it is drawn again
 local PER_TICK = 200                 -- steps of every spreading highlight together per tick (and when it starts)
 local MAX_OBJECTS = 3000             -- objects at most per highlight
---- the grey of the game's visualization of an empty pipe system (taken from a screenshot of a hovered underground pair)
-local COLOR = { r = 73 / 255, g = 76 / 255, b = 89 / 255, a = 1 }
+--- the purple of the ME Cable (the mean of the purple pixels of AE2's cable in ae2-textures/graphics/blocks/me-cable.png; the
+--- maintainer's choice over the grey of the game's pipe visualization, 73 76 89)
+local COLOR = { r = 121 / 255, g = 86 / 255, b = 159 / 255, a = 1 }
 local WIDTH = 4                      -- pixels at zoom 1 (32 per tile): the bar of the pipe's visualization
 local OVER = WIDTH / 64              -- tiles a line goes past a middle, so two lines meet without a notch
 local LAYER = "higher-object-above"
