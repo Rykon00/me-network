@@ -57,7 +57,8 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network; so do pattern providers
    and ME Molecular Assemblers, issue #560). Corners do not
-   connect. Everything connected is one network. The cable picture shows its connections.
+   connect. Everything connected is one network. The cable picture shows its connections. Hover a cable or a block to
+   see its network around it in grey, as the game shows a pipe system.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (it takes its power from the network).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.

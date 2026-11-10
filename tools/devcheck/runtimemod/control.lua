@@ -1177,6 +1177,8 @@ lifbuild538 = require("lifbuild")({ me_place = me_place, cable_row = cable_row, 
 ghostbuild661 = require("ghostbuild")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #670: the shapes of ME Cable from blueprints and of cable ghosts (cableshape.lua)
 cableshape670 = require("cableshape")({ me_report = me_report })
+--- me-network issue #699: the network highlighted while a member is hovered (highlight.lua)
+highlight699 = require("highlight")({ me_report = me_report })
 --- me-network issue #674: turned blueprints over ME blocks whose direction does not show (turnblocks.lua)
 turnblocks674 = require("turnblocks")({ me_report = me_report, me_place = me_place, cable_row = cable_row, power = power,
 	me_drive = function(...) return me_drive(...) end })
@@ -1451,6 +1453,7 @@ local function tests_running()
 	lifbuild538.running(check)
 	ghostbuild661.running(check)
 	cableshape670.running(check)
+	highlight699.running(check)
 	turnblocks674.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
@@ -2461,6 +2464,7 @@ script.on_nth_tick(10, function()
 	lifbuild538.tick()
 	ghostbuild661.tick()
 	cableshape670.tick()
+	highlight699.tick()
 	turnblocks674.tick()
 	remoteview176.tick()
 	graph43.tick()
@@ -5470,6 +5474,7 @@ script.on_init(function()
 	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(ghostbuild661.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(cableshape670.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(highlight699.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(turnblocks674.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end

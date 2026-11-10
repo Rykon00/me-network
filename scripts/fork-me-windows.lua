@@ -2208,7 +2208,9 @@ end
 G.player_hooks[#G.player_hooks + 1] = hover
 script.on_event(defines.events.on_selected_entity_changed, function(event)
 	local player = game.get_player(event.player_index)
-	if player then hover(player) end
+	if not player then return end
+	hover(player)
+	if N.highlight then N.highlight.on_selected(player) end      -- (issue #699: the network highlighted)
 end)
 
 G.on("if_item", function(event, player, el)

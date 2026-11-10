@@ -1305,3 +1305,17 @@ ME.add_technology{ name = "me-storage-16384k", prerequisites = { "me-storage-409
 ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge",
 	"electric-energy-accumulators" },                                             -- (issue #594: the cell takes accumulators)
 	unit = ME.unit(5, 2500), recipes = { SINGULARITY } }
+
+--- issue #699: pictures of the game's pipe visualization for scripts/fork-me-highlight.lua (a hovered network): the pipe's single
+--- piece for a cable without neighbours, the pipe-to-ground's for the underground cable
+do
+	local list = { { type = "sprite", name = "fork-me-cable-visualization-single",
+		filename = "__base__/graphics/entity/pipe/visualization.png", priority = "extra-high", x = 0, size = 64, scale = 0.5,
+		flags = { "icon" } } }
+	for dir, x in pairs({ north = 64, east = 128, south = 192, west = 256 }) do
+		list[#list + 1] = { type = "sprite", name = "fork-me-underground-visualization-" .. dir,
+			filename = "__base__/graphics/entity/pipe-to-ground/visualization.png", priority = "extra-high", x = x, size = 64,
+			scale = 0.5, flags = { "icon" } }
+	end
+	data:extend(list)
+end

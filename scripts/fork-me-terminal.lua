@@ -1514,6 +1514,7 @@ script.on_event(defines.events.on_player_left_game, function(event)
 	local player = game.get_player(event.player_index)
 	G.on_left(player)
 	if player then Ghost.settle(player) end                  -- (issue #659)
+	if N.highlight then N.highlight.clear(event.player_index) end   -- (issue #699)
 end)
 
 script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_changed, defines.events.on_gui_elem_changed,
@@ -1541,6 +1542,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	if w and w.players then w.players[event.player_index] = nil end
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)
 	VC.forget_player(event.player_index)                                                         -- (issue #440: wireless view cells)
+	if N.highlight then N.highlight.clear(event.player_index) end                                -- (issue #699: the highlight)
 end)
 
 return M

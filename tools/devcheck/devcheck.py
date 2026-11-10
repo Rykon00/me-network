@@ -1214,6 +1214,7 @@ RUNTIME_TESTS = (
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
     ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
     ("CABLESHAPE", "ME Cable shapes from blueprints and of ghosts (issue #670)"),
+    ("HIGHLIGHT", "the network highlighted on hover (issue #699)"),
     ("TURNBLOCKS", "Turned blueprints over ME blocks whose direction does not show (issue #674)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
@@ -1305,7 +1306,9 @@ def saveload(mapfile, ticks, extra_args=()):
                                  "--rcon-bind", f"127.0.0.1:{rcon_port}", "--rcon-password", password, *extra_args],
                                 stdout=out, stderr=subprocess.STDOUT)
         sock = None
-        deadline = time.time() + 120
+        # (start, the ticks up to SAVELOAD_TICK and the save: with Gregtorio Continued the load of its prototypes alone took
+        # 130 s on a busy machine, so 120 s for all of it was too short)
+        deadline = time.time() + 300
         try:
             while time.time() < deadline and proc.poll() is None:
                 try:

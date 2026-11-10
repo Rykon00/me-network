@@ -33,7 +33,9 @@ return function(H)
 		local machine = me_place(s, fails, what, "assembling-machine-2", BX + 12.5, BY + 2.5)
 		if machine then
 			machine.set_recipe(RECIPE)
-			machine.set_fluid(1, { name = "water", amount = AMOUNT })
+			--- (with Gregtorio Continued the recipe takes no fluid in this machine: nothing to check, see T.tick)
+			if machine.fluids_count > 0 then machine.set_fluid(1, { name = "water", amount = AMOUNT })
+			else storage.busboxrange_no_fluid = true end
 		end
 		H.me_connect(fails, what, { ctrl, drive, bus })
 		if drive then
@@ -52,6 +54,12 @@ return function(H)
 			storage.busboxrange = st
 		end
 		if st.done then return end
+		if storage.busboxrange_no_fluid then
+			st.done = true
+			me_report("BUSBOXRANGE", "ME storage bus on a machine that loses its fluid boxes", {},
+				"nothing to check: the recipe " .. RECIPE .. " takes no fluid in an assembling machine 2 with these mods")
+			return
+		end
 		local problems = st.problems
 		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 		local sc = storage.busboxrange_scene or {}

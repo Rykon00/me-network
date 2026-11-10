@@ -75,6 +75,7 @@ local memcard = require("scripts.fork-me-memorycard")
 --- issue #629: the ME P2P Tunnels (frequencies; a pattern provider serves the machines their outputs face)
 local fork_p2p = require("scripts.fork-me-p2p")
 local ghostwin = require("scripts.fork-me-ghostwin")      -- (issue #659: the ME window of a ghost)
+require("scripts.fork-me-highlight")                      -- (issue #699: the network highlighted while a member is hovered)
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -309,6 +310,7 @@ local function on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
 	cableshape.on_tick(tick)                                  -- (issue #670: queued ghosts shaped, the cables under a paste)
+	fork_net.highlight.on_tick()                              -- (issue #699: a highlight that still spreads)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
