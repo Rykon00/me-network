@@ -46,6 +46,15 @@ item; three for 10 s in an MV assembler, unlocked by Applied Energistics Compone
 sets `graphics_variation` when the cable or a neighbour is built or removed. It collides with objects like
 any 1x1 entity (it cannot cross belts or pipes).
 
+**The network on hover (issue #699).** The game shows a pipe system in its grey visualization while a part of it is hovered,
+and the underground cable's pair with it, but the cable is no pipe (a pipe network costs time in its size at every removal,
+issue #697). `scripts/fork-me-highlight.lua` draws the like: while a player hovers a member, a walk through the graph from that
+member (no search of the surface) draws the cables of its network within 64 x 40 tiles as grey lines, one per straight run
+(a render object costs about 10 us, so not one picture per cable), the underground ends with the pipe-to-ground's
+visualization and a pair as a dashed line. The walk takes at most 200 steps a tick (all players together) and draws as it
+goes, so the highlight spreads from the cursor; render objects for that player only, gone when the selection changes.
+Measured in docs/PERFORMANCE.md.
+
 **Controller:** a network works when its component holds exactly one ME Controller and that controller has
 power. Two or more controllers in one component are a conflict: the network is off and the controllers show
 the status "Controller conflict" (AE2 shows the same for two separate controllers). Without a controller

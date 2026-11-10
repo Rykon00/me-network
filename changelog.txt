@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.6.2
+  Features:
+    - Hovering an ME Cable, an ME Underground Cable or any ME block highlights its network around it in the grey of the game's pipe visualization (issue #699), as the game does for a pipe system: the cables as grey lines, the underground cables with the pipe-to-ground's picture and a dashed line to their partner. Only you see it, and it goes when you hover something else. It spreads from the cursor over a few ticks and covers about a zoomed-out screen, so a hover costs the same in a small base and in a megabase.
+---------------------------------------------------------------------------------------------------
 Version: 0.6.1
 Date: 2026-11-09
   Bugfixes:

@@ -4627,3 +4627,56 @@ the radius (every second tile of 180 x 180, a drive on every ninth odd column):
 | none to turn (the searches only) | 13.6 to 17.0 | 21.0 to 31.7 |
 
 Measured with 36 names, before the Pattern Provider joined the list. A key is a person pressing it, so this stays a cost of a moment, not of the running base; the bench has no players, none of it runs there.
+
+## The network highlighted on hover (issue #699)
+
+**What changed:** a new module, scripts/fork-me-highlight.lua. While a player hovers a member, the cables of its network within
+64 x 40 tiles are drawn in grey (render objects for that player). Nothing runs for a player who hovers nothing of the network;
+on_tick reads one field of `storage` while no highlight spreads. The bench has no players, so a hover never runs there.
+
+**How it got cheap** (a probe mod from `on_init`, headless, `helpers.create_profiler`, the hovered cable in the middle of each
+network). The first version drew one picture per cable (the pipe's visualization of its shape) after a
+`find_entities_filtered` over the area:
+
+| ms per hover, first version | line 1000 | comb 5k | comb 20k | grid 10k |
+|---|---|---|---|---|
+| cables drawn | 129 | 4 181 | 4 345 | 6 000 (the cap) |
+| hover | 1.3 | 47 | 86 | 144 |
+
+About 10 us per render object. One line per straight run of cables instead cut the drawing to 0.05 to 0.2 ms, but finding the
+cables still cost about 5 us each, as much with a search of the surface as with a walk through the graph (a pass over the
+graph's tables alone costs about 0.75 us per member here, a table insert 0.5 us). So the walk is spread over ticks: at most 200
+steps a tick (a step is one member visited or one cable followed along a run), drawing as it goes, so no tick pays more than
+the budget, whatever the network's size. The comb: a spine with rows of cables on every second tile (half the tiles are
+cable); the grid: every tile is cable (the worst case).
+
+| final version, three runs | line 1000 | comb 1k | comb 5k | comb 20k | comb 45k | grid 10k | grid 40k |
+|---|---|---|---|---|---|---|---|
+| objects drawn | 1 | 26 | 42 | 42 | 42 | 181 | 210 |
+| ticks until drawn | 2 | 10 | 41 | 44 | 44 | 118 | 157 |
+| ms in the first tick | 0.7 to 1.0 | 0.8 | 1.0 to 1.9 | 0.7 to 1.4 | 1.0 to 1.3 | 1.0 to 1.8 | 1.4 to 1.9 |
+| ms per tick after it (mean) | | 0.7 to 0.9 | 1.0 | 1.0 | 1.0 | 1.3 to 1.4 | 1.4 |
+| ms to clear | 0.01 | 0.03 | 0.04 | 0.04 | 0.04 to 0.06 | 0.13 to 0.33 | 0.16 to 0.53 |
+| ms for a hover kept (same network, near) | 0.01 | 0.02 | 0.02 to 0.04 | 0.02 to 0.04 | 0.02 | 0.02 to 0.03 | 0.02 to 0.03 |
+
+So a hover costs about 1 ms a tick for under a second in a cable layout like the comb (2 to 2.6 s for a screen full of cable),
+the same in a network of 5 000 or 45 000 members. A highlight that is still spreading starts again only when its own network
+changes its members: the graph's global version changes with every build anywhere, and in the runtime test, where other
+scenes build at the same time, the grid of 900 cables took 70 ticks with that rule and 20 with the network's own count.
+
+`bench --check v0.6.1` (sizes 100, 1000, 5000, three rounds in turns; the maintainer's game ran on the same machine):
+
+| | v0.6.1 | #699 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.344 / 4.00 | 0.340 / 3.54 |
+| 1000: script avg / p99 (ms) | 0.569 / 4.36 | 0.574 / 4.26 |
+| 5000: script avg / p99 (ms) | 1.578 / 5.95 | 1.542 / 5.80 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.92 / 41.71 / 61.79 | the same |
+| burst build / remove ms (5000) | 174.3 / 149.6 | 172.9 / 188 (±98) |
+| load first tick ms (100 / 1000 / 5000) | 2.05 / 6.65 / 11.41 | 4.13 / 6.02 / 10.30 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+That run found one regression beyond the noise, the first tick after the load at size 100 (2.05 -> 4.13 ms, noise 1.81). The
+module does nothing on load and nothing in a tick while no highlight spreads (one read of `storage`), and the same number
+was lower at 1000 and 5000. `bench --check v0.6.1 --sizes 100 --runs 6` again: 2.15 ±1.03 -> 2.49 ±2.07 ms, script avg 0.270 ->
+0.288 ms (±0.07 / ±0.11), `regressions beyond the noise: 0`.
