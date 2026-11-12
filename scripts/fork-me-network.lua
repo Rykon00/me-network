@@ -2422,7 +2422,8 @@ local function refresh_screens(s)
 			local unit = sl[i]
 			local node = nodes[unit]
 			if node then
-				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+				--- (a member whose entity went without an event is the sweep's: it is left alone here)
+				if node.entity.valid then set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind) end
 				i = i + 1
 			else
 				screen_gone(s, unit)                           -- (the last one took its place: look at it next)
@@ -6521,5 +6522,26 @@ remote.add_interface("gregtorio-me-network", {
 		return exit, entry
 	end,
 })
+
+--- The drive or ME Chest `source` was moved to `destination` (scripts/fork-me-move.lua): its cells go into the same slots
+--- of the destination as they are, with their contents (out of the source's network, into the destination's), so the
+--- source has none to spill. Returns the number of cells moved.
+function M.on_moved(source, destination)
+	local s = state()
+	local a = s.drives[source.unit_number]
+	if not (a and CELL_KINDS[M.kind_of(destination.name)]) then return 0 end
+	local b = drive_record(s, destination)
+	local slots = {}
+	for slot in pairs(a.slots) do slots[#slots + 1] = slot end
+	table.sort(slots)
+	local n = 0
+	for _, slot in ipairs(slots) do
+		if not b.slots[slot] then
+			place_cell(s, b, slot, remove_cell(s, a, slot))
+			n = n + 1
+		end
+	end
+	return n
+end
 
 return M

@@ -233,6 +233,34 @@ Every Krastorio 2 item goes through its helper `kr(name, fallback)`: the item wh
 name, else the vanilla stand-in, with one log line. Krastorio 2's `data-final-fixes.lua` runs after it and takes the red to
 blue packs out of every technology that needs its advanced, optimization, matter or singularity cards.
 
+## Space Exploration
+
+me-network carries its Space Exploration compatibility itself as well (issue #703), in three parts:
+
+- `prototypes/compat/space-exploration-early.lua`, required by `data.lua` whenever `space-exploration` is active (a hidden
+  optional dependency, so its stages run first): every ME technology goes into Space Exploration's global
+  `se_procedural_tech_exclusions` (its procedural technology pass would read the 64 of `me-storage-64k` as an upgrade
+  level), and every entity of this mod gets `se_allow_in_space = true` (Space Exploration keeps assembling machines,
+  underground pipes, storage tanks and most containers out of space otherwise). Sets `ME_NETWORK.space_exploration_early`.
+  A mod that adds an ME technology of its own after me-network's `data.lua` enters it there itself.
+- `prototypes/compat/space-exploration.lua`, required by `data-updates.lua` when Space Exploration is active, Gregtorio
+  Continued is not and the startup setting `me-network-space-exploration-recipes` (made only with Space Exploration, on by
+  default) is on: the recipes on its materials and the technologies on its science tiers, through `replace_recipe`,
+  `set_technology` and `make_molecular_assembler` only. Every Space Exploration name goes through its helper
+  `se(name, fallback)` (the vanilla stand-in and one log line `ME-NETWORK: Space Exploration: no item ...` when it is
+  missing). Sets `ME_NETWORK.space_exploration` (`swaps`, `packs`, `missing`, `with_krastorio2`).
+- With Krastorio 2 as well the Krastorio 2 file runs first and the Space Exploration file second: it lays its swap table
+  over Krastorio 2's (`ME_NETWORK.krastorio2.swaps`, `prototypes/compat/common.lua`) and applies the result to the recipes
+  as they were before either (`ME_NETWORK.standalone.recipes`), so per recipe and stand-in Space Exploration's entry wins
+  where it has one; it sets every technology from ME 64k Storage on from the prerequisites of before either
+  (`ME_NETWORK.standalone.prerequisites`), keeping the Krastorio 2 prerequisite whose item a recipe still takes.
+
+At runtime (`scripts/fork-me-move.lua`): a block that is cloned and whose source a script destroys in the same tick was
+moved (Space Exploration's spaceships), and what it holds goes to the clone; the members of a surface leave before the
+surface is deleted or cleared; the remote interface `me-network-space-exploration` has the function
+`space_exploration_delete_surface` that Space Exploration calls before it deletes a zone's surface (refused while ME
+blocks stand on it).
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,

@@ -38,6 +38,14 @@ M.STORAGE = {
 	["infinity-container"] = defines.inventory.chest, ["cargo-wagon"] = defines.inventory.cargo_wagon,
 }
 
+--- The cargo landing pad and the linked container are chests for the three buses as well: Space Exploration's cargo rocket
+--- landing pad is the game's cargo landing pad (a storage bus on it makes what the rockets bring network storage), its
+--- arcolink storage a linked container. (A space platform hub is not: what goes in and out of it is the platform's.)
+for _, list in pairs({ M.OUTPUT, M.INPUT, M.STORAGE }) do
+	list["cargo-landing-pad"] = defines.inventory.cargo_landing_pad_main
+	list["linked-container"] = defines.inventory.linked_container_main
+end
+
 --- the hidden side tanks of the ME Interface (prototypes/network.lua)
 M.SIDE = "me-network-interface-side"
 

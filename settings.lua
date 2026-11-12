@@ -81,3 +81,10 @@ if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
 	data:extend({ { type = "bool-setting", name = "me-network-krastorio2-recipes", setting_type = "startup", order = "z",
 		default_value = true } })
 end
+
+--- Space Exploration: with it the ME recipes and technologies follow its materials and science tiers (data-updates.lua,
+--- prototypes/compat/space-exploration.lua); off, they stay the standalone ones (or Krastorio 2's). Only with Space Exploration.
+if mods["space-exploration"] then
+	data:extend({ { type = "bool-setting", name = "me-network-space-exploration-recipes", setting_type = "startup", order = "z2",
+		default_value = true } })
+end

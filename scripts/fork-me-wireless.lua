@@ -687,6 +687,21 @@ G.window("charger", { open = open_charger, refresh = function(player, frame) ret
 --- the remote interface (the runtime test: the functions the hotkey, the clicks and the steps call)
 --------------------------------------------------------------------------------
 
+--- The access point or charger `source` was moved to `destination` (scripts/fork-me-move.lua): the boosters, or the
+--- terminal in the charger, go with it
+function M.on_moved(source, destination)
+	cards.move_cards(source, destination)
+	if source.name == CHARGER and destination.name == CHARGER then
+		local s = state()
+		local a = s.chargers[source.unit_number]
+		if a and a.inv and a.inv.valid then
+			local b = charger_rec(destination)
+			a.inv, b.inv = b.inv, a.inv
+			b.charging, b.last = a.charging, a.last
+		end
+	end
+end
+
 remote.add_interface("gregtorio-me-wireless", {
 	--- issue #603, the refill (scripts/fork-me-wireless-refill.lua): a character without a player as a record of its queue,
 	--- linked to the network of controller `ctrl` (returns its unit); one visit of a record now (the items moved); the energy

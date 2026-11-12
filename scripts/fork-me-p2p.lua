@@ -658,6 +658,28 @@ function M.on_configuration_changed()
 	changed()
 end
 
+--- The tunnel `source` was moved to `destination` (scripts/fork-me-move.lua): what its hidden chest or tank holds goes
+--- into the destination's (the clone of the part was dropped when it arrived: the destination made its own, M.on_built)
+function M.on_moved(source, destination)
+	local a, b = rec_of(source), rec_of(destination)
+	if not (a and b) or a == b then return end
+	local from, to = a.part, b.part
+	if not (from and from.valid and to and to.valid) then return end
+	if from.type == "container" and to.type == "container" then
+		local fi, ti = from.get_inventory(defines.inventory.chest), to.get_inventory(defines.inventory.chest)
+		for i = 1, math.min(#fi, #ti) do
+			if fi[i].valid_for_read and not ti[i].valid_for_read then ti[i].transfer_stack(fi[i]) end
+		end
+	elseif from.type == "storage-tank" and to.type == "storage-tank" then
+		local fluid = from.fluidbox[1]
+		if fluid then
+			to.fluidbox[1] = fluid
+			from.fluidbox[1] = nil
+		end
+	end
+	wake(destination.unit_number)
+end
+
 remote.add_interface("gregtorio-me-p2p", {
 	info = function(entity) return M.info(entity) end,
 	set = function(entity, freq, output) return M.set(entity, freq, output) end,

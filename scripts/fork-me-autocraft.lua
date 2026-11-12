@@ -4560,6 +4560,21 @@ end
 
 --- Other mods and the devcheck runtime test use the same code paths. Resource keys are item names
 --- or "fluid/<fluid name>".
+--- The pattern provider `source` was moved to `destination` (scripts/fork-me-move.lua): its encoded patterns (and those a
+--- blueprint still waits for) go into the same slots, then its cards, so the source has nothing to spill. The patterns
+--- first: a provider that loses its Pattern Capacity Cards puts the patterns above its size on the ground.
+function M.on_moved(source, destination)
+	local s = storage.fork_ae2
+	local a = s and s.providers[source.unit_number]
+	local b = s and s.providers[destination.unit_number]
+	if not (a and b) or a == b then return end
+	b.slots, a.slots = a.slots, {}
+	b.pending, a.pending = a.pending, nil
+	b.nslots = a.nslots
+	cards.move_cards(source, destination)
+	changed(b)
+end
+
 remote.add_interface("gregtorio-me-autocraft", {
 	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids, bytes } or nil
 	plan = function(entity, key, amount, fresh_only)

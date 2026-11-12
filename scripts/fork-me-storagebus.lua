@@ -1013,6 +1013,11 @@ function M.on_configuration_changed()
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end
 
+--- The storage bus `source` was moved to `destination` (scripts/fork-me-move.lua): its cards go with it
+function M.on_moved(source, destination)
+	cards.move_cards(source, destination)
+end
+
 remote.add_interface("gregtorio-me-storagebus", {
 	--- issue #420 (tests): is the visit list of each side its buses, each once, at their places? (true, or false and why)
 	lists_ok = function()

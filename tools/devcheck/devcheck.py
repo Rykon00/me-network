@@ -110,6 +110,12 @@ def dependency_names(info):
     return out
 
 
+def incompatible_names(info):
+    """the mods an info.json (a dict) declares incompatible (`! name`)"""
+    return [re.split(r"\s*[<>=]", dep.strip()[1:].strip())[0].strip() for dep in info.get("dependencies", [])
+            if dep.strip().startswith("!")]
+
+
 def required_mods(info_path):
     return dependency_names(json.loads(Path(info_path).read_text(encoding="utf-8")))
 
@@ -334,7 +340,7 @@ def texture_stand_in():
 
 
 def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
-                 textures=None, with_mods=()):
+                 textures=None, with_mods=(), with_se=False):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
     Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
@@ -372,9 +378,16 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
         enabled.append(GREGTORIO)
     enabled += wanted
     disabled += [z for z in zips if z not in wanted]
+    # a built-in mod that a mod of --with-mod declares incompatible is off (Space Exploration: `! space-age`)
+    banned = {n for w in wanted for n in incompatible_names(zip_info(mod_zip(w)))} & set(enabled)
+    enabled = [n for n in enabled if n not in banned]
+    disabled += sorted(banned)
     if with_runtime:
         link_dir(MODS / "zz-me-network-devcheck-runtime", helper_dir(HERE / "runtimemod"))
         enabled.append("zz-me-network-devcheck-runtime")
+    if with_se:
+        link_dir(MODS / "zz-me-network-devcheck-se", helper_dir(HERE / "semod"))
+        enabled.append("zz-me-network-devcheck-se")
     if with_migrate:
         link_dir(MODS / "zz-me-network-devcheck-migrate", helper_dir(HERE / "migratemod"))
         enabled.append("zz-me-network-devcheck-migrate")
@@ -806,7 +819,12 @@ def check_map(a, mapfile, textures=None):
     report("recipes of me-network not unlocked or not craftable", recipes)
     uncraft = [f"{r}: {why}" for r, why in m.uncraftable()]
     print(f"\nunlocked recipes of the game: {len(m.unlocked)}")
-    if a.base_only:
+    if a.base_only or banned_builtin(a):
+        # with --with-mod a recipe that is not this mod's is the third-party mod's (Space Exploration: recipes whose
+        # ingredient only its scripts make, such as a used lifesupport canister)
+        third = [u for u in uncraft if getattr(a, "with_mod", None) and u.split(":")[0] not in own_recipes]
+        uncraft = [u for u in uncraft if u not in third]
+        report("unlocked but uncraftable recipes of the mods of --with-mod (information)", third)
         report("unlocked but uncraftable recipes", uncraft)
     else:
         # the model knows resources, trees, rocks, fish, asteroids and tile fluids, but not every source of Space
@@ -983,8 +1001,18 @@ def with_mods(a):
     return names
 
 
+def banned_builtin(a):
+    """the built-in mods that a mod of --with-mod declares incompatible, among those in mods/ (prepare_mods turns them off)"""
+    out = set()
+    for w in getattr(a, "with_mod", None) or []:
+        for n in mod_closure([w]):
+            out |= set(incompatible_names(zip_info(mod_zip(n)))) & BUILTIN
+    return sorted(out)
+
+
 def mods_label(a, base_only=False):
     return (("base only" if base_only else "base, Space Age, quality")
+            + "".join(f" - {n}" for n in ([] if base_only else banned_builtin(a)))
             + (" + Gregtorio Continued" if getattr(a, "with_gregtorio", None) else "")
             + "".join(f" + {m}" for m in getattr(a, "with_mod", None) or []))
 
@@ -1017,6 +1045,70 @@ def check_krastorio2(sec):
                    f"kr-automation-core ({core[2]})")
     assembler = [r[1] for r in sec.get("KRASTORIO2", [])[1:] if r[0] == "assembler"]
     print(f"ME Molecular Assembler with Krastorio 2: {', '.join(assembler) or '?'}")
+    return out
+
+
+SE_SHORT = {"automation-science-pack": "red", "logistic-science-pack": "green", "chemical-science-pack": "blue",
+            "se-rocket-science-pack": "rocket", "space-science-pack": "space", "utility-science-pack": "utility",
+            "production-science-pack": "production"}
+
+
+def se_pack(name):
+    return SE_SHORT.get(name) or name.replace("se-", "").replace("-science-pack", "").replace("-", " ")
+
+
+def check_space_exploration(sec, active):
+    """Space Exploration (prototypes/compat/space-exploration-early.lua, space-exploration.lua; the section SPACEEXPLORATION
+    of the check mod). With Space Exploration loaded: every technology of this mod is in se_procedural_tech_exclusions, no
+    entity of this mod has its "space_tile" collision layer (each may stand in space), and no technology of this mod has a
+    pack that the compatibility did not give it (the procedural pass, or a later version of it, changed one). With the
+    compatibility active as well: no item or technology of Space Exploration was missing, and every pack of an ME technology
+    is a pack of one of its prerequisites or is unlocked by a technology before it (the pack of its own tier). Prints the
+    final technology tree. Returns the problems."""
+    rows = sec.get("SPACEEXPLORATION", [])
+    m = Model(sec["DUMP"])
+    techs = [r for r in rows if r[0] == "tech"]
+    given = {r[1]: [x for x in r[2].split(",") if x] for r in rows if r[0] == "set" and len(r) > 2}
+    out = []
+    excluded = {r[1] for r in rows if r[0] == "excluded"}
+    out += [f"{r[1]} is not in se_procedural_tech_exclusions" for r in techs if r[1] not in excluded]
+    out += [f"{r[1]} ({r[2]}) cannot stand in space (the space_tile collision layer)" for r in rows
+            if r[0] == "entity" and r[3] == "space"]
+    out += [f"no item or technology {r[1]} in Space Exploration ({r[2]} instead)" for r in rows if r[0] == "missing"]
+    makers = {}
+    for t, v in m.T.items():
+        for r in v["eff"]:
+            for x in m.R.get(r, {}).get("res", []):
+                makers.setdefault(x, set()).add(t)
+
+    def before(t):
+        seen, todo = set(), [t]
+        while todo:
+            for p in m.T.get(todo.pop(), {}).get("pre", []):
+                if p not in seen:
+                    seen.add(p)
+                    todo.append(p)
+        return seen
+
+    print("\nME technologies with Space Exploration (count x time, packs, prerequisites at the end of the data stage):")
+    for r in techs:
+        name, packs = r[1], [x for x in r[4].split(",") if x]
+        pre = [x for x in (r[5] if len(r) > 5 else "").split(",") if x]
+        print(f"  {name}: {r[2]} x {r[3]} s | {', '.join(se_pack(x) for x in packs)} | {', '.join(pre)}")
+        if name in given:
+            if set(packs) != set(given[name]):
+                out.append(f"{name}: packs {', '.join(sorted(set(packs) ^ set(given[name])))} differ from what the compatibility set")
+        else:
+            # a technology the compatibility leaves alone: nothing of Space Exploration's specialist or deep space tiers
+            # (the packs of its own that its last loop adds to utility and production science are its rule for every mod)
+            alien = [x for x in packs if re.match(r"se-.*-science-pack-\d$", x)]
+            if alien:
+                out.append(f"{name}: {', '.join(alien)}, which the compatibility did not set (the procedural pass)")
+        if active:
+            known, of_pre = before(name), {x for q in pre for x in m.T.get(q, {}).get("sci", [])}
+            for x in packs:
+                if x not in of_pre and not makers.get(x, set()) & known:
+                    out.append(f"{name}: the pack {x} is no pack of a prerequisite and no technology before it unlocks it")
     return out
 
 
@@ -1111,6 +1203,18 @@ def check(a):
     if got == "active":
         k2_problems += check_krastorio2(sec)
     report("Krastorio 2 compatibility (issues #592, #593)", k2_problems)
+    # Space Exploration: the compatibility runs with it, never with Gregtorio Continued, and not with its setting off
+    se_loaded = "space-exploration" in (getattr(a, "with_mod", None) or [])
+    se_off = any(x.split("=")[0] == "me-network-space-exploration-recipes" and x.split("=")[1] == "false"
+                 for x in getattr(a, "startup", None) or [])
+    want = "active" if se_loaded and not a.with_gregtorio and not se_off else "inactive"
+    got = (sec.get("SPACEEXPLORATION") or [["missing"]])[0][0]
+    print(f"\nSpace Exploration compatibility: {got}")
+    se_problems = [] if got == want else [f"the Space Exploration compatibility is {got}, expected {want}"]
+    if se_loaded:
+        se_problems += check_space_exploration(sec, got == "active")
+    report("Space Exploration compatibility", se_problems)
+    k2_problems += se_problems
     # issue #594: no ME recipe comes before what it takes (information with Gregtorio, whose tree its own devcheck checks)
     order = unlock_order(sec)
     print(f"\nME recipes whose ingredients come no later than their technology: {len([n for k, n in sec.get('OWN', []) if k == 'recipe']) - len({o.split(' ')[0] for o in order})}")
@@ -1416,6 +1520,56 @@ def runtime(a):
     report("runtime problems", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
+        print("\nRESULT: PROBLEMS FOUND")
+        return 1
+    print("\nRESULT: OK")
+    return 0
+
+
+SE_TESTS = [
+    ("PLACE", "every ME block on space platform scaffold, plating, spaceship floor and Nauvis"),
+    ("BUILD", "a network on spaceship floor in Nauvis Orbit"),
+    ("ORBIT", "the network works in orbit, bridged to Nauvis"),
+    ("LAUNCH", "the ship moved to its own surface (clone_brush, raise_destroy)"),
+    ("TRAVEL", "the network works on the ship's surface"),
+    ("LAND", "the ship moved onto Nauvis"),
+    ("LANDED", "the network works on Nauvis as before the launch"),
+    ("COPY", "a clone whose source stays is a copy"),
+    ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
+    ("SURFACE", "a deleted surface leaves nothing in storage"),
+]
+
+
+def se(a):
+    """the runtime test with Space Exploration (tools/devcheck/semod): this mod, Space Exploration and its dependencies
+    (and the mods of --with-mod, Krastorio 2 for the combination), a new map, `--ticks` ticks"""
+    names = ["space-exploration"] + [m for m in (a.with_mod or []) if m != "space-exploration"]
+    fetch_mods(names, a.mods_from)
+    a.with_mod = names
+    prepare_mods(with_mods=names, with_se=True)
+    print("mods: " + mods_label(a) + " + the Space Exploration test mod")
+    mapfile = WORK / "se-map.zip"
+    log, err = create_map(mapfile, *seed_args(a))
+    if err:
+        print(err)
+        return 1
+    log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(a.ticks))
+    ran = re.search(r"Performed (\d+) updates", log)
+    err = re.search(r"(Error.*|non-recoverable.*)", log)
+    fails = re.findall(r"DEVCHECK-SE-FAIL (.*)", log)
+    print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
+    for key, label in SE_TESTS:
+        m = re.search(rf"DEVCHECK-SE-{key} (.*)", log)
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
+        if not m:
+            fails.append(f"{label} did not run")
+    if not re.search(r"DEVCHECK-SE-DONE", log):
+        fails.append("the test did not reach its end (needs --ticks >= 800)")
+    report("Space Exploration runtime problems", fails)
+    if err or not ran or fails:
+        if err:
+            i = log.find(err.group(1))
+            print(log[i:i + 1500])
         print("\nRESULT: PROBLEMS FOUND")
         return 1
     print("\nRESULT: OK")
@@ -2583,6 +2737,11 @@ def main():
             p.add_argument("--ticks", type=int, default=1500)
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
             p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
+    p = sub.add_parser("se")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
+    p.add_argument("--ticks", type=int, default=900)
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
     p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
                    "one than the cut-off 0.5.0 must be refused: issue #146)")
@@ -2657,6 +2816,8 @@ def main():
         if a.ticks % BENCH_WARMUP:
             sys.exit(f"--ticks must be a multiple of {BENCH_WARMUP}")
         return bench(a)
+    if a.cmd == "se":
+        return se(a)
     if a.cmd == "migrate":
         return migrate(a)
     if a.cmd == "setup":

@@ -76,6 +76,30 @@ end
 for n, t in pairs(data.raw.tile or {}) do
 	if t.fluid then D("O", "tile:" .. n, t.fluid) end
 end
+--- what a mined tile gives, and what enemies leave: their loot and what their mined corpse gives (Krastorio 2's biomass
+--- comes from creep tiles and the corpses of spawners only; with Space Exploration its military science pack is on the way to the
+--- specialist science packs)
+local laid = {}                               -- (a tile an item lays gives that item back: no source)
+for t, _ in pairs(defines.prototypes.item) do
+	for _, it in pairs(data.raw[t] or {}) do
+		if it.place_as_tile then laid[it.place_as_tile.result] = true end
+	end
+end
+for n, t in pairs(data.raw.tile or {}) do
+	local m = t.minable
+	if m and (m.result or m.results) and not laid[n] then D("M", "tile:" .. n, m.result or "", names(m.results), "basic-solid") end
+end
+for _, t in pairs({ "unit-spawner", "unit", "turret", "corpse" }) do
+	for n, e in pairs(data.raw[t] or {}) do
+		local m = e.minable
+		if m and (m.result or m.results) then D("M", n, m.result or "", names(m.results), "basic-solid") end
+		local loot = {}
+		for _, l in pairs(e.loot or {}) do
+			if type(l) == "table" and l.item then loot[#loot + 1] = "item:" .. l.item end
+		end
+		if #loot > 0 then D("M", n .. ":loot", "", table.concat(loot, ","), "basic-solid") end
+	end
+end
 --- burnt results: what a burnt fuel leaves (a used fuel cell)
 for t, _ in pairs(defines.prototypes.item) do
 	for n, it in pairs(data.raw[t] or {}) do
@@ -320,4 +344,65 @@ do
 	--- issue #593: the categories the ME Molecular Assembler was rebuilt with
 	if k2 and k2.assembler_categories then rows[2] = "assembler\t" .. table.concat(k2.assembler_categories, ",") end
 	section("KRASTORIO2", rows)
+end
+--- Space Exploration (prototypes/compat/space-exploration.lua sets ME_NETWORK.space_exploration). Rows:
+---   active | inactive                      whether the compatibility ran (first row)
+---   se <true|false>                        whether Space Exploration is loaded
+---   tech <name> <count> <time> <packs> <prerequisites>    every technology of this mod as it is at the end
+---   set <name> <packs>                     the packs the compatibility gave a technology itself
+---   entity <name> <type> <space|-> <ship|-> <hidden|->    every entity an item of this mod places (and the hidden entities with
+---                                          an icon of this mod): "space" when its collision mask has Space Exploration's
+---                                          space_tile layer (it cannot stand in space), "ship" for the moving_tile layer
+---   recipe <name> <ingredients>            a recipe the compatibility changed, as it is at the end
+---   missing <name> <fallback>              an item or technology of Space Exploration the compatibility did not find
+---   excluded <name>                        what this mod put into se_procedural_tech_exclusions (space-exploration-early.lua)
+do
+	local se = ME_NETWORK and ME_NETWORK.space_exploration
+	local rows = { se and "active" or "inactive", "se\t" .. tostring(mods["space-exploration"] ~= nil) }
+	for _, n in ipairs(ME_NETWORK and ME_NETWORK.technologies or {}) do
+		local t = data.raw.technology[n]
+		if t then
+			local packs = {}
+			for _, i in pairs(t.unit and t.unit.ingredients or {}) do packs[#packs + 1] = i[1] or i.name end
+			rows[#rows + 1] = table.concat({ "tech", n, tostring(t.unit and (t.unit.count or t.unit.count_formula) or ""),
+				tostring(t.unit and t.unit.time or ""), table.concat(packs, ","), table.concat(t.prerequisites or {}, ",") }, "\t")
+		end
+	end
+	local set = {}
+	for n, packs in pairs(se and se.packs or {}) do set[#set + 1] = "set\t" .. n .. "\t" .. table.concat(packs, ",") end
+	table.sort(set)
+	for _, r in ipairs(set) do rows[#rows + 1] = r end
+	local placed, entities = {}, {}
+	for _, n in pairs(ME_NETWORK and ME_NETWORK.items or {}) do
+		local p = item_proto(n)
+		if p and p.place_result then placed[p.place_result] = true end
+	end
+	for t, _ in pairs(defines.prototypes.entity) do
+		for n, p in pairs(data.raw[t] or {}) do
+			if placed[n] or mine(p.icon) or n:sub(1, 3) == "me-" or n:sub(1, 8) == "fork-me-" then
+				local layers = p.collision_mask and p.collision_mask.layers or {}
+				entities[#entities + 1] = table.concat({ "entity", n, t, layers.space_tile and "space" or "-", layers.moving_tile and "ship" or "-",
+					p.hidden and "hidden" or "-" }, "\t")
+			end
+		end
+	end
+	table.sort(entities)
+	for _, r in ipairs(entities) do rows[#rows + 1] = r end
+	for _, m in ipairs(se and se.missing or {}) do rows[#rows + 1] = "missing\t" .. m[1] .. "\t" .. tostring(m[2]) end
+	--- the recipes the compatibility changed, with their amounts (for docs/AE2.md)
+	local swapped = {}
+	for n in pairs(se and se.swaps or {}) do swapped[#swapped + 1] = n end
+	for n in pairs(se and se.with_krastorio2 and ME_NETWORK.krastorio2 and ME_NETWORK.krastorio2.swaps or {}) do
+		if not (se.swaps or {})[n] then swapped[#swapped + 1] = n end
+	end
+	table.sort(swapped)
+	for _, n in ipairs(swapped) do
+		local r = data.raw.recipe[n]
+		local ing = {}
+		for _, i in pairs(r and r.ingredients or {}) do ing[#ing + 1] = i.amount .. " " .. i.name end
+		if r then rows[#rows + 1] = "recipe\t" .. n .. "\t" .. table.concat(ing, ", ") end
+	end
+	local early = ME_NETWORK and ME_NETWORK.space_exploration_early
+	for _, x in ipairs(early and early.excluded or {}) do rows[#rows + 1] = "excluded\t" .. x end
+	section("SPACEEXPLORATION", rows)
 end

@@ -775,6 +775,17 @@ function M.on_configuration_changed()
 	end
 end
 
+--- The workbench `source` was moved to `destination` (scripts/fork-me-move.lua): the cell in it, its cards and what its
+--- window shows go with it
+function M.on_moved(source, destination)
+	local s = storage.fork_me_workbench
+	local a = s and is_bench(source) and s.recs[source.unit_number]
+	if not (a and is_bench(destination)) then return end
+	local b = register(destination)
+	if a == b then return end
+	for _, field in ipairs({ "inv", "cinv", "kinv", "keep", "config", "cell" }) do a[field], b[field] = b[field], a[field] end
+end
+
 remote.add_interface("gregtorio-me-workbench", {
 	info = function(entity) return M.info(entity) end,
 	--- the window's clicks on the cell slot and a card slot: `cursor` a LuaItemStack, `inventory` a LuaInventory
