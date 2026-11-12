@@ -952,6 +952,196 @@ upper tiers come in another order, and the technologies follow it:
 The others are as with Krastorio 2. The ME Quantum Bridge links networks on different planets without a limit; the runtime
 test links a network on one surface with an ME Interface on Vulcanus.
 
+### With Space Exploration
+
+With Space Exploration (issue #703; 0.7.64 for Factorio 2.1; `prototypes/compat/space-exploration.lua`, the startup setting "Space
+Exploration recipes and technologies", not with Gregtorio Continued) every AE2 material whose stand-in has a fitting Space
+Exploration item takes that, with AE2's counts, and the technologies follow its science tiers. The rule is the one of the
+Krastorio 2 compatibility: the processors (electronic circuit, advanced circuit, processing unit), the lamp, the
+combinators and the machines stay, Space Exploration makes them dearer itself (its processing unit comes with the rocket
+science pack). Space Exploration has no quartz and no core item, so certus quartz stays stone and the annihilation and
+formation core the electronic circuit.
+
+| AE2 | Stand-in | With Space Exploration |
+|---|---|---|
+| certus quartz | stone | stone (no quartz in Space Exploration) |
+| glass, quartz glass, quartz fiber | plastic bar | glass (AAI Industry's; also the 3 glass of the ME IO Port and the 4 quartz glass of the ME Quantum Bridge's chamber, which had no stand-in) |
+| fluix crystal, fluix dust | copper cable | copper cable |
+| annihilation core, formation core | electronic circuit | electronic circuit |
+| piston | fast inserter | electric motor (AAI Industry's) |
+| sky stone dust of the 256k component | stone brick | cryonite rod (space science) |
+| ... of the 1024k, 4096k, 16384k component | stone brick | heavy girder, heavy bearing, heavy composite (material science 1, 2, 3) |
+| glowstone (64k component, blank pattern) | copper cable | copper cable (before the rocket) |
+| diamond (Advanced Card) | processing unit | processing unit (rocket science in Space Exploration) |
+| dense energy cell (wireless terminal and module) | batteries | batteries |
+| dense energy cell of the Singularity cells | accumulator | space accumulator |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | quantum processor (energy science 3) |
+| matter condenser (Singularity cells) | (the bridges) | a naquium cube more (deep space science 1) |
+| the crafting accelerators | - | 4 holmium cable more in the 4x accelerator; a quantum processor more in the 256x, 1024x and 4096x accelerator |
+
+The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
+AE2, the cards):
+
+| Item | Recipe with Space Exploration |
+|---|---|
+| Fluix Cable | 1 glass, 2 copper cable |
+| ME Interface | 4 iron plate, 2 glass, 2 electronic circuit |
+| ME Chest | 2 glass, 1 ME Terminal, 2 Fluix Cable, 2 iron plate, 1 copper plate |
+| Basic Storage Housing | 2 glass, 3 copper cable, 2 iron plate, 1 copper plate |
+| ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 cryonite rod |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 heavy girder |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 heavy bearing |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 heavy composite |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 naquium cube |
+| ME Import Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
+| ME Export Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
+| ME Storage Bus | 1 ME Interface, 2 electric motor |
+| Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
+| Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
+| ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 quantum processor, 32 Fluix Cable, 4 glass |
+| ME Blank Pattern | 2 glass, 3 copper cable, 1 stone, 2 iron plate, 1 copper plate |
+| ME Molecular Assembler | 4 iron plate, 2 glass, 2 electronic circuit, 1 assembling machine 1 |
+| ME 4x Crafting Accelerator | 4 ME Crafting Co-Processing Unit, 4 holmium cable |
+| ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 quantum processor |
+| ME 1024x Crafting Accelerator | 4 ME 256x Crafting Accelerator, 1 quantum processor |
+| ME 4096x Crafting Accelerator | 4 ME 1024x Crafting Accelerator, 1 quantum processor |
+| ME 1k Fluid Storage Cell | 1 ME 1K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4k Fluid Storage Cell | 1 ME 4K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16k Fluid Storage Cell | 1 ME 16K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 64k Fluid Storage Cell | 1 ME 64K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 256k Fluid Storage Cell | 1 ME 256k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 pump, 1 naquium cube |
+
+The ME Molecular Assembler is made again after Space Exploration's and AAI Industry's changes, from the assembling machine
+2's item categories at that point. It never gets a `space-...` category (the space assembling machine's recipes): Space
+Exploration makes a second, "grounded" prototype of a machine that has one and can stand on land and swaps the two when it
+is built, and the assembler is one entity everywhere (an assembler for space: issue #711).
+
+#### Technologies with Space Exploration
+
+Space Exploration's order of science is: red, green, blue; the **rocket science pack** (made on Nauvis, before the first
+launch); the **space science pack** (the first one made in orbit); utility and production science (in orbit); the four
+specialist lines 1 to 4 (astronomic and energy science on utility, material and biological science on production); deep
+space science 1 to 4. An ME technology names the packs below its tier and the highest pack of a line, as Space
+Exploration's own technologies do, and gets the Space Exploration technology whose item its recipes take as a
+prerequisite. Counts and times are those of Space Exploration's technologies of the tier (100 × 60 s from rocket science
+on, more for the upper tiers; its packs are dear, its counts small).
+
+Where the tiers come from:
+
+- **ME Network, the cells up to 16k, the level emitter:** untouched. A network is a logistics backbone and starts on
+  Nauvis with red and green science.
+- **64k and fluid storage: blue**, before the rocket. Without Space Exploration ME 64k Storage follows the processing unit;
+  Space Exploration moved that behind rocket science, and no recipe of these two takes one, so the prerequisite is dropped.
+- **Autocrafting, the cards, automation, wireless: rocket science.** Their recipes take processing units (the pattern
+  terminals, the P2P tunnels, the Advanced Card, the advanced level emitter, the wireless module), which stay, so they
+  follow the processing unit. That is still Nauvis: the rocket science pack needs no launch. ME Upgrade Cards, which
+  without Space Exploration costs what ME 64k Storage costs, is its count and time with the rocket science pack.
+- **256k, co-processing: space science**, the first tier in orbit (cryonite).
+- **1024k, 4096k, 16384k: material science 1, 2, 3**, the storage ladder on the material line.
+- **Quantum crafting and the crafting accelerators: energy science 1; the second accelerators: energy science 3.** The
+  crafting storages take the storage component of their tier, so they need the material and the energy pack of it.
+- **ME Quantum Bridge: astronomic and energy science 3.** It joins networks on any two surfaces without a limit, which in
+  Space Exploration is the work of cargo rockets, delivery cannons, the space elevator and spaceships. It comes with the
+  spaceship's tier (astronomic science 3) and the quantum processor (energy science 3): late enough that the rockets
+  matter for most of a game, far below Space Exploration's own instant link (arcolink storage: deep space science 4).
+  Its name has none of the words (`teleport`, `dimension`, `stargate`, `portal`) for which Space Exploration puts a
+  technology behind its Teleportation technology and deep space science 4.
+- **Singularity cells: deep space science 1** (naquium cube); **the Singularity crafting storage: deep space science 2.**
+  Space Exploration adds deep space science 1 to every technology with `singularity` in its name; the ME technologies
+  are left out of that pass and set here.
+
+| Technology | Without Space Exploration | With Space Exploration | Space Exploration prerequisite added |
+|---|---|---|---|
+| ME Network | 300 × 30 s, red, green | the same |  |
+| ME Level Emitter | 200 × 30 s, red, green | the same |  |
+| ME 64k Storage | 400 × 30 s, red to blue | 400 × 30 s, red to blue | Chemical science pack (instead of Processing unit) |
+| ME Fluid Storage | 400 × 30 s, red to blue | 400 × 30 s, red to blue |  |
+| ME Upgrade Cards | ME 64k Storage's | 400 × 30 s, red to blue, rocket | Processing unit |
+| ME Autocrafting | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket | Processing unit |
+| ME Automation, ME Wireless | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket |  |
+| ME Wireless Link | 400 × 30 s, red to blue | 100 × 60 s, red to blue, rocket |  |
+| ME 256k Storage | 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space | Space science pack, Cryonite processing (instead of Production science pack) |
+| ME Co-Processing, ME Fluid 256k Storage | 800 / 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space |  |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 100 × 60 s, to space, production, material 1 | Heavy girder (1024k) |
+| ME 4096k Storage, ME Fluid 4096k Storage | 1200 × 30 s, red to utility | 200 × 60 s, to space, production, material 2 | Heavy bearing (4096k) |
+| ME 16384k Storage, ME Fluid 16384k Storage | 1600 × 30 s, red to utility | 300 × 60 s, to space, production, material 3 | Heavy composite (16384k) |
+| ME Quantum Crafting | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Energy science pack 1 |
+| ME Crafting Accelerators | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Holmium cable |
+| ME Crafting Accelerators 2 | 2500 × 30 s, red to utility | 300 × 60 s, to space, utility, energy 3 | Quantum processor |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 100 × 60 s, to space, utility, production, material 1, energy 1 |  |
+| ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, ..., material 2, energy 2 | Energy science pack 2 |
+| ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ..., material 3, energy 3 | Energy science pack 3 |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 300 × 60 s, to space, utility, astronomic 3, energy 3 | Quantum processor, Astronomic science pack 3 |
+| ME Singularity Storage | 2500 × 30 s, red to utility | 250 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 1 | Naquium cube, Space accumulator (instead of Electric energy accumulators) |
+| ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same with deep space 2 | Deep space science pack 2 |
+
+("to space": red, green, blue, rocket and space science. Space Exploration's postprocess mod drops a prerequisite that
+another one implies, so the technology screen shows fewer arrows than this table has entries.)
+
+#### Space Exploration with Krastorio 2
+
+Space Exploration supports Krastorio 2 with a compatibility of its own, and so does ME Network. The Krastorio 2 file runs
+first, the Space Exploration file on top of it:
+
+- **Recipes:** Krastorio 2's early materials stay (quartz for certus quartz and in the fluix crystal, its glass, the
+  automation core, inserter parts, rare metals for glowstone and the diamond of the Advanced Card, the lithium-sulfur
+  battery of the wireless terminal and module). Where both files name a stand-in of the same recipe, Space Exploration's
+  wins: the components from 256k (cryonite rod, heavy girder, bearing, composite instead of imersite powder, imersium
+  plate and the energy control unit), the ME Quantum Bridge (quantum processors instead of AI cores), the Singularity
+  cells (space accumulators and a naquium cube instead of lithium-sulfur batteries and a charged matter stabilizer), the
+  second accelerators (a quantum processor instead of an energy control unit).
+- **Technologies:** ME Network keeps Krastorio 2's (250 × 30 s, after silicon processing); every technology from ME 64k
+  Storage on is Space Exploration's of the table above, with the Krastorio 2 prerequisite whose item a recipe still takes
+  (Rare metal processing for ME 64k Storage, Lithium-sulfur battery for ME Wireless). Space Exploration reorders
+  Krastorio 2's upper tiers itself (its matter, advanced and singularity cards come with its own packs), and its tiers are
+  the ones a player of both mods follows.
+
+`devcheck.py check --base-only` is run with Space Exploration, with Krastorio 2 and with both.
+
+#### In space, on spaceships, across surfaces
+
+- **Building in space.** Every ME block can be built on Space Exploration's space platform scaffold, space platform
+  plating and spaceship floor, and nothing is forbidden on land. Space Exploration keeps assembling machines, underground
+  pipes, storage tanks and most chests out of space unless their prototype says `se_allow_in_space`; every entity of this
+  mod says so (`prototypes/compat/space-exploration-early.lua`, also with the recipes setting off).
+- **Power.** An ME network takes its power where its ME Controller stands, from the electric network of that surface: in
+  space from space solar panels or whatever feeds the poles there, like any other machine. The ME Quantum Bridge and the ME
+  Wireless Link draw at their own place.
+- **Spaceships.** Space Exploration flies a spaceship by cloning everything on its floor onto another surface and removing
+  the originals in the same tick, at the launch and again at the landing. For ME Network a clone is a copy with the
+  settings of its source and nothing in it, and a block removed by a script drops what it holds; a block that is cloned
+  and removed in the same tick is therefore taken as moved (`scripts/fork-me-move.lua`): the cells of its drives, ME
+  Chests and ME IO Ports with their contents, the patterns of its providers, every card, the slots of the ME Cell
+  Workbench and the pattern terminals, the view cells of its terminals, a terminal in a charger and what its P2P tunnels
+  carry go to the block at the new place; filters, rows, priorities, frequencies and the other settings are there as for
+  any clone. What the game clones itself arrives with it: the chest of an ME Interface, the fluid in its sides and in an
+  ME Chest, the chests of an ME Logistic Interface. A Wireless ME Terminal linked to the ship's controller stays linked.
+  A crafting job that runs while the ship launches is not carried over yet (it is paused without its CPU and has to be
+  cancelled and started again; issue #704): finish or cancel jobs before a launch.
+- **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
+  one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
+  an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while
+  the ship flies and lands; after a move the pair is linked again in the same tick when both ends have power).
+- **Deleted surfaces.** Before a surface is deleted or cleared the ME blocks on it leave their networks (what they hold
+  goes with the surface, as a chest's contents do). Space Exploration asks before it deletes the surface of a zone ("Delete
+  surface" in its zone list): it is told no while ME blocks stand there.
+- **Space Exploration's containers.** The storage bus, the import and the export bus work with its cargo rocket landing
+  pad (the game's cargo landing pad: a storage bus on it makes what the rockets bring part of the network), its launch
+  pad, its delivery cannon chest and its arcolink storage (a linked container), and with its machines like with any
+  crafting machine.
+- **Many surfaces.** Nothing in the scheduler walks the surfaces or all members per tick: the blocks are visited from
+  queues, whatever surface they stand on (a measurement with Space Exploration: issue #708).
+- **Tested** headless by `devcheck.py se` (`tools/devcheck/semod`): the move is made the way Space Exploration's
+  `scripts/spaceship-clone.lua` makes it; a launch through its own window is left to a real game (issue #706).
+
 ### View Cells
 
 AE2's **View Cell** (issue #440, AE2-Unofficial's `ItemViewCell`; technology ME Upgrade Cards, next to the workbench): a list

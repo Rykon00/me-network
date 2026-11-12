@@ -58,6 +58,14 @@
 - The hand-over (`scripts/fork-me-handover.lua`): the table list and the fingerprint function must stay equal to
   Gregtorio's `scripts/fork-me-handover.lua`. A new storage table that a Gregtorio save could hold cannot appear any
   more (Gregtorio no longer has ME code), so the list is fixed.
+- **Space Exploration** (issue #703, `docs/API.md` "Space Exploration"): `prototypes/compat/space-exploration-early.lua`
+  (always with it: the technologies out of its procedural pass, every entity allowed in space; a new technology is covered
+  through `ME_NETWORK.technologies`, a new entity through its name `me-...` or its item) and
+  `prototypes/compat/space-exploration.lua` (recipes and tiers, the startup setting). A block that holds items in script
+  storage (cells, patterns, cards, slot inventories) needs a `M.on_moved(source, destination)` in its module and its place
+  in `move.hooks` of `control.lua` (`scripts/fork-me-move.lua`: a clone whose source a script destroys in the same tick is a
+  move, Space Exploration's spaceships), or a flight spills what it holds; `devcheck.py se` tests it and
+  `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`).
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:
