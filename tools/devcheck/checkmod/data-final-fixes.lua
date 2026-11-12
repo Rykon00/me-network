@@ -76,6 +76,30 @@ end
 for n, t in pairs(data.raw.tile or {}) do
 	if t.fluid then D("O", "tile:" .. n, t.fluid) end
 end
+--- what a mined tile gives, and what enemies leave: their loot and what their mined corpse gives (Krastorio 2's biomass
+--- comes from creep tiles and the corpses of spawners only; with Space Exploration its military science pack is on the way to the
+--- specialist science packs)
+local laid = {}                               -- (a tile an item lays gives that item back: no source)
+for t, _ in pairs(defines.prototypes.item) do
+	for _, it in pairs(data.raw[t] or {}) do
+		if it.place_as_tile then laid[it.place_as_tile.result] = true end
+	end
+end
+for n, t in pairs(data.raw.tile or {}) do
+	local m = t.minable
+	if m and (m.result or m.results) and not laid[n] then D("M", "tile:" .. n, m.result or "", names(m.results), "basic-solid") end
+end
+for _, t in pairs({ "unit-spawner", "unit", "turret", "corpse" }) do
+	for n, e in pairs(data.raw[t] or {}) do
+		local m = e.minable
+		if m and (m.result or m.results) then D("M", n, m.result or "", names(m.results), "basic-solid") end
+		local loot = {}
+		for _, l in pairs(e.loot or {}) do
+			if type(l) == "table" and l.item then loot[#loot + 1] = "item:" .. l.item end
+		end
+		if #loot > 0 then D("M", n .. ":loot", "", table.concat(loot, ","), "basic-solid") end
+	end
+end
 --- burnt results: what a burnt fuel leaves (a used fuel cell)
 for t, _ in pairs(defines.prototypes.item) do
 	for n, it in pairs(data.raw[t] or {}) do
