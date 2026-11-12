@@ -75,6 +75,8 @@ local memcard = require("scripts.fork-me-memorycard")
 --- issue #629: the ME P2P Tunnels (frequencies; a pattern provider serves the machines their outputs face)
 local fork_p2p = require("scripts.fork-me-p2p")
 local ghostwin = require("scripts.fork-me-ghostwin")      -- (issue #659: the ME window of a ghost)
+--- blocks another mod moves (a clone, then its source destroyed: a Space Exploration spaceship), surfaces that are deleted
+local move = require("scripts.fork-me-move")
 require("scripts.fork-me-highlight")                      -- (issue #699: the network highlighted while a member is hovered)
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
@@ -131,6 +133,7 @@ end)
 --- cloned entities (e.g. by other mods) need to be registered as well (the settings of drives, interfaces, buses,
 --- providers, level maintainers and circuit interfaces are copied; an interface takes its cloned side tanks)
 script.on_event(defines.events.on_entity_cloned, function(event)
+	move.on_cloned(event.source, event.destination)          -- (a move when a script destroys the source in this tick)
 	fork_net.on_built(event.destination)
 	fork_net.on_cloned(event.source, event.destination)
 	fork_io.on_built(event.destination, nil, event.source)
@@ -212,7 +215,7 @@ local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
 --- underground pipes and pumps: a removed one may split the fluid segment of a storage bus on fluid)
 for _, t in pairs({ "simple-entity-with-force", "display-panel", "storage-tank", "lamp", "electric-energy-interface", "container",
-	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
+	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-landing-pad", "linked-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end
@@ -288,7 +291,19 @@ script.on_event(defines.events.on_object_destroyed, function(event)
 	fork_lc.on_object_destroyed(event)
 	cableshape.on_object_destroyed(event)                     -- (issue #670: an ME ghost gone, its cable ghost neighbours follow)
 end)
-script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
+--- a block a script destroys in the tick it was cloned was moved (scripts/fork-me-move.lua): what it holds goes to its clone
+--- first (the modules that hold items, the graph's cells last), then it leaves like any destroyed block, with nothing to spill
+move.hooks = { fork_ae2.on_moved, fork_io.on_moved, fork_sbus.on_moved, fork_wl.on_moved, fork_ioport.on_moved,
+	fork_lif.on_moved, fork_bench.on_moved, fork_pt.on_moved, fork_vc.on_moved, fork_p2p.on_moved, fork_net.on_moved }
+move.destroyed = on_destroyed
+script.on_event(defines.events.script_raised_destroy, function(event)
+	local moved = move.before_destroyed(event.entity)
+	on_destroyed(event)
+	--- (a moved ME Quantum Bridge or ME Wireless Link: its frequency has two blocks again, linked now, not at the next slow step)
+	if moved then fork_qbridge.step() end
+end, REMOVED_FILTER)
+--- a surface that is deleted or cleared takes its entities without an event: its members leave first
+script.on_event({ defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, move.on_surface_gone)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
 --- interfaces and buses, storage buses, ME IO Ports (issue #386), crafting jobs, provider rescans, level maintainers and

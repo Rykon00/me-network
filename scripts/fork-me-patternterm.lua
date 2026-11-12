@@ -818,6 +818,16 @@ end)
 --- the remote interface (the runtime test; every function is what a button does)
 --------------------------------------------------------------------------------
 
+--- The pattern terminal `source` was moved to `destination` (scripts/fork-me-move.lua): its two slots go with it
+function M.on_moved(source, destination)
+	local a = records()[source.unit_number]
+	if not (a and a.inv and a.inv.valid and NAMES[destination.name]) then return end
+	local b = rec_of(destination)
+	if a == b then return end
+	a.inv, b.inv = b.inv, a.inv
+	remember_place(b)
+end
+
 remote.add_interface("gregtorio-me-pattern-terminal", {
 	new_editor = function() return new_editor() end,
 	new_editor_ex = function() return new_editor_ex() end,                     -- (issue #416)

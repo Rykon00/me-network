@@ -340,7 +340,7 @@ def texture_stand_in():
 
 
 def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
-                 textures=None, with_mods=()):
+                 textures=None, with_mods=(), with_se=False):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
     Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
@@ -385,6 +385,9 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     if with_runtime:
         link_dir(MODS / "zz-me-network-devcheck-runtime", helper_dir(HERE / "runtimemod"))
         enabled.append("zz-me-network-devcheck-runtime")
+    if with_se:
+        link_dir(MODS / "zz-me-network-devcheck-se", helper_dir(HERE / "semod"))
+        enabled.append("zz-me-network-devcheck-se")
     if with_migrate:
         link_dir(MODS / "zz-me-network-devcheck-migrate", helper_dir(HERE / "migratemod"))
         enabled.append("zz-me-network-devcheck-migrate")
@@ -1517,6 +1520,56 @@ def runtime(a):
     report("runtime problems", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
+        print("\nRESULT: PROBLEMS FOUND")
+        return 1
+    print("\nRESULT: OK")
+    return 0
+
+
+SE_TESTS = [
+    ("PLACE", "every ME block on space platform scaffold, plating, spaceship floor and Nauvis"),
+    ("BUILD", "a network on spaceship floor in Nauvis Orbit"),
+    ("ORBIT", "the network works in orbit, bridged to Nauvis"),
+    ("LAUNCH", "the ship moved to its own surface (clone_brush, raise_destroy)"),
+    ("TRAVEL", "the network works on the ship's surface"),
+    ("LAND", "the ship moved onto Nauvis"),
+    ("LANDED", "the network works on Nauvis as before the launch"),
+    ("COPY", "a clone whose source stays is a copy"),
+    ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
+    ("SURFACE", "a deleted surface leaves nothing in storage"),
+]
+
+
+def se(a):
+    """the runtime test with Space Exploration (tools/devcheck/semod): this mod, Space Exploration and its dependencies
+    (and the mods of --with-mod, Krastorio 2 for the combination), a new map, `--ticks` ticks"""
+    names = ["space-exploration"] + [m for m in (a.with_mod or []) if m != "space-exploration"]
+    fetch_mods(names, a.mods_from)
+    a.with_mod = names
+    prepare_mods(with_mods=names, with_se=True)
+    print("mods: " + mods_label(a) + " + the Space Exploration test mod")
+    mapfile = WORK / "se-map.zip"
+    log, err = create_map(mapfile, *seed_args(a))
+    if err:
+        print(err)
+        return 1
+    log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(a.ticks))
+    ran = re.search(r"Performed (\d+) updates", log)
+    err = re.search(r"(Error.*|non-recoverable.*)", log)
+    fails = re.findall(r"DEVCHECK-SE-FAIL (.*)", log)
+    print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
+    for key, label in SE_TESTS:
+        m = re.search(rf"DEVCHECK-SE-{key} (.*)", log)
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
+        if not m:
+            fails.append(f"{label} did not run")
+    if not re.search(r"DEVCHECK-SE-DONE", log):
+        fails.append("the test did not reach its end (needs --ticks >= 800)")
+    report("Space Exploration runtime problems", fails)
+    if err or not ran or fails:
+        if err:
+            i = log.find(err.group(1))
+            print(log[i:i + 1500])
         print("\nRESULT: PROBLEMS FOUND")
         return 1
     print("\nRESULT: OK")
@@ -2684,6 +2737,11 @@ def main():
             p.add_argument("--ticks", type=int, default=1500)
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
             p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
+    p = sub.add_parser("se")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
+    p.add_argument("--ticks", type=int, default=900)
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
     p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
                    "one than the cut-off 0.5.0 must be refused: issue #146)")
@@ -2758,6 +2816,8 @@ def main():
         if a.ticks % BENCH_WARMUP:
             sys.exit(f"--ticks must be a multiple of {BENCH_WARMUP}")
         return bench(a)
+    if a.cmd == "se":
+        return se(a)
     if a.cmd == "migrate":
         return migrate(a)
     if a.cmd == "setup":

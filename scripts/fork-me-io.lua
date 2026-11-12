@@ -2886,6 +2886,14 @@ function M.on_configuration_changed()
 	table.sort(s.list)
 end
 
+--- The interface or bus `source` was moved to `destination` (scripts/fork-me-move.lua): its cards go with it. Its filters,
+--- rows and priority the clone has already (M.on_built with a source); the fluid of an interface's sides is in the cloned
+--- side tanks.
+function M.on_moved(source, destination)
+	cards.move_cards(source, destination)
+	icards.move_cards(source, destination)
+end
+
 remote.add_interface("gregtorio-me-io", {
 	--- issue #420 (tests): the interface looks at its sides now (the fallback's look); true when a tank was made or removed
 	refit_tanks = function(entity)

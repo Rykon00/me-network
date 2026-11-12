@@ -349,6 +349,22 @@ function M.new(def)
 		return true
 	end
 
+	--- The block `source` was moved to `destination` (scripts/fork-me-move.lua: a clone whose source a script destroys in
+	--- the same tick, as Space Exploration moves a spaceship): the card slots change hands, so the source has no card to
+	--- spill and the destination has them instead of waiting for cards from the network. Returns true when they moved.
+	function C.move_cards(source, destination)
+		local a, b = def.rec_of(source), def.rec_of(destination)
+		if not (a and b) or a == b then return false end
+		inv_of(a)
+		inv_of(b)
+		a.inv, b.inv = b.inv, a.inv
+		b.cards, a.cards = a.cards or {}, {}
+		b.want, a.want = nil, nil
+		remember_place(b)
+		def.on_cards(b)
+		return true
+	end
+
 	return C
 end
 
