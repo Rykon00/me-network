@@ -292,6 +292,10 @@ function M.make_molecular_assembler(def)
 	assembler.dying_explosion = "medium-explosion"
 	assembler.water_reflection = nil
 	assembler.localised_description = { "entity-description.me-molecular-assembler" }
+	--- (what was said of the assembler before stays when a mod makes it again: Space Exploration's flag that it may stand in
+	--- space, prototypes/compat/space-exploration-early.lua)
+	local before = data.raw["assembling-machine"]["me-molecular-assembler"]
+	assembler.se_allow_in_space = before and before.se_allow_in_space or nil
 	data.raw["assembling-machine"]["me-molecular-assembler"] = nil
 	data:extend({ assembler })
 end
