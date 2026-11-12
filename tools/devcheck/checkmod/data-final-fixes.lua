@@ -353,6 +353,7 @@ end
 ---   entity <name> <type> <space|-> <ship|-> <hidden|->    every entity an item of this mod places (and the hidden entities with
 ---                                          an icon of this mod): "space" when its collision mask has Space Exploration's
 ---                                          space_tile layer (it cannot stand in space), "ship" for the moving_tile layer
+---   recipe <name> <ingredients>            a recipe the compatibility changed, as it is at the end
 ---   missing <name> <fallback>              an item or technology of Space Exploration the compatibility did not find
 ---   excluded <name>                        what this mod put into se_procedural_tech_exclusions (space-exploration-early.lua)
 do
@@ -388,6 +389,19 @@ do
 	table.sort(entities)
 	for _, r in ipairs(entities) do rows[#rows + 1] = r end
 	for _, m in ipairs(se and se.missing or {}) do rows[#rows + 1] = "missing\t" .. m[1] .. "\t" .. tostring(m[2]) end
+	--- the recipes the compatibility changed, with their amounts (for docs/AE2.md)
+	local swapped = {}
+	for n in pairs(se and se.swaps or {}) do swapped[#swapped + 1] = n end
+	for n in pairs(se and se.with_krastorio2 and ME_NETWORK.krastorio2 and ME_NETWORK.krastorio2.swaps or {}) do
+		if not (se.swaps or {})[n] then swapped[#swapped + 1] = n end
+	end
+	table.sort(swapped)
+	for _, n in ipairs(swapped) do
+		local r = data.raw.recipe[n]
+		local ing = {}
+		for _, i in pairs(r and r.ingredients or {}) do ing[#ing + 1] = i.amount .. " " .. i.name end
+		if r then rows[#rows + 1] = "recipe\t" .. n .. "\t" .. table.concat(ing, ", ") end
+	end
 	local early = ME_NETWORK and ME_NETWORK.space_exploration_early
 	for _, x in ipairs(early and early.excluded or {}) do rows[#rows + 1] = "excluded\t" .. x end
 	section("SPACEEXPLORATION", rows)

@@ -297,10 +297,13 @@ move.hooks = { fork_ae2.on_moved, fork_io.on_moved, fork_sbus.on_moved, fork_wl.
 	fork_lif.on_moved, fork_bench.on_moved, fork_pt.on_moved, fork_vc.on_moved, fork_p2p.on_moved, fork_net.on_moved }
 move.destroyed = on_destroyed
 script.on_event(defines.events.script_raised_destroy, function(event)
-	local moved = move.before_destroyed(event.entity)
+	local entity = event.entity
+	--- (the ME Quantum Bridge and the ME Wireless Link are electric energy interfaces, as the ME Controller is)
+	local link = entity and entity.valid and entity.type == "electric-energy-interface"
+	local moved = move.before_destroyed(entity)
 	on_destroyed(event)
-	--- (a moved ME Quantum Bridge or ME Wireless Link: its frequency has two blocks again, linked now, not at the next slow step)
-	if moved then fork_qbridge.step() end
+	--- (a moved bridge or link: its frequency has two blocks again, linked now, not at the next slow step)
+	if moved and link then fork_qbridge.step() end
 end, REMOVED_FILTER)
 --- a surface that is deleted or cleared takes its entities without an event: its members leave first
 script.on_event({ defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, move.on_surface_gone)
