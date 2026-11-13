@@ -4680,3 +4680,106 @@ That run found one regression beyond the noise, the first tick after the load at
 module does nothing on load and nothing in a tick while no highlight spreads (one read of `storage`), and the same number
 was lower at 1000 and 5000. `bench --check v0.6.1 --sizes 100 --runs 6` again: 2.15 ±1.03 -> 2.49 ±2.07 ms, script avg 0.270 ->
 0.288 ms (±0.07 / ±0.11), `regressions beyond the noise: 0`.
+
+## Space Exploration: many surfaces and a moved ship (issue #708)
+
+Measured first, then decided (the maintainer's order). Machine as above (i7-8700K), Factorio 2.1.24, Space Exploration
+0.7.64 with its dependencies (Space Age off, quality on), three runs each, 3600 ticks; `bench --with-mod space-exploration`.
+
+### Does the scheduler walk the surfaces?
+
+By the code: no. Every `pairs(game.surfaces)` of `scripts/` is in `on_configuration_changed`, in a migration, or in the
+graph's rebuild and its scan for marked members (`M.rebuild`, `M.keep_graph`, `M.scan_decon`: `on_init` and
+`on_configuration_changed`). Nothing in `on_tick` or `on_nth_tick` names a surface: the blocks are visited from their
+queues, the 60 tick step walks the networks, the ME Chests and 200 members of the sweep.
+
+By the numbers (script time per tick, ms; the scene "me" at 5000 buses and interfaces, 20 000 members; "idle": nothing to
+move; "noent": the same scene without its ME entities, i.e. the other mods' scripts):
+
+| | busy avg | busy p99 | idle avg | idle p99 | noent avg |
+|---|---|---|---|---|---|
+| vanilla (Space Age, quality) | 0.930 | 2.86 | 0.345 | 1.03 | 0.008 |
+| vanilla, 50 outposts on 50 more surfaces | 0.989 | 3.71 | 0.388 | 2.08 | |
+| Space Exploration | 1.401 | 13.2 | 0.370 | 1.11 | 0.025 |
+| Space Exploration, 20 outposts | 1.327 | 12.9 | 0.425 | 1.46 | |
+| Space Exploration, 50 outposts | 1.376 | 13.0 | 0.419 | 2.13 | |
+
+An outpost (`--outposts K`) is a surface of its own with an ME Quantum Bridge, eight cables, an ME Interface and an ME
+Storage Bus on a chest, joined to the scene's network by its bridge; with 50 of them one network spans 51 surfaces (52
+with Nauvis, plus Space Exploration's own) and has 550 members more. 50 outposts cost 0.04 to 0.06 ms a tick, which is what
+their 100 interfaces and storage buses cost on one surface (about 0.8 us per block and tick, the idle scene's rate:
+0.345 ms for 20 000 members with 5000 buses and interfaces). 20 and 50 outposts differ by less than the runs do. So the
+cost follows the blocks, not the surfaces.
+
+Space Exploration itself costs 0.025 ms a tick in this scene ("noent"); the idle ME scene costs the same with it and
+without it (0.345 and 0.370 less its 0.017 more).
+
+### The busy scene with Space Exploration: the Circuit Interface, not the surfaces
+
+The busy scene is 0.47 ms a tick dearer with Space Exploration, with 120 ticks above 5 ms in the window (one every 30
+ticks, 12 to 17 ms; vanilla: 7 ticks). The profile (`--profile 1000 --with-mod space-exploration`) names it:
+
+| | ms/tick | calls/tick | us/call |
+|---|---|---|---|
+| `circuit.visit_circuit` | 0.462 | 0.17 | 2773 |
+| `circuit.circuit_step` | 0.306 | 0.15 | 2040 |
+| `circuit.network_signals` | 0.154 | 0.02 | 9225 |
+
+The scene stores every item of the game in its drives, and with Space Exploration that is 2900 item types (855 in the
+vanilla profile above, where `circuit.visit_circuit` costs 0.94 ms a call). An ME Circuit Interface without a filter writes
+the 1000 largest of them as signals, 10 updates a second across all interfaces (the map setting), and its cost grows with
+the item types of the network. That is the known cost of an unfiltered Circuit Interface (the sections above), three
+times as high in a game with three times the items. It has nothing to do with surfaces; a follow-up issue asks for a
+cheaper unfiltered update. Everything else of the profile is as in vanilla.
+
+### A ship moved in one tick
+
+`bench --ship N` (after the build burst): a network of its own of about N ME blocks (a controller, two drives with eight
+cells, a 2x2 Crafting CPU, and per row of 32 tiles a cable row with import and storage buses on chests north of it and
+ME Interfaces south of it: the burst's mix, a third cable, a third buses, a third interfaces) is moved to another
+surface and back the way Space Exploration's `scripts/spaceship-clone.lua` moves a spaceship: `LuaSurface.clone_brush`
+over its tiles, then every original destroyed with `raise_destroy`, all in one tick. Then as many steel chests are moved
+the same way (the engine's and the other mods' share), then the ship again as a part of the scene's network of 4500
+members behind an ME Quantum Bridge.
+
+Why these N: Space Exploration limits a ship by its integrity stress, about 0.78 per floor tile less the walls' credit
+(the test ship of `devcheck.py launch`: 540 tiles, stress 419). Without the infinite technology the limit is 3500, a ship
+of about 4500 tiles. 250 blocks is a small ship with a terminal, a drive and a few buses; 1000 a freighter whose hold is
+an ME network; 4000 the upper bound, nearly every tile of the largest ship an ME block.
+
+ms of the loop, median of three runs (the tick's whole script time is 1 to 2 ms more):
+
+| | 318 blocks | 1032 blocks | 4092 blocks | per block |
+|---|---|---|---|---|
+| vanilla: launch (clone + removal) | 81 (47 + 34) | 250 (136 + 112) | 992 (534 + 449) | 0.24 ms |
+| vanilla: landing | 85 | 277 | 1114 | 0.27 ms |
+| vanilla: the same number of steel chests | 21 (17 + 4) | 47 (34 + 12) | 157 (106 + 49) | 0.04 ms |
+| vanilla: as a part of a 4500 member network, launch / landing | 85 / 82 | 260 / 253 | 999 / 980 | 0.24 ms |
+| Space Exploration: launch (clone + removal) | 103 (60 + 43) | 324 (183 + 137) | 1281 (730 + 541) | 0.31 ms |
+| Space Exploration: landing | 103 | 338 | 1407 | 0.33 ms |
+| Space Exploration: the same number of steel chests | 32 (24 + 8) | 90 (64 + 26) | 320 (216 + 100) | 0.08 ms |
+| Space Exploration: as a part of a 4500 member network | 107 / 107 | 331 / 321 | 1279 / 1289 | 0.31 ms |
+| the tick after (the carried job, the wakes) | 3 | 3 | 4 to 5 | |
+
+(The entities moved are a third more than the blocks: the chests of the buses, the power.) The cost is **linear** in the
+blocks, 0.24 ms each (0.31 ms with Space Exploration, whose own handlers of the clone and removal events take 0.04 ms an
+entity, as the chests show), and the same whether the ship is a network of its own or a part of a large one. The tick
+after a move costs 3 to 5 ms (the work `M.after_move` and the woken blocks leave), nothing after that. A move is a hitch
+of a third of a second for a 1000 block ship, once at the launch and once at the landing, next to Space Exploration's own
+work of that tick.
+
+### Is the split check of every removal a bottleneck?
+
+No. The function profile of the removal of 1032 blocks (`--profile 1000 --ship 1000 --exclusive`): `remove_node_graph`
+43 ms of 112 ms (1032 calls, 42 us each, with the split search, the 194 parts it split off and the neighbours' cable
+pictures), the modules' `on_removed` 20 ms, the rest the engine's destroy and the event dispatch; of the clone:
+`add_node` 43 ms of 136 ms, `io.on_built` 17 ms, `io.ensure_tanks` 8 ms, `storagebus.on_built` 6 ms.
+
+The experiment that decides it: with the split search and the neighbours' cable pictures **switched off** for a moved
+block (a hack for the measurement, wrong as code: the parts a move leaves would have to be found in one pass at its end)
+the removal of 1032 blocks took 101 to 127 ms in four moves, against 108 to 125 ms with them. The saving is inside the
+noise. The split search of issue #38 (lever 5) already costs the size of the smaller part, and a ship's blocks leave in
+an order that keeps the parts small. So the splits are **not bundled**: it would add a second way to keep the graph
+(parts found late, a network that is wrong until the end of the move) for no measurable gain. The cost of a move is
+spread over every module's build and removal handler, 0.1 ms a block each way, the same as the build burst's (199 ms
+to build and 99 ms to remove 998 blocks in the same scene).
