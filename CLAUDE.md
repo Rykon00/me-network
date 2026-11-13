@@ -65,7 +65,8 @@
   storage (cells, patterns, cards, slot inventories) needs a `M.on_moved(source, destination)` in its module and its place
   in `move.hooks` of `control.lua` (`scripts/fork-me-move.lua`: a clone whose source a script destroys in the same tick is a
   move, Space Exploration's spaceships), or a flight spills what it holds; `devcheck.py se` tests it and
-  `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`).
+  `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`); the general suite
+  runs with it as well (`all --with-mod space-exploration`, issue #705).
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:

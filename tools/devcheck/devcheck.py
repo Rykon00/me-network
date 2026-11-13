@@ -1495,7 +1495,13 @@ def runtime(a):
     # issue #38: the same map saved in the middle of its run and loaded again must schedule like the unbroken run
     if not getattr(a, "no_saveload", False):
         digests = dict(re.findall(r"DEVCHECK-RUNTIME-SCHEDULE (\d+) (.*)", log))
-        log_b, why = saveload(WORK / "runtime-map.zip", a.ticks)
+        try:
+            log_b, why = saveload(WORK / "runtime-map.zip", a.ticks)
+        except OSError as e:
+            # issue #705: a server that stops on a script error closes RCON; that is a failed half, not a crash of the harness
+            server_log = WORK / "saveload-server.log"
+            text = server_log.read_text(encoding="utf-8", errors="replace") if server_log.exists() else ""
+            log_b, why = None, f"the server stopped ({e}): {load_errors(text) or 'no error in ' + str(server_log)}"
         if not log_b:
             print(f"schedule after a save and load: {why}")
             fails.append("save and load: " + str(why))

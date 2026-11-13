@@ -17,6 +17,10 @@
 ---    ME Interface and the ME P2P tunnels (made by script, which would still work, but a blueprint or a clone of them
 ---    would not). The assembler has no productivity among its allowed effects and no "space-..." crafting category, so
 ---    Space Exploration makes no "-spaced" or "-grounded" twin of it that its runtime would swap in.
+--- 3. Its character is smaller (prototypes/phase-3/character.lua: a collision box of -0.15 .. 0.15, the base game's is
+---    -0.2 .. 0.2). The blocks of a Crafting CPU are one slab with a box of -0.35 .. 0.35 (issue #268: no gap a character
+---    walks into), which leaves 0.3 tiles between two of them: exactly this character's width, so it fitted between them
+---    (issue #705). With Space Exploration their box is -0.36 .. 0.36.
 --------------------------------------------------------------------------------
 
 local ME = ME_NETWORK
@@ -47,5 +51,14 @@ for entity_type in pairs(defines.prototypes.entity) do
 end
 table.sort(in_space)
 
+--- 3. the blocks of a Crafting CPU (every prototype of their fast replaceable group)
+local slab = {}
+for _, prototype in pairs(data.raw["simple-entity-with-force"] or {}) do
+	if prototype.fast_replaceable_group == "me-crafting-block" then
+		prototype.collision_box = { { -0.36, -0.36 }, { 0.36, 0.36 } }
+		slab[#slab + 1] = prototype.name
+	end
+end
+
 --- what this file did, for devcheck (tools/devcheck/checkmod/data-final-fixes.lua, section SPACEEXPLORATION)
-ME.space_exploration_early = { excluded = excluded, in_space = in_space }
+ME.space_exploration_early = { excluded = excluded, in_space = in_space, slab = slab }

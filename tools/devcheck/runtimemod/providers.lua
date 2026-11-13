@@ -79,7 +79,11 @@ return function(H)
 				if proto and prototypes.recipe[c.recipe] then
 					local w = proto.tile_width
 					p = me_place(s, fails, what, "me-pattern-provider", x + 0.5, y + 0.5)
-					m = me_place(s, fails, what, c.machine, x + 1 + w / 2, y + 0.5, c.dir and { direction = defines.direction[c.dir] } or nil)
+					--- (issue #705: Space Exploration's build handler removes a rocket silo a script builds on a map without
+					--- players; a machine is no block of this mod, so with it the machine is built without the event)
+					local extra = c.dir and { direction = defines.direction[c.dir] } or {}
+					if script.active_mods["space-exploration"] then extra.raise_built = false end
+					m = me_place(s, fails, what, c.machine, x + 1 + w / 2, y + 0.5, extra)
 					if m and c.pipe == "beside" then
 						--- (the tile below the machine's middle column: no box of the chemical plant has a connection there)
 						me_place(s, fails, what, "pipe", m.position.x, m.position.y + 2)

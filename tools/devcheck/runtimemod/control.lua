@@ -819,9 +819,13 @@ function me_terminal_test()
 	for name, p in pairs(prototypes.item) do
 		if p.get_spoil_ticks() > 0 and (not spoiling or name < spoiling) then spoiling = name end
 	end
-	main[1].set_stack{ name = spoiling, count = 1 }
-	local n, why = remote.call(TERM, "store_stack", t, main[1])
-	expect(n == nil and why == "cannot-store-spoil" and main[1].valid_for_read, "a spoiling item: " .. tostring(n) .. " " .. tostring(why))
+	--- (issue #705: no item spoils without Space Age, which Space Exploration turns off: the case is left out)
+	local n, why
+	if spoiling then
+		main[1].set_stack{ name = spoiling, count = 1 }
+		n, why = remote.call(TERM, "store_stack", t, main[1])
+		expect(n == nil and why == "cannot-store-spoil" and main[1].valid_for_read, "a spoiling item: " .. tostring(n) .. " " .. tostring(why))
+	end
 	main[2].set_stack{ name = "blueprint", count = 1 }
 	n, why = remote.call(TERM, "store_stack", t, main[2])
 	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
@@ -896,13 +900,13 @@ function me_io_test()
 	for name, p in pairs(prototypes.item) do
 		if p.get_spoil_ticks() > 0 and (not spoiling or name < spoiling) then spoiling = name end
 	end
-	inv[6].set_stack{ name = spoiling, count = 1 }
+	if spoiling then inv[6].set_stack{ name = spoiling, count = 1 } end   -- (issue #705: none without Space Age)
 	local copper = count("copper-plate")
 	remote.call(IO, "step", iface)
 	expect(inv.get_item_count("iron-plate") == size and count("iron-plate") == 1000 - size,
 		"export: " .. inv.get_item_count("iron-plate"))
 	expect(not inv[5].valid_for_read and count("copper-plate") == copper + 20, "import: network copper " .. count("copper-plate"))
-	expect(inv[6].valid_for_read, "the spoiling item left the interface")
+	expect(not spoiling or inv[6].valid_for_read, "the spoiling item left the interface")
 	inv.remove{ name = "iron-plate", count = size - 10 }  -- an inserter took plates: topped up
 	remote.call(IO, "step", iface)
 	expect(inv.get_item_count("iron-plate") == size and count("iron-plate") == 1000 - 2 * size + 10, "export top-up: " .. inv.get_item_count("iron-plate"))
