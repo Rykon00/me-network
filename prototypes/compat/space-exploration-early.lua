@@ -70,9 +70,14 @@ if not mods["gregtorio-continued"] and data.raw["recipe-category"]["space-crafti
 	ME.space_assembler = { name = NAME }
 	function ME.space_assembler.make()
 		local base = data.raw["assembling-machine"]["me-molecular-assembler"]
+		--- issue #729: also the space manufactory's category (its item-only recipes: the assembler has no fluid boxes; a
+		--- recipe with a fluid goes to a real manufactory next to a pattern provider)
 		local categories = { "space-crafting" }
+		if data.raw["recipe-category"]["space-manufacturing"] then categories[#categories + 1] = "space-manufacturing" end
+		local own = {}
+		for _, c in ipairs(categories) do own[c] = true end
 		for _, c in pairs(base.crafting_categories or {}) do
-			if c ~= "space-crafting" then categories[#categories + 1] = c end
+			if not own[c] then categories[#categories + 1] = c end
 		end
 		ME.make_molecular_assembler{ name = NAME, base = "assembling-machine-2", crafting_categories = categories,
 			crafting_speed = base.crafting_speed, energy_usage = base.energy_usage, tint = TINT,
