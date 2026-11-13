@@ -2127,7 +2127,10 @@ M.ASM_MARKS = {
 }
 M.ASM_MARK = { "utility/warning_icon", 30 }          -- (a reason without an entry)
 M.ASM_MARK_SCALE = 0.3                               -- (64 px icons: 0.6 of the tile, the block's frame stays visible)
-M.ASM_MARK_OFFSET = { 0, -0.1 }                      -- (on the cube's top face, clear of the cards' icons of the Alt mode)
+--- the centre of the cube's top face: the picture shows a side face on the right and the front below, so the top face's
+--- centre is 5 of the picture's 64 px left of and above the tile's (measured in ME Network's own picture and in the AE2
+--- texture mod's); there the mark is also clear of the cards' icons of the Alt mode
+M.ASM_MARK_OFFSET = { -0.08, -0.08 }
 --- new marks per step (once a second). A mark costs 4 us to draw (2000 assemblers that lose their power at once: 8 ms in one
 --- tick, measured), so a big network that stops is marked over a few seconds, 1 ms each. Marks are removed at once (2 us).
 M.ASM_MARK_STEP = 250
