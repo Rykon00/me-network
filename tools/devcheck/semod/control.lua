@@ -44,7 +44,8 @@
 ---            only) and then one of "space-manufacturing", each started as a job; the assembler is a member of the network
 ---            that carries it (the provider is cabled only through it). The ship carries one too, with two Acceleration
 ---            Cards: after every move it is the same block in the ship's network with its cards, switched on in orbit and
----            in flight and off on Nauvis (ORBIT, TRAVEL, LANDED).
+---            in flight and off on Nauvis (ORBIT, TRAVEL, LANDED), where it has its mark in the world (issue #743: the steady
+---            warning icon; none in space).
 ---   RELAUNCH issue #729: at the end the ship leaves Nauvis again, the same move onto a second surface of its own:
 ---            everything arrives, the network works, and the ME Space Molecular Assembler that rested on the planet is
 ---            switched on again, with its cards.
@@ -808,6 +809,14 @@ local function sasm_check(problems, ground)
 	end
 	local cards = e.get_module_inventory().get_item_count("me-acceleration-card")
 	if cards ~= 2 then problems[#problems + 1] = "the ship's ME Space Molecular Assembler holds " .. cards .. " Acceleration Cards, not 2" end
+	--- issue #743: its mark in the world: the steady warning icon while it rests on the ground, none in space
+	local sprite, blink, on_entity = remote.call(NET, "assembler_mark", e)
+	if is and not (sprite == "utility/warning_icon" and blink == 0 and on_entity) then
+		problems[#problems + 1] = "the resting ME Space Molecular Assembler's mark: " .. tostring(sprite) .. ", blink " .. tostring(blink)
+			.. " (the steady warning icon on the entity)"
+	elseif not is and sprite ~= nil then
+		problems[#problems + 1] = "the ME Space Molecular Assembler in space has the mark " .. tostring(sprite)
+	end
 end
 
 local function compare(before, after, skip)
