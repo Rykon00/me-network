@@ -194,7 +194,10 @@ return function(H)
 			want_mark(a2, nil, nil, "A2's mark taken away")
 			remote.call(NET, "slow_step")
 			want_mark(a2, "utility/electricity_icon", 30, "A2 off without a mark, after a slow step")
-			--- the graph made anew (a change of the mods): still one mark, the old render object is not left beside a new one
+			--- the graph made anew (a change of the mods): still one mark, the old render object is not left beside a new one.
+			--- This rebuild is from the map and for every test's networks: each gets a new id, at a tick that depends on how
+			--- long the job above took with the loaded mods. A test that watches a network over time has to stand it
+			--- (perf420.lua makes its circuit phase again).
 			remote.call(NET, "rebuild", true)
 			remote.call(NET, "slow_step")
 			want_mark(a2, "utility/electricity_icon", 30, "A2 off, after a rebuild of the graph")
