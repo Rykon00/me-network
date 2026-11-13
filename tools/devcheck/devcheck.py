@@ -1566,7 +1566,9 @@ SE_TESTS = [
     ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
     ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
     ("LOGISTICS", "a logistic interface and a logistic storage bus in the ship's logistic network (issue #707)"),
-    ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting recipe on a platform (issue #711)"),
+    ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting and a space-manufacturing recipe on a platform "
+                 "(issues #711, #729)"),
+    ("RELAUNCH", "the ship leaves Nauvis again: the ME Space Molecular Assembler that rested there works again (issue #729)"),
     ("ZONES", "Space Exploration's zone names for the windows and messages (issue #713)"),
     ("FRAGMENTS", "a storage bus on Space Exploration's fragment processing machine (issue #710)"),
     ("CHANCE", "a job for a product that comes by chance ends with the amount asked for (issue #710)"),
@@ -1831,7 +1833,7 @@ def se(a):
         if not m:
             fails.append(f"{label} did not run")
     if not re.search(r"DEVCHECK-SE-DONE", log):
-        fails.append("the test did not reach its end (needs --ticks >= 2100)")
+        fails.append("the test did not reach its end (needs --ticks >= 2200)")
     report("Space Exploration runtime problems", fails)
     if err or not ran or fails:
         if err:
@@ -3024,7 +3026,7 @@ def main():
     p = sub.add_parser("se")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
-    p.add_argument("--ticks", type=int, default=2100)
+    p.add_argument("--ticks", type=int, default=2200)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("launch")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)

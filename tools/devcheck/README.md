@@ -71,7 +71,10 @@ its landing pad, launch pad and delivery cannon chest, a deleted surface; a craf
 Interface in Automatic mode with an offer and a request row, an ME Logistic Storage Bus on a storage chest, a robot crashed
 between the moves as the mod Robot Attrition crashes one; after each move both blocks are in the roboport's logistic
 network of the new place, the interface has exactly its three hidden chests, no book of a logistic network that is gone is
-kept, and every item exists exactly once in cells, chests, robots and on the ground). The runs set Space Exploration's map
+kept, and every item exists exactly once in cells, chests, robots and on the ground); and the ME Space Molecular Assembler
+(issues #711, #729: a space-crafting and a space-manufacturing recipe crafted on a platform; one on the ship with two
+Acceleration Cards, the same block in the ship's network after every move, switched on in orbit and in flight and off on
+Nauvis, and on again when the ship leaves Nauvis at the end of the run, 2200 ticks). The runs set Space Exploration's map
 setting `se-cmes-max-frequency` to 0 in `.devcheck/mods/mod-settings.dat`: its energy beam of the first minute of a game
 sweeps the start area of Nauvis and cut the cables of the landed test ship. `devcheck.py launch` (issue #706) is the real
 flight: a headless server, the same network inside a real spaceship in Nauvis Orbit (spaceship floor, walls, console, a

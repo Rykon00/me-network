@@ -35,13 +35,19 @@
 ---            cargo into a "logistic-robot-dropped-cargo" container marked for deconstruction, the robot dies; the mod itself
 ---            only strikes logistic networks with more than 50 robots in the air and never on a spaceship). The item is still
 ---            counted once, a construction robot brings it back and the deliveries end all the same.
----   SPACEASM issue #711: the ME Space Molecular Assembler. It can be built on space platform scaffold and plating, not
----            on spaceship floor and not on Nauvis (PLACE knows it); Space Exploration made no "-grounded" or "-spaced" twin
----            of it; it has the ME Molecular Assembler's categories and "space-crafting", its speed, five Acceleration Card
----            slots and no power connection. On scaffold on a surface of its own a network (controller, drive, a 1k
----            crafting storage, a pattern provider, the assembler next to it) crafts a recipe of the category "space-crafting"
----            that no ME Molecular Assembler can craft (the first one with item ingredients only), started as a job; the
----            assembler is a member of the network that carries it (the provider is cabled only through it).
+---   SPACEASM issues #711, #729: the ME Space Molecular Assembler. It can be built on space platform scaffold, plating
+---            and spaceship floor, not on Nauvis (PLACE knows it); Space Exploration made no "-grounded" or "-spaced" twin
+---            of it; it has the ME Molecular Assembler's categories, "space-crafting" and "space-manufacturing", its speed,
+---            five Acceleration Card slots and no power connection. On scaffold on a surface of its own a network
+---            (controller, drive, a 1k crafting storage, a pattern provider, the assembler next to it) crafts a recipe of
+---            the category "space-crafting" that no ME Molecular Assembler can craft (the first one with item ingredients
+---            only) and then one of "space-manufacturing", each started as a job; the assembler is a member of the network
+---            that carries it (the provider is cabled only through it). The ship carries one too, with two Acceleration
+---            Cards: after every move it is the same block in the ship's network with its cards, switched on in orbit and
+---            in flight and off on Nauvis (ORBIT, TRAVEL, LANDED).
+---   RELAUNCH issue #729: at the end the ship leaves Nauvis again, the same move onto a second surface of its own:
+---            everything arrives, the network works, and the ME Space Molecular Assembler that rested on the planet is
+---            switched on again, with its cards.
 ---   ZONES    issue #713: what a surface is called. Nauvis Orbit and Nauvis by their zone names from Space Exploration's
 ---            remote interface, asked once per surface while the answer is kept (a second question in the same tick makes
 ---            no call); a surface that is no zone by its own name; the map marker of a message with the zone's name after
@@ -549,7 +555,10 @@ local function build(real)
 	if t.machine then t.machine.set_recipe("iron-gear-wheel") end
 	t.provider2 = at("me-pattern-provider", 2.5, 3.5)             -- (issue #704: next to the machine, the job's provider)
 	--- issue #729: an ME Space Molecular Assembler on the ship (spaceship floor)
-	if prototypes.entity["me-space-molecular-assembler"] then t.sasm = at("me-space-molecular-assembler", 6.5, 1.5) end
+	if prototypes.entity["me-space-molecular-assembler"] then
+		t.sasm = at("me-space-molecular-assembler", 6.5, 1.5)
+		if t.sasm then t.sasm.get_module_inventory().insert{ name = "me-acceleration-card", count = 2 } end
+	end
 	--- issue #707: a logistic network on the ship
 	at("substation", 10, -4)
 	if real then
@@ -791,6 +800,8 @@ local function sasm_check(problems, ground)
 		problems[#problems + 1] = "the ship's ME Space Molecular Assembler is switched " .. (e.disabled_by_script and "off" or "on") .. " on " .. e.surface.name
 			.. " (" .. (is and "ground" or "space") .. ")"
 	end
+	local cards = e.get_module_inventory().get_item_count("me-acceleration-card")
+	if cards ~= 2 then problems[#problems + 1] = "the ship's ME Space Molecular Assembler holds " .. cards .. " Acceleration Cards, not 2" end
 end
 
 local function compare(before, after, skip)
@@ -1254,6 +1265,36 @@ STEPS[2000] = function()
 	logistics(problems, true)
 	report("LOGISTICS", problems, "the logistic interface and the logistic storage bus in the ship's logistic network over both moves: "
 		.. "nothing lost or doubled, the requester chest has its 20 gears, the network its 20 stone bricks")
+	--- RELAUNCH (issue #729): the ship leaves the planet again, the same move onto a second surface of its own
+	local t = storage.t
+	if t.ctrl and t.ctrl.valid then
+		local to = game.create_surface(FLIGHT .. "-2", { width = 128, height = 128 })
+		storage.relaunch = { spilled = fly(t.ctrl.surface, to, SHIP.x1 + LAND.dx, SHIP.y1 + LAND.dy, SHIP.x2 + LAND.dx, SHIP.y2 + LAND.dy,
+			-LAND.dx, -LAND.dy) }
+	end
+end
+
+STEPS[2130] = function()
+	local t, problems = storage.t, {}
+	local r = storage.relaunch
+	if not r then
+		problems[#problems + 1] = "the ship was not moved"
+	else
+		if r.spilled > 0 then problems[#problems + 1] = r.spilled .. " item stacks lie on the ground where the ship stood" end
+		for _, k in ipairs(KEYS) do
+			if not (t[k] and t[k].valid) then problems[#problems + 1] = k .. " did not arrive" end
+		end
+		if t.ctrl and t.ctrl.valid then
+			local net = remote.call(NET, "network", t.ctrl)
+			if not (net and net.status == "ok") then
+				problems[#problems + 1] = "the network does not work after the launch from the planet: " .. tostring(net and net.status)
+			end
+			if t.ctrl.surface.name ~= FLIGHT .. "-2" then problems[#problems + 1] = "the ship is on " .. t.ctrl.surface.name end
+			sasm_check(problems, false)
+		end
+	end
+	report("RELAUNCH", problems, "the ship left Nauvis again the same way: everything arrived, the network works, the ME Space Molecular "
+		.. "Assembler that rested on the planet is switched on again with its cards")
 	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
 end
 
