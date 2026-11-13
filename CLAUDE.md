@@ -64,7 +64,8 @@
   `prototypes/compat/space-exploration.lua` (recipes and tiers, the startup setting). A block that holds items in script
   storage (cells, patterns, cards, slot inventories) needs a `M.on_moved(source, destination)` in its module and its place
   in `move.hooks` of `control.lua` (`scripts/fork-me-move.lua`: a clone whose source a script destroys in the same tick is a
-  move, Space Exploration's spaceships), or a flight spills what it holds; `devcheck.py se` tests it and
+  move, Space Exploration's spaceships), or a flight spills what it holds; `devcheck.py se` tests it (and `devcheck.py launch`, issue #706, with a real launch and landing through Space
+  Exploration's own functions on a headless server, pinned to its version 0.7.64) and
   `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`); the general suite
   runs with it as well (`all --with-mod space-exploration`, issue #705).
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then

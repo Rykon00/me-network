@@ -1546,6 +1546,207 @@ SE_TESTS = [
 ]
 
 
+# issue #706: the launch test calls Space Exploration's own functions in its Lua state (Spaceship.launch,
+# Spaceship.land_at_position, the fields of its spaceship table); they are no API, so the test is pinned to the version
+# it was written against and refuses another one
+SE_VERSION = "0.7.64"
+
+
+class Server:
+    """A headless server on `mapfile` (real time, nobody connected) with RCON on a free port of 127.0.0.1, as the
+    save-and-load half starts one. `cmd(lua)` runs the Lua as a silent command and returns what it printed with
+    rcon.print; `mod` runs it in that mod's Lua state (`/silent-command __mod__ ...`). A server that stops (a script error)
+    raises OSError with the error of its log."""
+
+    def __init__(self, mapfile, log_name):
+        self.mapfile, self.log = Path(mapfile), WORK / log_name
+        self.proc = self.sock = self.out = None
+        self.req = 10
+
+    def __enter__(self):
+        import socket, time
+        binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
+        settings = WORK / "server-settings.json"
+        settings.write_text(json.dumps({"name": "devcheck", "description": "a server of devcheck",
+                                        "visibility": {"public": False, "lan": False}, "auto_pause": False,
+                                        "require_user_verification": False, "max_players": 1}), encoding="utf-8")
+        rcon_port, game_port = free_port(), free_port(socket.SOCK_DGRAM)
+        password = "devcheck-" + os.urandom(6).hex()
+        self.out = open(self.log, "w", encoding="utf-8")
+        self.proc = subprocess.Popen([str(binary), "--mod-directory", str(MODS), "--start-server", str(self.mapfile),
+                                      "--server-settings", str(settings), "--bind", f"127.0.0.1:{game_port}",
+                                      "--rcon-bind", f"127.0.0.1:{rcon_port}", "--rcon-password", password],
+                                     stdout=self.out, stderr=subprocess.STDOUT)
+        deadline = time.time() + 300
+        while time.time() < deadline and self.proc.poll() is None:
+            try:
+                self.sock = socket.create_connection(("127.0.0.1", rcon_port), timeout=10)
+                rcon(self.sock, 3, password, 1)
+                # (the first Lua command of a map only gets "repeat the command to proceed": achievements)
+                rcon(self.sock, 2, "/silent-command rcon.print(1)", 2)
+                return self
+            except OSError:
+                self.sock = None
+                time.sleep(0.5)
+        self.__exit__(None, None, None)
+        raise OSError("the server did not start or answer RCON" + port_taken(self.log) + ": " + self.error())
+
+    def error(self):
+        self.out.flush()
+        text = self.log.read_text(encoding="utf-8", errors="replace") if self.log.exists() else ""
+        m = re.search(r"(Error.*?)(\n\s*\d+\.\d+ |\Z)", text, re.S)
+        return m.group(1).strip()[:1500] if m else f"no error in {self.log}"
+
+    def cmd(self, lua, mod=None):
+        self.req += 1
+        try:
+            got = rcon(self.sock, 2, "/silent-command " + (f"__{mod}__ " if mod else "") + "local ok, err = pcall(function() "
+                       + lua + " end) if not ok then rcon.print('LUA-ERROR ' .. tostring(err)) end", self.req).strip()
+        except OSError as e:
+            raise OSError(f"the server stopped ({e}): {self.error()}") from None
+        if "LUA-ERROR" in got or got.startswith("Cannot execute command"):
+            raise OSError(f"the command `{lua[:200]}` failed: {got}")
+        return got
+
+    def tick(self):
+        return int(self.cmd("rcon.print(game.tick)"))
+
+    def wait_ticks(self, n, timeout=120):
+        import time
+        end, deadline = self.tick() + n, time.time() + timeout
+        while self.tick() < end:
+            if time.time() > deadline:
+                raise OSError(f"the server did not run {n} ticks in {timeout} s")
+            time.sleep(0.1)
+
+    def __exit__(self, *exc):
+        if self.sock:
+            try:
+                rcon(self.sock, 2, "/quit", 2)
+            except OSError:
+                pass
+            self.sock.close()
+            self.sock = None
+        if self.proc:
+            try:
+                self.proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        if self.out:
+            self.out.close()
+        return False
+
+
+def launch(a):
+    """issue #706: a real spaceship launch and landing of Space Exploration on a headless server. The helper mod `semod/`
+    (with its startup setting zz-me-se-real-launch) builds an ME network inside a real ship in Nauvis Orbit (floor, walls,
+    console, a booster tank with fuel, an engine); Space Exploration's integrity check must pass; then its own
+    Spaceship.launch and Spaceship.land_at_position are called through RCON in its Lua state, and the helper compares what
+    the network holds and how its blocks are set after each move."""
+    import time
+    names = ["space-exploration"] + [m for m in (a.with_mod or []) if m != "space-exploration"]
+    fetch_mods(names, a.mods_from)
+    a.with_mod = names
+    zips = sorted(z.name for z in MODS.glob("space-exploration_*.zip"))
+    if zips != [f"space-exploration_{SE_VERSION}.zip"]:
+        sys.exit(f"the launch test is pinned to Space Exploration {SE_VERSION} (it calls its internal functions); "
+                 f"in {MODS}: {', '.join(zips) or 'none'}")
+    prepare_mods(with_mods=names, with_se=True)
+    startup_setting("zz-me-se-real-launch", True)
+    print("mods: " + mods_label(a) + f" + the Space Exploration test mod (real launch, pinned to Space Exploration {SE_VERSION})")
+    fails = []
+
+    def step(label, line):
+        print(f"{label}: {line}")
+        if not line.startswith("ok"):
+            fails.append(f"{label}: {line}")
+
+    try:
+        mapfile = WORK / "launch-map.zip"
+        log, err = create_map(mapfile, *seed_args(a))
+        if err:
+            print(err)
+            return 1
+        with Server(mapfile, "launch-server.log") as sv:
+            def ship(lua):
+                return sv.cmd("local s = select(2, next(storage.spaceships)) " + lua, mod="space-exploration")
+
+            def helper(fn, *args):
+                call = ", ".join([json.dumps("me-se-launch"), json.dumps(fn)] + [json.dumps(x) for x in args])
+                return sv.cmd(f"rcon.print(remote.call({call}))")
+
+            def where():
+                got = ship('rcon.print(s.console.surface.name .. "|" .. s.console.position.x .. "|" .. s.console.position.y'
+                           ' .. "|" .. tostring(s.on_own_surface))').split("|")
+                return got[0], float(got[1]), float(got[2]), got[3] == "true"
+
+            def integrity(label):
+                """Space Exploration's integrity check runs over several ticks: wait for its end"""
+                deadline = time.time() + 120
+                while True:
+                    got = ship('rcon.print(tostring(s.is_doing_check) .. "|" .. tostring(s.integrity_valid) .. "|" .. '
+                               'tostring(s.integrity_stress) .. "|" .. tostring(s.integrity_limit) .. "|" .. '
+                               'serpent.line(s.check_message))').split("|")
+                    if got[0] != "true":
+                        break
+                    if time.time() > deadline:
+                        got[1] = "the check did not end in 120 s"
+                        break
+                    time.sleep(0.2)
+                step(label, ("ok" if got[1] == "true" else "failed") + f" (integrity check valid: {got[1]}, stress "
+                     f"{got[2]} of {got[3]}, message {got[4]})")
+                return got[1] == "true"
+
+            line = helper("build")
+            m = re.match(r"Space Exploration (\S+): (.*)", line, re.S)
+            if not m or m.group(1) != SE_VERSION:
+                fails.append(f"Space Exploration {m.group(1) if m else '?'} is loaded, the test is pinned to {SE_VERSION}")
+            step("a network inside a real spaceship in Nauvis Orbit", m.group(2) if m else line)
+            if integrity("Space Exploration's integrity check of the ship"):
+                sv.wait_ticks(180)
+                step("the network works in orbit", helper("keep"))
+                home, x0, y0, _ = where()
+                cost = ship("s.is_launching = true Spaceship.get_compute_launch_energy(s) "
+                            "rcon.print(tostring(Spaceship.get_launch_energy_cost(s)) .. ' of ' .. tostring(s.launch_energy))")
+                ship("s.is_launching = true Spaceship.launch(s)")
+                surface, x, y, own = where()
+                step("Spaceship.launch", ("ok" if own and surface != home else "failed")
+                     + f" (the ship is on {surface}, on its own surface: {own}; launch energy needed {cost} J on board)")
+                if own and surface != home:
+                    step("the ship moved to its own surface", helper("moved", "LAUNCH", surface, x - x0, y - y0))
+                    sv.wait_ticks(180)
+                    step("the network works on the ship's surface", helper("works", "TRAVEL"))
+                    integrity("the integrity check in flight")
+                    sv.wait_ticks(5)
+                    x0, y0 = x, y
+                    ship("Spaceship.land_at_position(s, { x = 120, y = 80 })")
+                    landed, x, y, own = where()
+                    step("Spaceship.land_at_position", ("ok" if not own and landed == home else "failed")
+                         + f" (the ship is on {landed} at an offset of {x - x0:g}, {y - y0:g}; on its own surface: {own})")
+                    if not own:
+                        step("the ship moved back into Nauvis Orbit", helper("moved", "LAND", landed, x - x0, y - y0))
+                        sv.wait_ticks(180)
+                        step("the network works after the landing", helper("works", "LANDED"))
+                        # (Space Exploration clears the ship's surface after the landing and keeps it for the next launch)
+                        left = sv.cmd(f"local s = game.get_surface({json.dumps(surface)}) if not s then rcon.print('0|true') return end "
+                                      "local hook = remote.call('me-network-space-exploration', 'space_exploration_delete_surface', "
+                                      "{ surface_index = s.index }) rcon.print(s.count_entities_filtered{ force = 'player' } .. '|' .. "
+                                      "tostring(hook.allow_delete))").split("|")
+                        step("the ship's own surface", ("ok" if left == ["0", "true"] else "failed")
+                             + f" (entities left on it: {left[0]}, no ME block recorded on it: {left[1]})")
+            print(f"server ran {sv.tick()} ticks")
+    except OSError as e:
+        fails.append(str(e))
+    finally:
+        startup_setting("zz-me-se-real-launch", None)
+    report("real spaceship launch problems", fails)
+    if fails:
+        print("\nRESULT: PROBLEMS FOUND")
+        return 1
+    print("\nRESULT: OK")
+    return 0
+
+
 def se(a):
     """the runtime test with Space Exploration (tools/devcheck/semod): this mod, Space Exploration and its dependencies
     (and the mods of --with-mod, Krastorio 2 for the combination), a new map, `--ticks` ticks"""
@@ -2748,6 +2949,10 @@ def main():
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
     p.add_argument("--ticks", type=int, default=900)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p = sub.add_parser("launch")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
     p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
                    "one than the cut-off 0.5.0 must be refused: issue #146)")
@@ -2824,6 +3029,8 @@ def main():
         return bench(a)
     if a.cmd == "se":
         return se(a)
+    if a.cmd == "launch":
+        return launch(a)
     if a.cmd == "migrate":
         return migrate(a)
     if a.cmd == "setup":

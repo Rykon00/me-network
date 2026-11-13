@@ -19,6 +19,14 @@
 ---   PAD      storage buses read a cargo rocket landing pad and a delivery cannon chest of Space Exploration.
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
+---
+--- Issue #706, `devcheck.py launch` (the startup setting zz-me-se-real-launch of settings.lua): none of the steps above runs
+--- by the tick. The harness drives a headless server through RCON instead: the remote interface "me-se-launch" below builds
+--- the same network inside a real spaceship of Space Exploration (spaceship floor, walls around it, a rocket engine in the
+--- back wall, a booster tank with liquid rocket fuel, the console; power from charged accumulators, because Space
+--- Exploration counts an electric energy interface as a generator far too heavy for a ship), the harness waits for Space
+--- Exploration's integrity check and calls its own Spaceship.launch and Spaceship.land_at_position in its Lua state
+--- (`/silent-command __space-exploration__ ...`), and the interface compares what the network holds after each move.
 
 local NET, IO, SB, AC, PT = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-storagebus", "gregtorio-me-autocraft",
 	"gregtorio-me-pattern-terminal"
@@ -30,10 +38,14 @@ local fails = {}
 local function fail(what) fails[#fails + 1] = what log("DEVCHECK-SE-FAIL " .. what) end
 local function report(key, problems, text)
 	for _, p in ipairs(problems) do fail(key .. ": " .. p) end
-	log("DEVCHECK-SE-" .. key .. " " .. (#problems == 0 and "ok" or "failed") .. " (" .. text .. ")")
+	local line = (#problems == 0 and "ok" or "failed") .. " (" .. text .. ")"
+	log("DEVCHECK-SE-" .. key .. " " .. line)
+	return line .. (#problems > 0 and (" PROBLEMS: " .. table.concat(problems, " ;; ")) or "")
 end
 
 local SHIP = { x1 = -8, y1 = -6, x2 = 9, y2 = 5 }       -- the ship's tiles in Nauvis Orbit (inclusive)
+local REAL = { x1 = -8, y1 = -6, x2 = 9, y2 = 11 }      -- issue #706: the real ship (walls on its border, console, tank and engine below the network)
+local REAL_LAUNCH = settings.startup["zz-me-se-real-launch"] and settings.startup["zz-me-se-real-launch"].value
 local FLIGHT = "me-se-flight"                           -- the surface it flies on
 local LAND = { dx = 60, dy = 40 }                       -- where it lands on Nauvis, relative to its tiles
 
@@ -101,15 +113,23 @@ local function cell(name)
 	return inv
 end
 
-local function build()
+local function build(real)
 	local problems = {}
 	local s = orbit()
 	local t = { }
 	storage.t = t
-	tiles(s, "se-spaceship-floor", SHIP.x1, SHIP.y1, SHIP.x2, SHIP.y2)
+	local S = real and REAL or SHIP
+	tiles(s, "se-spaceship-floor", S.x1, S.y1, S.x2, S.y2)
 	local function at(name, x, y, extra) return place(s, problems, name, x, y, extra) end
-	local eei = at("electric-energy-interface", -6, -4)
-	if eei then eei.power_production = 5e6 eei.electric_buffer_size = 5e7 eei.energy = 5e7 end
+	if real then
+		for _, y in ipairs({ -4, -2, 0, 2, 4 }) do
+			local acc = at("accumulator", -6, y)
+			if acc then acc.energy = acc.electric_buffer_size end
+		end
+	else
+		local eei = at("electric-energy-interface", -6, -4)
+		if eei then eei.power_production = 5e6 eei.electric_buffer_size = 5e7 eei.energy = 5e7 end
+	end
 	at("substation", -3, -4)
 	t.ctrl = at("me-network-controller", 0, -4)
 	t.drive = at("me-drive", 2.5, -3.5)
@@ -211,7 +231,22 @@ local function build()
 		remote.call(QB, "set_frequency", t.bridge, 9)
 		remote.call(QB, "set_frequency", t.n_bridge, 9)
 	end
-	report("BUILD", problems, #members .. " blocks on spaceship floor in " .. s.name .. ", a partner network on Nauvis")
+	if real then
+		--- the ship around the network: an engine in the back wall, walls on the rest of the border, a booster tank with
+		--- fuel, and the console last (its build starts Space Exploration's integrity check)
+		at("se-spaceship-rocket-engine", 1.5, 10)                   -- (tiles 0..2 x 8..11)
+		for x = S.x1, S.x2 do
+			for y = S.y1, S.y2 do
+				local border = x == S.x1 or x == S.x2 or y == S.y1 or y == S.y2
+				if border and not (y == S.y2 and x >= 0 and x <= 2) then at("se-spaceship-wall", x + 0.5, y + 0.5) end
+			end
+		end
+		local tank = at("se-spaceship-rocket-booster-tank", 5.5, 7.5)
+		if tank then tank.insert_fluid{ name = "se-liquid-rocket-fuel", amount = 100000 } end
+		t.console = at("se-spaceship-console", -4, 8)
+	end
+	return report("BUILD", problems, #members .. " blocks on spaceship floor in " .. s.name .. ", a partner network on Nauvis"
+		.. (real and ", inside a real spaceship" or ""))
 end
 
 --------------------------------------------------------------------------------
@@ -309,8 +344,10 @@ local function moved_ok(problems, spilled, from)
 	for _, k in ipairs(KEYS) do
 		if not (t[k] and t[k].valid) then problems[#problems + 1] = k .. " did not arrive" end
 	end
-	local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = from.index })
-	if not (hook and hook.allow_delete) then problems[#problems + 1] = "members are still recorded on " .. from.name end
+	if from and from.valid then                              -- (a landed ship's own surface is deleted by Space Exploration)
+		local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = from.index })
+		if not (hook and hook.allow_delete) then problems[#problems + 1] = "members are still recorded on " .. from.name end
+	end
 	local ok, why = remote.call(NET, "sweep_list_ok")
 	if not ok then problems[#problems + 1] = "the graph's sweep list: " .. tostring(why) end
 	if remote.call(MOVE, "stale") > 0 then problems[#problems + 1] = remote.call(MOVE, "stale") .. " members without an entity" end
@@ -475,7 +512,86 @@ STEPS[720] = function()
 	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
 end
 
-script.on_event(defines.events.on_tick, function(event)
-	local step = STEPS[event.tick]
-	if step then step() end
-end)
+if not REAL_LAUNCH then
+	script.on_event(defines.events.on_tick, function(event)
+		local step = STEPS[event.tick]
+		if step then step() end
+	end)
+end
+
+--------------------------------------------------------------------------------
+--- issue #706: the real launch, driven by the harness through RCON (devcheck.py launch)
+--------------------------------------------------------------------------------
+
+--- where every block of KEYS stands now (name, position, surface), to find its clone after Space Exploration moved the ship
+local function remember()
+	local t, where = storage.t, {}
+	for _, k in ipairs(KEYS) do
+		if t[k] and t[k].valid then where[k] = { t[k].name, t[k].position, t[k].surface.index } end
+	end
+	storage.where = where
+end
+
+if REAL_LAUNCH then
+	remote.add_interface("me-se-launch", {
+		--- the network inside a real spaceship in Nauvis Orbit; every technology researched (the integrity limit of the ship)
+		build = function()
+			game.forces.player.research_all_technologies()
+			local line = build(true)
+			remember()
+			return "Space Exploration " .. tostring(script.active_mods[SE]) .. ": " .. line
+		end,
+		--- before the launch: the network works; what it holds is kept for the comparisons
+		keep = function()
+			local t = storage.t
+			storage.before = snapshot()
+			local problems = {}
+			local net = remote.call(NET, "network", t.ctrl)
+			if not (net and net.status == "ok") then problems[#problems + 1] = "the network in orbit does not work: " .. tostring(net and net.status) end
+			if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge orbit - Nauvis is not linked" end
+			if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface in orbit holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
+			storage.old_ctrl = t.ctrl.unit_number
+			remember()
+			return report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. ", bridged to Nauvis: " .. table.concat(storage.before, "; "))
+		end,
+		--- after Space Exploration moved the ship to `surface` by dx, dy: every block is found there, nothing lies where it
+		--- stood, the network holds what it held (its status may still be settling: `works` checks it later)
+		moved = function(key, surface, dx, dy)
+			local t, problems = storage.t, {}
+			local to = game.get_surface(surface)
+			if not to then return report(key, { "no surface " .. tostring(surface) }, "") end
+			local from
+			for k, w in pairs(storage.where or {}) do
+				from = from or game.get_surface(w[3])
+				t[k] = to.find_entity(w[1], { w[2].x + dx, w[2].y + dy })
+			end
+			local spilled = 0
+			if from and from.valid then
+				local list = from.find_entities_filtered{ type = "item-entity", area = { { REAL.x1 - 3, REAL.y1 - 3 }, { REAL.x2 + 4, REAL.y2 + 4 } } }
+				for _, e in pairs(list) do log("DEVCHECK-SE-SPILLED " .. e.stack.name .. " x" .. e.stack.count .. " on " .. from.name) end
+				spilled = #list
+			end
+			moved_ok(problems, spilled, from)
+			if t.ctrl and t.ctrl.valid then
+				for _, p in ipairs(compare(storage.before, snapshot(), { status = true })) do problems[#problems + 1] = p end
+				if remote.call(MOVE, "resolve", storage.old_ctrl) ~= t.ctrl.unit_number then
+					problems[#problems + 1] = "the controller's first unit number does not lead to the one it has now"
+				end
+			end
+			remember()
+			return report(key, problems, "moved to " .. to.name .. " by Space Exploration, " .. spilled .. " stacks spilled")
+		end,
+		--- a while after a move: everything as before the launch, the bridge linked, the interfaces filled
+		works = function(key)
+			local t, problems = storage.t, {}
+			for _, p in ipairs(compare(storage.before, snapshot())) do problems[#problems + 1] = p end
+			if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge to Nauvis is not linked" end
+			if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
+			if t.n_iface.get_item_count("copper-plate") ~= 20 then
+				problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
+			end
+			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " as before the launch")
+		end,
+		failures = function() return #fails end,
+	})
+end
