@@ -54,19 +54,20 @@ ME.space_exploration = { se = se, missing = missing, packs = {}, with_krastorio2
 --- The recipes. Each AE2 material keeps one stand-in (docs/AE2.md "Recipes"), now a Space Exploration item where a fitting
 --- one exists; AE2's counts stay, and so do the processors (electronic circuit, advanced circuit, processing unit: Space
 --- Exploration puts the processing unit behind its rocket science pack itself), the lamp, the combinators and the machines.
---- The storage ladder follows the material science line (cryonite rod, then the heavy girder, bearing and composite, all
---- iridium), the crafting side the energy science line (holmium cable, quantum processor), the Singularity cells take the
---- naquium cube of the first deep space tier. Space Exploration has no quartz and no core item: certus quartz stays stone,
+--- The storage ladder follows the data line (issue #712: an ME storage component is data storage): the data storage
+--- substrate for 256k, blank data cards from 1024k on, in place of the cryonite rod and the heavy parts of the material line
+--- they took before; the crafting side follows the energy science line (holmium cable, quantum processor), the Singularity
+--- cells take the naquium cube of the first deep space tier. Space Exploration has no quartz and no core item: certus quartz stays stone,
 --- the annihilation and formation core the electronic circuit.
 --------------------------------------------------------------------------------
 
 --- glass: AAI Industry's (a dependency of Space Exploration), or Krastorio 2's where Space Exploration uses that
 local GLASS = K2 and K2.glass or se({ "glass", "kr-glass" }, "plastic-bar")
 local PISTON = se("electric-motor", "fast-inserter")              -- piston (AAI Industry's electric motor)
-local C256 = se("se-cryonite-rod", "stone-brick")                 -- sky stone dust of the 256k component
-local C1024 = se("se-heavy-girder", "stone-brick")                -- ... of the 1024k component (material science 1)
-local C4096 = se("se-heavy-bearing", "stone-brick")               -- ... of the 4096k component (material science 2)
-local C16384 = se("se-heavy-composite", "stone-brick")            -- ... of the 16384k component (material science 3)
+--- issue #712 (replaced, no second recipe): the sky stone dust of the components from 256k is Space Exploration's data line
+local C256 = se("se-data-storage-substrate", "stone-brick")       -- ... of the 256k component: data storage substrate
+local C1024 = se("se-empty-data", "stone-brick")                  -- ... of the 1024k, 4096k and 16384k component: blank data cards
+local C4096, C16384 = C1024, C1024
 local QUANTUM = se("se-quantum-processor", "battery")             -- quantum ring (ME Quantum Bridge), energy science 3
 local ENERGY_CELL = se("se-space-accumulator", "accumulator")     -- dense energy cell of the Singularity cells
 local CONDENSER = se("se-naquium-cube", nil)                      -- matter condenser (Singularity cells), deep space 1
@@ -139,10 +140,14 @@ end)
 ---   - Autocrafting, the cards, automation, wireless: rocket science. Their recipes take processing units (pattern terminal,
 ---     P2P tunnels, Advanced Card, advanced level emitter, wireless module), which stay (the rule of the recipes above), so
 ---     they follow the processing unit. That is still Nauvis: the rocket science pack needs no launch.
----   - 256k, co-processing: space science, the first tier in orbit (cryonite).
----   - 1024k, 4096k, 16384k: material science 1, 2, 3, the pack and the heavy part of the tier.
+---   - The storage ladder from 256k on the data line (issue #712). The line has two materials, the data storage substrate
+---     and the blank data card (both from Space Exploration's technology Data cards, space science), and four tiers of the
+---     machine that works on data cards, the space supercomputer. So: 256k after Data cards (space science, the substrate);
+---     1024k after Supercomputer 1 (space science, blank data cards); 4096k after Supercomputer 2 (energy science 3); 16384k
+---     after Supercomputer 3 (energy, material and biological science 3). Supercomputer 4 (deep space 3) is past the
+---     Singularity cells' tier and gates nothing. Co-processing stays at space science.
 ---   - Quantum crafting and the accelerators: energy science 1; the second accelerators: energy science 3 (quantum processor);
----     the crafting storages take the component of their storage tier: material and energy science of the tier.
+---     the crafting storages take the component of their storage tier: its packs with the energy pack of quantum crafting.
 ---   - ME Quantum Bridge: astronomic and energy science 3. It joins networks on any two surfaces without a limit, which in
 ---     Space Exploration is what cargo rockets, the space elevator and spaceships are for; it comes with the spaceship's tier
 ---     and the quantum processor, far below Space Exploration's own links (arcolink storage: deep space 4).
@@ -163,17 +168,17 @@ local function line(name)
 	for i = 1, 4 do out[i] = pack("se-" .. name .. "-science-pack-" .. i, name == "material" and PRODUCTION or UTILITY) end
 	return out
 end
-local MATERIAL, ENERGY, ASTRONOMIC = line("material"), line("energy"), line("astronomic")
+local MATERIAL, ENERGY, ASTRONOMIC, BIOLOGICAL = line("material"), line("energy"), line("astronomic"), line("biological")
 local DEEP_1 = pack("se-deep-space-science-pack-1", UTILITY)
 local DEEP_2 = pack("se-deep-space-science-pack-2", UTILITY)
 
 local T_BLUE = { RED, GREEN, BLUE }
 local T_ROCKET = { RED, GREEN, BLUE, ROCKET }
 local T_SPACE = { RED, GREEN, BLUE, ROCKET, SPACE }
-local function t_material(i) return { RED, GREEN, BLUE, ROCKET, SPACE, PRODUCTION, MATERIAL[i] } end
 local function t_energy(i) return { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, ENERGY[i] } end
-local function t_both(i) return { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, PRODUCTION, MATERIAL[i], ENERGY[i] } end
 local T_BRIDGE = { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, ASTRONOMIC[3], ENERGY[3] }
+--- issue #712: the packs of Space Exploration's Supercomputer 3 (the 16384k tier of the data line)
+local T_DATA_3 = { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, PRODUCTION, ENERGY[3], MATERIAL[3], BIOLOGICAL[3] }
 local function t_deep(deep)
 	return { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, PRODUCTION, ASTRONOMIC[4], ENERGY[4], MATERIAL[4], deep }
 end
@@ -204,6 +209,7 @@ local function prerequisites(name, add, drop, k2)
 end
 
 local NO_UTILITY, NO_PRODUCTION = { ["utility-science-pack"] = true }, { ["production-science-pack"] = true }
+local NO_BOTH = { ["utility-science-pack"] = true, ["production-science-pack"] = true }
 --- name -> { count, time, packs, prerequisites to add, prerequisites to drop, Krastorio 2 prerequisites to keep }
 local TECHS = {
 	["me-storage-64k"] = { 400, 30, T_BLUE, { "chemical-science-pack" }, { ["processing-unit"] = true }, { "kr-rare-metal-processing" } },
@@ -215,21 +221,22 @@ local TECHS = {
 	["me-automation"] = { 200, 60, T_ROCKET },
 	["me-wireless"] = { 200, 60, T_ROCKET, nil, nil, { "kr-lithium-sulfur-battery" } },
 	["me-wireless-link"] = { 100, 60, T_ROCKET },
-	["me-storage-256k"] = { 100, 60, T_SPACE, { "space-science-pack", "se-processing-cryonite" }, NO_PRODUCTION },
+	--- (issue #712: the data line: Data cards, then the space supercomputers 1 to 3)
+	["me-storage-256k"] = { 100, 60, T_SPACE, { "space-science-pack", "se-space-data-card" }, NO_PRODUCTION },
 	["me-co-processing"] = { 100, 60, T_SPACE },
 	["me-fluid-storage-256k"] = { 100, 60, T_SPACE },
-	["me-storage-1024k"] = { 100, 60, t_material(1), { "se-heavy-girder" }, NO_UTILITY },
-	["me-fluid-storage-1024k"] = { 100, 60, t_material(1) },
-	["me-storage-4096k"] = { 200, 60, t_material(2), { "se-heavy-bearing" } },
-	["me-fluid-storage-4096k"] = { 200, 60, t_material(2) },
-	["me-storage-16384k"] = { 300, 60, t_material(3), { "se-heavy-composite" } },
-	["me-fluid-storage-16384k"] = { 300, 60, t_material(3) },
+	["me-storage-1024k"] = { 100, 60, T_SPACE, { "se-space-supercomputer-1" }, NO_BOTH },
+	["me-fluid-storage-1024k"] = { 100, 60, T_SPACE, nil, NO_BOTH },
+	["me-storage-4096k"] = { 200, 60, t_energy(3), { "se-space-supercomputer-2" } },
+	["me-fluid-storage-4096k"] = { 200, 60, t_energy(3) },
+	["me-storage-16384k"] = { 300, 60, T_DATA_3, { "se-space-supercomputer-3" } },
+	["me-fluid-storage-16384k"] = { 300, 60, T_DATA_3 },
 	["me-quantum-crafting"] = { 100, 60, t_energy(1), { "se-energy-science-pack-1" }, NO_UTILITY },
 	["me-crafting-accelerators"] = { 100, 60, t_energy(1), { "se-holmium-cable" }, NO_UTILITY },
 	["me-crafting-accelerators-2"] = { 300, 60, t_energy(3), { "se-quantum-processor" } },
-	["me-crafting-storage-1024k"] = { 100, 60, t_both(1) },
-	["me-crafting-storage-4096k"] = { 200, 60, t_both(2), { "se-energy-science-pack-2" } },
-	["me-crafting-storage-16384k"] = { 300, 60, t_both(3), { "se-energy-science-pack-3" } },
+	["me-crafting-storage-1024k"] = { 100, 60, t_energy(1) },
+	["me-crafting-storage-4096k"] = { 200, 60, t_energy(3) },
+	["me-crafting-storage-16384k"] = { 300, 60, T_DATA_3 },
 	["me-quantum-bridge"] = { 300, 60, T_BRIDGE, { "se-quantum-processor", "se-astronomic-science-pack-3" }, NO_UTILITY },
 	["me-storage-singularity"] = { 250, 60, t_deep(DEEP_1), { "se-naquium-cube", "se-space-accumulator" },
 		{ ["electric-energy-accumulators"] = true } },

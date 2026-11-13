@@ -969,8 +969,8 @@ formation core the electronic circuit.
 | fluix crystal, fluix dust | copper cable | copper cable |
 | annihilation core, formation core | electronic circuit | electronic circuit |
 | piston | fast inserter | electric motor (AAI Industry's) |
-| sky stone dust of the 256k component | stone brick | cryonite rod (space science) |
-| ... of the 1024k, 4096k, 16384k component | stone brick | heavy girder, heavy bearing, heavy composite (material science 1, 2, 3) |
+| sky stone dust of the 256k component | stone brick | data storage substrate (issue #712; Data cards, space science) |
+| ... of the 1024k, 4096k, 16384k component | stone brick | blank data card (issue #712; the tiers are Space Exploration's Supercomputer 1, 2, 3) |
 | glowstone (64k component, blank pattern) | copper cable | copper cable (before the rocket) |
 | diamond (Advanced Card) | processing unit | processing unit (rocket science in Space Exploration) |
 | dense energy cell (wireless terminal and module) | batteries | batteries |
@@ -991,10 +991,10 @@ AE2, the cards):
 | ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
 | ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
 | ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
-| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 cryonite rod |
-| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 heavy girder |
-| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 heavy bearing |
-| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 heavy composite |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 data storage substrate |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
 | ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 naquium cube |
 | ME Import Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
 | ME Export Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
@@ -1061,10 +1061,18 @@ Where the tiers come from:
   terminals, the P2P tunnels, the Advanced Card, the advanced level emitter, the wireless module), which stay, so they
   follow the processing unit. That is still Nauvis: the rocket science pack needs no launch. ME Upgrade Cards, which
   without Space Exploration costs what ME 64k Storage costs, is its count and time with the rocket science pack.
-- **256k, co-processing: space science**, the first tier in orbit (cryonite).
-- **1024k, 4096k, 16384k: material science 1, 2, 3**, the storage ladder on the material line.
+- **The storage ladder from 256k: the data line** (issue #712; an ME storage component is data storage). Space
+  Exploration's data line has two materials, the data storage substrate and the blank data card (both from its technology
+  Data cards, space science; the card is made in the space manufactory), and four tiers of the machine that works on data
+  cards, the space supercomputer. The components take those two instead of the cryonite rod and the heavy girder, bearing
+  and composite of the material line (replaced, not a second recipe), and the tiers are the line's own:
+  **256k** after Data cards (space science, the substrate); **1024k** after Supercomputer 1 (space science, blank data
+  cards); **4096k** after Supercomputer 2 (energy science 3); **16384k** after Supercomputer 3 (energy, material and
+  biological science 3). Supercomputer 4 (deep space 3) lies past the Singularity cells and gates nothing. The step from
+  1024k to 4096k is the long one: Supercomputer 2 needs the quantum processor. ME Co-Processing stays at space science.
 - **Quantum crafting and the crafting accelerators: energy science 1; the second accelerators: energy science 3.** The
-  crafting storages take the storage component of their tier, so they need the material and the energy pack of it.
+  crafting storages take the storage component of their tier, so they need its packs and the energy pack of quantum
+  crafting.
 - **ME Quantum Bridge: astronomic and energy science 3.** It joins networks on any two surfaces without a limit, which in
   Space Exploration is the work of cargo rockets, delivery cannons, the space elevator and spaceships. It comes with the
   spaceship's tier (astronomic science 3) and the quantum processor (energy science 3): late enough that the rockets
@@ -1088,17 +1096,17 @@ green, blue and rocket science, after ME Autocrafting and Space Assembling.
 | ME Autocrafting | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket | Processing unit |
 | ME Automation, ME Wireless | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket |  |
 | ME Wireless Link | 400 × 30 s, red to blue | 100 × 60 s, red to blue, rocket |  |
-| ME 256k Storage | 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space | Space science pack, Cryonite processing (instead of Production science pack) |
+| ME 256k Storage | 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space | Space science pack, Data cards (instead of Production science pack) |
 | ME Co-Processing, ME Fluid 256k Storage | 800 / 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space |  |
-| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 100 × 60 s, to space, production, material 1 | Heavy girder (1024k) |
-| ME 4096k Storage, ME Fluid 4096k Storage | 1200 × 30 s, red to utility | 200 × 60 s, to space, production, material 2 | Heavy bearing (4096k) |
-| ME 16384k Storage, ME Fluid 16384k Storage | 1600 × 30 s, red to utility | 300 × 60 s, to space, production, material 3 | Heavy composite (16384k) |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 100 × 60 s, red to blue, rocket, space | Supercomputer 1 (1024k; instead of Utility science pack) |
+| ME 4096k Storage, ME Fluid 4096k Storage | 1200 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 | Supercomputer 2 (4096k) |
+| ME 16384k Storage, ME Fluid 16384k Storage | 1600 × 30 s, red to utility | 300 × 60 s, to space, utility, production, energy 3, material 3, biological 3 | Supercomputer 3 (16384k) |
 | ME Quantum Crafting | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Energy science pack 1 |
 | ME Crafting Accelerators | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Holmium cable |
 | ME Crafting Accelerators 2 | 2500 × 30 s, red to utility | 300 × 60 s, to space, utility, energy 3 | Quantum processor |
-| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 100 × 60 s, to space, utility, production, material 1, energy 1 |  |
-| ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, ..., material 2, energy 2 | Energy science pack 2 |
-| ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ..., material 3, energy 3 | Energy science pack 3 |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 |  |
+| ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 |  |
+| ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ME 16384k Storage's packs |  |
 | ME Quantum Bridge | 1500 × 30 s, red to utility | 300 × 60 s, to space, utility, astronomic 3, energy 3 | Quantum processor, Astronomic science pack 3 |
 | ME Singularity Storage | 2500 × 30 s, red to utility | 250 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 1 | Naquium cube, Space accumulator (instead of Electric energy accumulators) |
 | ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same with deep space 2 | Deep space science pack 2 |
@@ -1114,7 +1122,7 @@ first, the Space Exploration file on top of it:
 - **Recipes:** Krastorio 2's early materials stay (quartz for certus quartz and in the fluix crystal, its glass, the
   automation core, inserter parts, rare metals for glowstone and the diamond of the Advanced Card, the lithium-sulfur
   battery of the wireless terminal and module). Where both files name a stand-in of the same recipe, Space Exploration's
-  wins: the components from 256k (cryonite rod, heavy girder, bearing, composite instead of imersite powder, imersium
+  wins: the components from 256k (data storage substrate and blank data cards instead of imersite powder, imersium
   plate and the energy control unit), the ME Quantum Bridge (quantum processors instead of AI cores), the Singularity
   cells (space accumulators and a naquium cube instead of lithium-sulfur batteries and a charged matter stabilizer), the
   second accelerators (a quantum processor instead of an energy control unit).
