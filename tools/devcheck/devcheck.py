@@ -1569,6 +1569,7 @@ SE_TESTS = [
     ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting and a space-manufacturing recipe on a platform "
                  "(issues #711, #729)"),
     ("RELAUNCH", "the ship leaves Nauvis again: the ME Space Molecular Assembler that rested there works again (issue #729)"),
+    ("SHIPJOB", "a job on the ship's ME Space Molecular Assembler waits while the ship stands on Nauvis (issue #729)"),
     ("ZONES", "Space Exploration's zone names for the windows and messages (issue #713)"),
     ("FRAGMENTS", "a storage bus on Space Exploration's fragment processing machine (issue #710)"),
     ("CHANCE", "a job for a product that comes by chance ends with the amount asked for (issue #710)"),
@@ -1833,7 +1834,7 @@ def se(a):
         if not m:
             fails.append(f"{label} did not run")
     if not re.search(r"DEVCHECK-SE-DONE", log):
-        fails.append("the test did not reach its end (needs --ticks >= 2200)")
+        fails.append("the test did not reach its end (needs --ticks >= 2400)")
     report("Space Exploration runtime problems", fails)
     if err or not ran or fails:
         if err:
@@ -3026,7 +3027,7 @@ def main():
     p = sub.add_parser("se")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
-    p.add_argument("--ticks", type=int, default=2200)
+    p.add_argument("--ticks", type=int, default=2400)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("launch")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)

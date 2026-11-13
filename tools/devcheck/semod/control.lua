@@ -48,6 +48,12 @@
 ---   RELAUNCH issue #729: at the end the ship leaves Nauvis again, the same move onto a second surface of its own:
 ---            everything arrives, the network works, and the ME Space Molecular Assembler that rested on the planet is
 ---            switched on again, with its cards.
+---   SHIPJOB  issue #729: a crafting job on the ship's ME Space Molecular Assembler over the whole trip. At tick 150 a
+---            pattern provider next to it gets a pattern of a space manufactory recipe (the first with item ingredients
+---            only), the ship a second Crafting CPU, and a job for 3 crafts starts. It runs in orbit and in flight; on
+---            Nauvis the assembler is switched off in the middle of it and the job waits (the same crafts done and the same
+---            progress at the end of the stay, 1540 ticks later, nothing delivered); after the launch from the planet it
+---            goes on, and the job ends with its products in the network.
 ---   ZONES    issue #713: what a surface is called. Nauvis Orbit and Nauvis by their zone names from Space Exploration's
 ---            remote interface, asked once per surface while the answer is kept (a second question in the same tick makes
 ---            no call); a surface that is no zone by its own name; the map marker of a message with the zone's name after
@@ -818,7 +824,9 @@ end
 --------------------------------------------------------------------------------
 
 local KEYS = { "ctrl", "drive", "provider", "iface", "port", "bench", "pterm", "ap", "maint", "chest", "sbus", "xchest", "xbus",
-	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2", "robo", "lif", "lsbus", "req", "store", "prov", "sasm" }
+	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2", "robo", "lif", "lsbus", "req", "store", "prov", "sasm", "sprov", "scpu" }
+--- (the ship job's blocks: built by the se run at tick 150, never by the real launch)
+local OPTIONAL = { sprov = true, scpu = true }
 
 --------------------------------------------------------------------------------
 --- issue #707: the logistic network on the ship
@@ -1003,7 +1011,8 @@ local function job_carried(problems)
 	if not (g and g.mode == "automation") then problems[#problems + 1] = "the CPU's mode after the move: " .. tostring(g and g.mode) end
 	local jobs = remote.call(AC, "jobs", t.ctrl) or {}
 	local active = 0
-	for _, j in pairs(jobs) do if j.active then active = active + 1 end end
+	local other = storage.ship_job and storage.ship_job.id          -- (issue #729: the ship job is a second job, on purpose)
+	for _, j in pairs(jobs) do if j.active and j.id ~= other then active = active + 1 end end
 	if active ~= 1 then problems[#problems + 1] = active .. " active jobs in the network, expected the one job" end
 end
 
@@ -1048,12 +1057,100 @@ local function fly(from, to, x1, y1, x2, y2, dx, dy)
 	return #spilled
 end
 
+--- every block of KEYS is there (the ship job's blocks only once that job was set up)
+local function arrived(problems)
+	local t = storage.t
+	for _, k in ipairs(KEYS) do
+		if not (t[k] and t[k].valid) and not (OPTIONAL[k] and not storage.ship_job) then problems[#problems + 1] = k .. " did not arrive" end
+	end
+end
+
+--------------------------------------------------------------------------------
+--- SHIPJOB (issue #729): a job on the ship's ME Space Molecular Assembler
+--------------------------------------------------------------------------------
+
+local SHIP_RUNS = 3
+
+--- at tick 150 (the level maintainer's job has its Crafting CPU by then): a pattern provider next to the ship's assembler
+--- with a pattern of a space manufactory recipe, a Crafting CPU of its own, the ingredients, and the job
+local function ship_job_start()
+	local t = storage.t
+	local j = { problems = {} }
+	storage.ship_job = j
+	local problems = j.problems
+	if not (t.sasm and t.sasm.valid and t.ctrl and t.ctrl.valid and t.drive and t.drive.valid) then
+		problems[#problems + 1] = "no ME Space Molecular Assembler, controller or drive on the ship"
+		return
+	end
+	local s = t.sasm.surface
+	for _, def in ipairs({ { "sprov", "me-pattern-provider", 5.5, 1.5 }, { "scpu", "me-1k-crafting-storage", 7.5, 2.5 } }) do
+		if s.can_place_entity{ name = def[2], position = { def[3], def[4] }, force = "player" } then
+			t[def[1]] = place(s, problems, def[2], def[3], def[4])
+		else
+			problems[#problems + 1] = def[2] .. " cannot be placed at " .. def[3] .. ", " .. def[4]
+		end
+	end
+	if not (t.sprov and t.scpu) then return end
+	local _, unreached = remote.call(NET, "connect", { t.ctrl, t.scpu }, 16)
+	for _, e in pairs(unreached or {}) do problems[#problems + 1] = "no cable path to " .. e.name end
+	local recipe = space_recipe("space-manufacturing")
+	if not recipe then problems[#problems + 1] = "no recipe of the category space-manufacturing with item ingredients only" return end
+	local r = prototypes.recipe[recipe]
+	game.forces.player.recipes[recipe].enabled = true
+	for _, ing in pairs(r.ingredients) do remote.call(NET, "store_in_drive", t.drive, ing.name, ing.amount * SHIP_RUNS) end
+	local pinv = game.create_inventory(2)
+	pinv.insert{ name = "me-blank-pattern", count = 1 }
+	local where, why = remote.call(PT, "encode_def", pinv, nil, { kind = "crafting", recipe = recipe })
+	local stack = pinv.find_item_stack("me-encoded-pattern")
+	if not (where and stack and remote.call(AC, "insert_pattern", t.sprov, stack)) then
+		problems[#problems + 1] = "no pattern of " .. recipe .. " in the ship's provider: " .. tostring(why)
+	end
+	pinv.destroy()
+	j.recipe, j.product, j.amount = recipe, r.products[1].name, r.products[1].amount * SHIP_RUNS
+	local id, why2 = remote.call(AC, "start", t.ctrl, j.product, j.amount)
+	j.id = id
+	if not id then problems[#problems + 1] = "the job of " .. j.amount .. " " .. j.product .. " did not start: " .. tostring(why2) end
+end
+
+--- the ship job at a stage of the run: "orbit" and "flight" (it runs), "landed" (it waits: the assembler is off; what it made
+--- so far is noted), "ground" (the end of the stay: nothing was made there), "relaunch" (it goes on), "end" (done)
+local function ship_job_check(stage)
+	local t, j = storage.t, storage.ship_job
+	if not (j and j.id) then return end
+	local problems = j.problems
+	local job = remote.call(AC, "job", j.id)
+	local e = t.sasm
+	if not (job and e and e.valid and t.ctrl and t.ctrl.valid) then problems[#problems + 1] = stage .. ": the job, the assembler or the controller is gone" return end
+	local made, held = e.products_finished, remote.call(NET, "count", t.ctrl, j.product) or 0
+	local function want(ok, text) if not ok then problems[#problems + 1] = stage .. ": " .. text end end
+	local state = "the job is " .. tostring(job.status) .. (job.reason and (" (" .. serpent.line(job.reason) .. ")") or "")
+	if stage == "orbit" or stage == "flight" then
+		want(job.status == "running", state)
+		want(not e.disabled_by_script, "the assembler is switched off")
+	elseif stage == "landed" then
+		want(job.status == "running", state)
+		want(e.disabled_by_script, "the assembler is not switched off on Nauvis")
+		want(made >= 1 and made < SHIP_RUNS, made .. " of " .. SHIP_RUNS .. " crafts are done at the landing: the stay on the planet shows nothing (other amounts)")
+		j.made, j.progress, j.held = made, e.crafting_progress, held
+	elseif stage == "ground" then
+		want(job.status == "running", state)
+		want(made == j.made and e.crafting_progress == j.progress, "the assembler crafted on Nauvis: " .. tostring(j.made) .. " crafts and progress "
+			.. tostring(j.progress) .. " at the landing, " .. made .. " and " .. e.crafting_progress .. " at the end of the stay")
+		want(held == j.held, "the network holds " .. held .. " " .. j.product .. ", " .. tostring(j.held) .. " at the landing")
+	elseif stage == "relaunch" then
+		want(job.status == "running" or job.status == "done", state)
+		want(not e.disabled_by_script, "the assembler is still switched off")
+		want(made > (j.made or 0) or e.crafting_progress ~= j.progress, "the assembler did not go on crafting after the launch from the planet")
+	elseif stage == "end" then
+		want(job.status == "done", state)
+		want(held == j.amount, "the network holds " .. held .. " of " .. j.amount .. " " .. j.product)
+	end
+end
+
 local function moved_ok(problems, spilled, from)
 	local t = storage.t
 	if spilled > 0 then problems[#problems + 1] = spilled .. " item stacks lie on the ground where the ship stood" end
-	for _, k in ipairs(KEYS) do
-		if not (t[k] and t[k].valid) then problems[#problems + 1] = k .. " did not arrive" end
-	end
+	arrived(problems)
 	if from and from.valid then                              -- (a landed ship's own surface is deleted by Space Exploration)
 		local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = from.index })
 		if not (hook and hook.allow_delete) then problems[#problems + 1] = "members are still recorded on " .. from.name end
@@ -1079,6 +1176,7 @@ end
 STEPS[150] = function()
 	space_asm_start()
 	fragments_check()
+	ship_job_start()
 end
 
 local function zones_check()
@@ -1123,6 +1221,7 @@ STEPS[200] = function()
 	if not hook or hook.allow_delete ~= false then problems[#problems + 1] = "the surface with the network may be deleted" end
 	job_kept(problems)
 	sasm_check(problems, false)
+	ship_job_check("orbit")
 	if logistics(problems) then problems[#problems + 1] = "logistics: the robots' deliveries ended before the launch (nothing in flight during the move)" end
 	report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. " on power of that surface, bridged to Nauvis: " .. table.concat(storage.before, "; "))
 	--- the launch
@@ -1147,6 +1246,7 @@ STEPS[330] = function()
 	if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 	job_carried(problems)
 	sasm_check(problems, false)
+	ship_job_check("flight")
 	logistics(problems)
 	crash_robot()                                            -- (issue #707: robot attrition, before the landing)
 	report("TRAVEL", problems, "the network works on the ship's surface, bridged to Nauvis; the crafting job runs on")
@@ -1171,6 +1271,7 @@ STEPS[460] = function()
 	end
 	job_carried(problems)
 	sasm_check(problems, true)                               -- (issue #729: on Nauvis it rests)
+	ship_job_check("landed")
 	logistics(problems)
 	report("LANDED", problems, "the network works on Nauvis as before the launch; the crafting job runs on")
 	--- COPY: a clone whose source stays
@@ -1257,6 +1358,7 @@ end
 for tick = 180, 1950, 30 do STEPS[tick] = STEPS[tick] or chance_tick end
 
 STEPS[2000] = function()
+	ship_job_check("ground")                                -- (issue #729: the end of the stay on Nauvis)
 	space_asm_done()
 	chance_done()
 	local got = job_done()
@@ -1281,9 +1383,7 @@ STEPS[2130] = function()
 		problems[#problems + 1] = "the ship was not moved"
 	else
 		if r.spilled > 0 then problems[#problems + 1] = r.spilled .. " item stacks lie on the ground where the ship stood" end
-		for _, k in ipairs(KEYS) do
-			if not (t[k] and t[k].valid) then problems[#problems + 1] = k .. " did not arrive" end
-		end
+		arrived(problems)
 		if t.ctrl and t.ctrl.valid then
 			local net = remote.call(NET, "network", t.ctrl)
 			if not (net and net.status == "ok") then
@@ -1295,6 +1395,16 @@ STEPS[2130] = function()
 	end
 	report("RELAUNCH", problems, "the ship left Nauvis again the same way: everything arrived, the network works, the ME Space Molecular "
 		.. "Assembler that rested on the planet is switched on again with its cards")
+	ship_job_check("relaunch")
+end
+
+STEPS[2330] = function()
+	local j = storage.ship_job
+	ship_job_check("end")
+	local problems = j and j.problems or { "the ship job was not set up" }
+	report("SHIPJOB", problems, "a job of " .. tostring(j and j.amount) .. " " .. tostring(j and j.product) .. " (recipe " .. tostring(j and j.recipe)
+		.. ") on the ship's ME Space Molecular Assembler ran in orbit and in flight, waited on Nauvis (" .. tostring(j and j.made) .. " of " .. SHIP_RUNS
+		.. " crafts done at the landing, none in the 1540 ticks there), went on after the launch from the planet and ended with its products in the network")
 	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
 end
 

@@ -74,7 +74,8 @@ network of the new place, the interface has exactly its three hidden chests, no 
 kept, and every item exists exactly once in cells, chests, robots and on the ground); and the ME Space Molecular Assembler
 (issues #711, #729: a space-crafting and a space-manufacturing recipe crafted on a platform; one on the ship with two
 Acceleration Cards, the same block in the ship's network after every move, switched on in orbit and in flight and off on
-Nauvis, and on again when the ship leaves Nauvis at the end of the run, 2200 ticks). The runs set Space Exploration's map
+Nauvis, and on again when the ship leaves Nauvis at the end of the run; a crafting job on it started in orbit waits
+through the stay on Nauvis and ends after the launch from it; 2400 ticks). The runs set Space Exploration's map
 setting `se-cmes-max-frequency` to 0 in `.devcheck/mods/mod-settings.dat`: its energy beam of the first minute of a game
 sweeps the start area of Nauvis and cut the cables of the landed test ship. `devcheck.py launch` (issue #706) is the real
 flight: a headless server, the same network inside a real spaceship in Nauvis Orbit (spaceship floor, walls, console, a
