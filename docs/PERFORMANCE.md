@@ -4748,9 +4748,25 @@ function):
 | `circuit.circuit_step`, us/call | 2066 | 1397 |
 | `circuit.network_signals`, us/call | 8424 | 6426 |
 
-What is left is the walk over every key of the network once a second (a table per signal) and the engine's write of
-1000 slots; a list that is kept and changed only for the keys that moved would take the walk away (not done: the list
-is game state, and items with tags and fluids at several temperatures share one signal).
+**The second step: the kept list.** What was left was the walk over every key of the network once a second (a table
+per signal, 6.4 ms with 2900 types). It is gone as well: the network notes every key whose amount moved (`net.ckeys`,
+one table write in `moved_key`, only while a circuit interface's list exists; a cell that comes or goes drops the note
+and the list is made from scratch once). A due list is the last one with those keys counted again
+(`kept_list` in `scripts/fork-me-circuit.lua`): per signal the amounts of its keys (an item with tags and a fluid at
+several temperatures are one signal), changed in place; a new version only when an amount that is written changed; the
+layout by rank only when a signal came or went. The cost follows the keys that moved, not the keys of the network.
+
+The same scene, three runs each on the same machine (`bench --sizes 1000 --runs 3 --ticks 1200 --with-mod
+space-exploration`; the runs scatter, the first of a series is often slow):
+
+| script, ms/tick avg / p99 / max | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| before (the first step) | 1.280 / 15.69 / 29.51 | 0.736 / 7.94 / 22.80 | 0.739 / 7.92 / 21.09 |
+| the kept list | 0.599 / 7.56 / 8.78 | 0.526 / 6.90 / 7.78 | 0.620 / 7.47 / 10.09 |
+
+The median goes from 0.74 to 0.60 ms a tick and the worst tick from 21 to 9 ms. In the profile `network_signals` no
+longer appears in the window (it runs once, for the first list), and `signals_of` with the kept list costs 11 us a call.
+What remains per update is the engine's write of the section (1000 slots) and building its 1000 filters.
 
 ### A ship moved in one tick
 

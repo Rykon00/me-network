@@ -28,7 +28,7 @@ Version: 0.6.2
     - A surface that is deleted or cleared (a mod's own surface, a spaceship's) no longer leaves the networks that stood on it behind. Space Exploration refuses to delete the surface of a zone while blocks of an ME network stand on it.
     - An ME Terminal or ME Level Maintainer that another mod removed without telling could stop the game with an error ("LuaEntity API call when LuaEntity was invalid") at the next screen update.
   Optimizations:
-    - An ME Circuit Interface in a network with thousands of item types (a heavily modded game) is cheaper (issue #721): the network's signal list is no longer sorted at every update and the 1000 largest amounts of an unfiltered interface are picked without a sort of text. Measured with Space Exploration and 2900 item types: a third less per update, a quarter less for the list.
+    - An ME Circuit Interface in a network with thousands of item types (a heavily modded game) is cheaper (issue #721): the network's signal list is kept and only the amounts that moved are counted again (it was made from every item type of the network once a second and sorted), and the 1000 largest amounts of an unfiltered interface are picked without a sort of text. Measured with Space Exploration and 2900 item types: about a fifth less script time in the busy benchmark scene, the worst tick 9 ms instead of 21.
 ---------------------------------------------------------------------------------------------------
 Version: 0.6.1
 Date: 2026-11-09

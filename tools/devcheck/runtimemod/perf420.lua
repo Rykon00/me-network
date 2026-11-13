@@ -232,6 +232,42 @@ return function(H)
 			expect(same, "the 1000 largest of 1500 signals: " .. #got .. " picked, not the ones a sort by amount and order picks")
 			local few = remote.call(CI, "top", { list[3], list[9] })
 			expect(#few == 2 and few[1] == list[3].order and few[2] == list[9].order, "a short list is written whole: " .. line(few))
+			--- issue #721: the kept list. 300 rounds of moves (items in and out, also down to nothing and back; water at two
+			--- temperatures in fractions), after each the list as the network keeps it against one made from scratch: the same
+			--- signals, amounts and places. The version counts up exactly when an amount that is written changed.
+			local seed = 12345
+			local function rnd(n)
+				seed = (seed * 1103515245 + 12345) % 2147483648
+				return seed % n + 1
+			end
+			local kept_rounds, bad = 0, nil
+			local _, _, version = remote.call(CI, "list_check", ci)
+			for round = 1, 300 do
+				local moved = false
+				for _ = 1, rnd(4) do
+					local name = ITEMS[rnd(#ITEMS)]
+					local kind = rnd(10)
+					local have = remote.call(NET, "count", ctrl, name) or 0
+					local n
+					if kind <= 4 then n = remote.call(NET, "insert", ctrl, name, rnd(50))
+					elseif kind <= 7 then n = remote.call(NET, "extract", ctrl, name, rnd(50))
+					elseif kind == 8 then n = remote.call(NET, "extract", ctrl, name, have)      -- (the signal goes)
+					elseif kind == 9 then n = remote.call(NET, "insert_fluid", ctrl, "water", rnd(7) / 4, rnd(2) == 1 and 15 or 90)
+					else n = remote.call(NET, "extract_fluid", ctrl, "water", rnd(7) / 4, rnd(2) == 1 and 15 or 90) end
+					if type(n) == "number" and n > 0 then moved = true end
+				end
+				if round % 50 == 0 then                                        -- (a round that leaves every amount as it was)
+					remote.call(NET, "insert", ctrl, "coal", 3)
+					remote.call(NET, "extract", ctrl, "coal", 3)
+				end
+				local problem, kept, n = remote.call(CI, "list_check", ci)
+				if kept then kept_rounds = kept_rounds + 1 end
+				if problem and not bad then bad = "round " .. round .. ": " .. problem end
+				if not moved and n ~= version and not bad then bad = "round " .. round .. ": the version went from " .. tostring(version) .. " to " .. tostring(n) .. " without a move" end
+				version = n
+			end
+			expect(not bad, "the kept list of the circuit interfaces: " .. tostring(bad))
+			expect(kept_rounds >= 290, "the kept list was used in " .. kept_rounds .. " of 300 rounds")
 			return finish()
 		end
 	end
