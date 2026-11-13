@@ -976,7 +976,7 @@ formation core the electronic circuit.
 | dense energy cell (wireless terminal and module) | batteries | batteries |
 | dense energy cell of the Singularity cells | accumulator | space accumulator |
 | quantum ring (ME Quantum Bridge) | battery (its energy cell) | quantum processor (energy science 3) |
-| matter condenser (Singularity cells) | (the bridges) | a naquium cube more (deep space science 1) |
+| matter condenser (Singularity cells) | (the bridges) | a naquium tessaract more (issue #709; deep space science 2) |
 | the crafting accelerators | - | 4 holmium cable more in the 4x accelerator; a quantum processor more in the 256x, 1024x and 4096x accelerator |
 
 The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
@@ -995,7 +995,7 @@ AE2, the cards):
 | ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
 | ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
 | ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
-| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 naquium cube |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 naquium tessaract |
 | ME Import Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
 | ME Export Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
 | ME Storage Bus | 1 ME Interface, 2 electric motor |
@@ -1017,7 +1017,7 @@ AE2, the cards):
 | ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
 | ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
 | ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
-| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 pump, 1 naquium cube |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 pump, 1 naquium tessaract |
 
 The ME Molecular Assembler is made again after Space Exploration's and AAI Industry's changes, from the assembling machine
 2's item categories at that point. It never gets a `space-...` category (the space assembling machine's recipes): Space
@@ -1079,7 +1079,13 @@ Where the tiers come from:
   matter for most of a game, far below Space Exploration's own instant link (arcolink storage: deep space science 4).
   Its name has none of the words (`teleport`, `dimension`, `stargate`, `portal`) for which Space Exploration puts a
   technology behind its Teleportation technology and deep space science 4.
-- **Singularity cells: deep space science 1** (naquium cube); **the Singularity crafting storage: deep space science 2.**
+- **Singularity cells and the Singularity crafting storage: deep space science 2** (issue #709). The cells take a **naquium
+  tessaract** (the naquium cube of deep space 1 before) and follow Space Exploration's technology Naquium tessaract, at
+  its cost (500 × 60 s). Deep space 2 rather than 3: the tessaract is a deep space 2 item, and deep space 3 is the naquium
+  processor and Supercomputer 4, which nothing of ME Network takes. The tessaract is folded with arcospheres in Space
+  Exploration's own recipe; the cell's recipe is a plain one that takes the finished tessaract, so there is no arcosphere
+  puzzle in a storage recipe. The ladder stays in step with the data line of the components (issue #712): 16384k at
+  Supercomputer 3 (science 3 of three lines), then the ME Quantum Bridge and the tessaract for the cell that ends it.
   Space Exploration adds deep space science 1 to every technology with `singularity` in its name; the ME technologies
   are left out of that pass and set here.
 
@@ -1108,8 +1114,8 @@ green, blue and rocket science, after ME Autocrafting and Space Assembling.
 | ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 |  |
 | ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ME 16384k Storage's packs |  |
 | ME Quantum Bridge | 1500 × 30 s, red to utility | 300 × 60 s, to space, utility, astronomic 3, energy 3 | Quantum processor, Astronomic science pack 3 |
-| ME Singularity Storage | 2500 × 30 s, red to utility | 250 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 1 | Naquium cube, Space accumulator (instead of Electric energy accumulators) |
-| ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same with deep space 2 | Deep space science pack 2 |
+| ME Singularity Storage | 2500 × 30 s, red to utility | 500 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 2 | Naquium tessaract, Space accumulator (instead of Electric energy accumulators) |
+| ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same |  |
 
 ("to space": red, green, blue, rocket and space science. Space Exploration's postprocess mod drops a prerequisite that
 another one implies, so the technology screen shows fewer arrows than this table has entries.)
@@ -1124,7 +1130,7 @@ first, the Space Exploration file on top of it:
   battery of the wireless terminal and module). Where both files name a stand-in of the same recipe, Space Exploration's
   wins: the components from 256k (data storage substrate and blank data cards instead of imersite powder, imersium
   plate and the energy control unit), the ME Quantum Bridge (quantum processors instead of AI cores), the Singularity
-  cells (space accumulators and a naquium cube instead of lithium-sulfur batteries and a charged matter stabilizer), the
+  cells (space accumulators and a naquium tessaract instead of lithium-sulfur batteries and a charged matter stabilizer), the
   second accelerators (a quantum processor instead of an energy control unit).
 - **Technologies:** ME Network keeps Krastorio 2's (250 × 30 s, after silicon processing); every technology from ME 64k
   Storage on is Space Exploration's of the table above, with the Krastorio 2 prerequisite whose item a recipe still takes

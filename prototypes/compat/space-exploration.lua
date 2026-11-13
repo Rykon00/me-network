@@ -57,7 +57,7 @@ ME.space_exploration = { se = se, missing = missing, packs = {}, with_krastorio2
 --- The storage ladder follows the data line (issue #712: an ME storage component is data storage): the data storage
 --- substrate for 256k, blank data cards from 1024k on, in place of the cryonite rod and the heavy parts of the material line
 --- they took before; the crafting side follows the energy science line (holmium cable, quantum processor), the Singularity
---- cells take the naquium cube of the first deep space tier. Space Exploration has no quartz and no core item: certus quartz stays stone,
+--- cells take the naquium tessaract of the second deep space tier (issue #709; a plain recipe, no arcosphere recipe). Space Exploration has no quartz and no core item: certus quartz stays stone,
 --- the annihilation and formation core the electronic circuit.
 --------------------------------------------------------------------------------
 
@@ -70,7 +70,10 @@ local C1024 = se("se-empty-data", "stone-brick")                  -- ... of the 
 local C4096, C16384 = C1024, C1024
 local QUANTUM = se("se-quantum-processor", "battery")             -- quantum ring (ME Quantum Bridge), energy science 3
 local ENERGY_CELL = se("se-space-accumulator", "accumulator")     -- dense energy cell of the Singularity cells
-local CONDENSER = se("se-naquium-cube", nil)                      -- matter condenser (Singularity cells), deep space 1
+--- issue #709: the matter condenser of the Singularity cells is the naquium tessaract (deep space 2; the naquium cube of deep
+--- space 1 before). The tessaract itself is folded with arcospheres in Space Exploration's own recipe; the cell's recipe
+--- stays a plain one that takes it, so nobody has to solve an arcosphere puzzle for a storage cell.
+local CONDENSER = se({ "se-naquium-tessaract", "se-naquium-cube" }, nil)
 local ACCELERATOR = se("se-holmium-cable", nil)                   -- the crafting accelerators of the first technology
 local ACCELERATOR_2 = se("se-quantum-processor", nil)             -- the crafting accelerators of the second technology
 local NEW_GLASS = GLASS ~= "plastic-bar" and GLASS or nil         -- (glass that had no stand-in: none without a glass item)
@@ -151,7 +154,10 @@ end)
 ---   - ME Quantum Bridge: astronomic and energy science 3. It joins networks on any two surfaces without a limit, which in
 ---     Space Exploration is what cargo rockets, the space elevator and spaceships are for; it comes with the spaceship's tier
 ---     and the quantum processor, far below Space Exploration's own links (arcolink storage: deep space 4).
----   - Singularity cells: deep space 1 (naquium cube); the Singularity crafting storage: deep space 2.
+---   - Singularity cells: deep space 2 (issue #709: the naquium tessaract, after Space Exploration's technology of that
+---     name, at its cost of 500 x 60 s); the Singularity crafting storage, which takes the cell's component: deep space 2
+---     as well, after the cells. The end of the storage ladder is then two steps past 16384k (Supercomputer 3, issue #712):
+---     the quantum bridge, and the tessaract. Supercomputer 4 and the naquium processor (deep space 3) stay above it.
 --- me-upgrade-cards is set here (without Space Exploration data-final-fixes.lua copies ME 64k Storage's cost onto it, issue
 --- #17): its Advanced Card takes a processing unit, so it is ME 64k Storage's count and time with the rocket science pack.
 --------------------------------------------------------------------------------
@@ -169,7 +175,7 @@ local function line(name)
 	return out
 end
 local MATERIAL, ENERGY, ASTRONOMIC, BIOLOGICAL = line("material"), line("energy"), line("astronomic"), line("biological")
-local DEEP_1 = pack("se-deep-space-science-pack-1", UTILITY)
+
 local DEEP_2 = pack("se-deep-space-science-pack-2", UTILITY)
 
 local T_BLUE = { RED, GREEN, BLUE }
@@ -238,9 +244,9 @@ local TECHS = {
 	["me-crafting-storage-4096k"] = { 200, 60, t_energy(3) },
 	["me-crafting-storage-16384k"] = { 300, 60, T_DATA_3 },
 	["me-quantum-bridge"] = { 300, 60, T_BRIDGE, { "se-quantum-processor", "se-astronomic-science-pack-3" }, NO_UTILITY },
-	["me-storage-singularity"] = { 250, 60, t_deep(DEEP_1), { "se-naquium-cube", "se-space-accumulator" },
+	["me-storage-singularity"] = { 500, 60, t_deep(DEEP_2), { "se-naquium-tessaract", "se-space-accumulator" },
 		{ ["electric-energy-accumulators"] = true } },
-	["me-crafting-storage-singularity"] = { 500, 60, t_deep(DEEP_2), { "se-deep-space-science-pack-2" } },
+	["me-crafting-storage-singularity"] = { 500, 60, t_deep(DEEP_2) },
 }
 
 for _, name in ipairs(ME.technologies) do
