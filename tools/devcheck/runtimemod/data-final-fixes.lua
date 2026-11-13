@@ -202,6 +202,15 @@ if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
 	end
 end
 
+--- Issue #705: Space Exploration needs AAI Industry, which makes the transport belt from a motor. The autocrafting tests
+--- craft belts through the base game's chain (a gear and a plate into two belts, the gear from the stand-in of data.lua), so
+--- with it the belt keeps the base game's recipe.
+if mods["aai-industry"] and data.raw.recipe["transport-belt"] then
+	local r = data.raw.recipe["transport-belt"]
+	r.ingredients = { { type = "item", name = "iron-plate", amount = 1 }, { type = "item", name = "iron-gear-wheel", amount = 1 } }
+	r.results = { { type = "item", name = "transport-belt", amount = 2 } }
+end
+
 --- Issue #596: the stand-in recipes of data.lua as they were made there (another mod's data-updates may have changed them:
 --- Krastorio 2 Spaced Out puts its own chlorine and hydrogen into every recipe of the names they have); the tests count on
 --- their ingredients. Without Gregtorio only; a recipe is set again only when everything it names still exists.
