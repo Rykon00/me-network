@@ -161,8 +161,8 @@ function M.set_item_data(stack, d)
 	t[TAG] = { link = d.link, energy = math.max(0, math.min(numbers().item_buffer, d.energy or 0)) }
 	stack.tags = t
 	local ctrl = controller_of(d.link)
-	stack.custom_description = { "", ctrl and { "fork-me-wireless.item-linked", string.format("[gps=%d,%d,%s]",
-		math.floor(ctrl.position.x), math.floor(ctrl.position.y), ctrl.surface.name) } or { "fork-me-wireless.item-unlinked" },
+	stack.custom_description = { "", ctrl and { "fork-me-wireless.item-linked", N.place.gps(ctrl.position, ctrl.surface) }
+		or { "fork-me-wireless.item-unlinked" },
 		"\n", { "fork-me-wireless.item-charge", math.floor(100 * t[TAG].energy / numbers().item_buffer) } }
 end
 

@@ -392,6 +392,10 @@ function M.reshape_cable(entity)
 	if node then update_cable(storage.fork_me_net, node) end
 end
 
+--- issue #713: what a surface is called (Space Exploration's zone names) and the map marker of a message; a field of M, so
+--- every module that has this one has it (and this file is at Lua's 200 locals)
+M.place = require("scripts.fork-me-place")
+
 local recompute
 local net_cell
 --- issue #229: the ME Chest (its section below the drives)
@@ -5411,7 +5415,7 @@ local function vanish(s, unit)
 			for _, def in ipairs(defs) do spill(surface, d.position, def) end
 			local force = game.forces[d.force]
 			if #defs > 0 and force then
-				force.print({ "fork-me-net.drive-vanished", #defs, string.format("[gps=%d,%d,%s]", math.floor(d.position.x), math.floor(d.position.y), surface.name) })
+				force.print({ "fork-me-net.drive-vanished", #defs, M.place.gps(d.position, surface) })
 			end
 		end
 		clear_leds(d)
@@ -6151,8 +6155,7 @@ function M.tell_asm_conflicts(s)
 		end
 		local force = asm and ctrl and game.forces[net.force]
 		if force then
-			force.print({ "fork-me-net.assembler-conflict", string.format("[gps=%d,%d,%s]", math.floor(ctrl.position.x),
-				math.floor(ctrl.position.y), ctrl.surface.name) })
+			force.print({ "fork-me-net.assembler-conflict", M.place.gps(ctrl.position, ctrl.surface) })
 		end
 	end
 end

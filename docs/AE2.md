@@ -1166,6 +1166,16 @@ first, the Space Exploration file on top of it:
   Crafting Card or the ME Logistic Interface that asked for it still waits for that job. Nothing has to be finished or
   cancelled before a launch. (A CPU that does not arrive whole, because only a part of it stood on the ship, pauses its
   job, which then takes the next CPU that fits, as when a CPU is rebuilt.)
+- **Zone names** (issue #713). With Space Exploration every place the mod names a surface says its zone ("Nauvis Orbit",
+  "Calidus Asteroid Belt") or, for a spaceship in flight, the ship's name as Space Exploration shows it, instead of the
+  game's internal name ("nauvis", "spaceship-3"): the ME Interface Terminal's list (each block's position with its
+  place), the status line of the ME Quantum Bridge and the ME Wireless Link (where the other end stands), the ME P2P
+  tunnel's input, `/me-stats`, and after the map marker of every message (a provider that waits for blank patterns, a
+  drive that vanished, "Where is it?", the Wireless ME Terminal's tooltip). The zone comes from Space Exploration's
+  remote interface (`get_zone_from_surface_index`), called only when Space Exploration is active and has that function,
+  inside `pcall`, and kept for 10 seconds per surface (`scripts/fork-me-place.lua`), so a window that refreshes every
+  second asks once in ten. Without Space Exploration, or when the call fails, everything shows the surface's name as
+  before.
 - **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
   one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
   an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while

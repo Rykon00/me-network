@@ -306,11 +306,12 @@ local function link_info(s, entity, rec, out)
 		end
 	end
 	local p, d = lnear or near, lnear and lnd or nd
-	if p then out.partner, out.distance = { surface = p.surface.name, x = p.position.x, y = p.position.y }, d end
+	--- (`place`, issue #713: what the window calls the surface, Space Exploration's zone name)
+	if p then out.partner, out.distance = { surface = p.surface.name, place = N.place.name(p.surface), x = p.position.x, y = p.position.y }, d end
 	if out.edges > 0 then out.status = "linked"
 	elseif not near then
 		out.status = other and "other-surface" or "waiting"
-		if other then out.partner = { surface = other.surface.name, x = other.position.x, y = other.position.y } end
+		if other then out.partner = { surface = other.surface.name, place = N.place.name(other.surface), x = other.position.x, y = other.position.y } end
 	elseif not inreach then out.status = "out-of-range"
 	elseif not powered(entity, false) then out.status = "no-power"
 	else out.status = "no-power-there" end
@@ -335,7 +336,7 @@ function M.info(entity)
 		local other = s.recs[list[1] == entity.unit_number and list[2] or list[1]].entity
 		local ok, why, dist = reach(name, entity, other)
 		out.distance = ok and why or dist
-		out.partner = { surface = other.surface.name, x = other.position.x, y = other.position.y }
+		out.partner = { surface = other.surface.name, place = N.place.name(other.surface), x = other.position.x, y = other.position.y }
 		if N.qlink_of(entity) then out.status = "linked" return out end
 		if not ok then out.status = why
 		elseif not powered(entity, false) then out.status = "no-power"
