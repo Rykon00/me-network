@@ -2110,12 +2110,60 @@ function M.asm_draw(s, net, node, w)
 	end
 end
 
+--- Issue #743: the mark of an assembler that is switched off, in the world. An assembler that does not work looked like an
+--- idle one, and its status line is only in its window (and not even there without a recipe: the game opens the recipe
+--- picker). The mark is a render object on the entity, made when M.assembler_step switches the assembler off and removed
+--- when it switches it on: no work per tick, and the object goes with its entity. The game's own alert icons, blinking as
+--- its alerts do (30 ticks); the rest on a planet is no fault and gets a steady one. The ids are kept by unit number in
+--- s.asm_marks, not in the node: the graph's rebuild makes the nodes anew, and a mark that was forgotten would be drawn a
+--- second time.
+--- reason -> { sprite, blink interval in ticks (nil: steady) }
+M.ASM_MARKS = {
+	["no-network"] = { "utility/electricity_icon_unplugged", 30 },
+	["no-controller"] = { "utility/electricity_icon_unplugged", 30 },
+	["no-power"] = { "utility/electricity_icon", 30 },
+	conflict = { "utility/warning_icon", 30 },
+	ground = { "utility/warning_icon" },
+}
+M.ASM_MARK = { "utility/warning_icon", 30 }          -- (a reason without an entry)
+M.ASM_MARK_SCALE = 0.3                               -- (64 px icons: 0.6 of the tile, the block's frame stays visible)
+M.ASM_MARK_OFFSET = { 0, -0.1 }                      -- (on the cube's top face, clear of the cards' icons of the Alt mode)
+--- new marks per step (once a second). A mark costs 4 us to draw (2000 assemblers that lose their power at once: 8 ms in one
+--- tick, measured), so a big network that stops is marked over a few seconds, 1 ms each. Marks are removed at once (2 us).
+M.ASM_MARK_STEP = 250
+
+--- the mark of the assembler `unit` (entity `e`) shows the reason `why` (nil: no mark)
+function M.asm_mark(s, unit, e, why)
+	local marks = s.asm_marks
+	if not marks then
+		marks = {}
+		s.asm_marks = marks
+	end
+	local obj = marks[unit] and rendering.get_object_by_id(marks[unit])
+	if obj and obj.valid then obj.destroy() end
+	marks[unit] = nil
+	if not why then return end
+	local def = M.ASM_MARKS[why] or M.ASM_MARK
+	marks[unit] = rendering.draw_sprite{ sprite = def[1], target = { entity = e, offset = M.ASM_MARK_OFFSET }, surface = e.surface,
+		x_scale = M.ASM_MARK_SCALE, y_scale = M.ASM_MARK_SCALE, blink_interval = def[2] }.id
+end
+
 function M.assembler_step(s)
 	local working = defines.entity_status.working
+	local marks = s.asm_marks or M.NONE
+	local budget = M.ASM_MARK_STEP
+	if s.asm_prune then
+		--- (after a rebuild of the graph: the marks of assemblers that are gone; their render objects went with the entities)
+		s.asm_prune = nil
+		for unit in pairs(marks) do
+			if not s.asm[unit] then M.asm_mark(s, unit, nil, nil) end
+		end
+	end
 	for unit in pairs(s.asm) do
 		local node = s.nodes[unit]
 		if not (node and node.kind == "assembler") then
 			s.asm[unit] = nil
+			if marks[unit] then M.asm_mark(s, unit, nil, nil) end
 		elseif node.entity.valid then
 			local e = node.entity
 			local net = s.nets[node.net]
@@ -2129,14 +2177,23 @@ function M.assembler_step(s)
 				if not node.on then
 					e.disabled_by_script = false
 					e.custom_status = nil
-					node.on, node.off = true, nil
+					node.on, node.off, node.marked = true, nil, nil
+					if marks[unit] then M.asm_mark(s, unit, e, nil) end
 				end
 				w = M.asm_watts(e, e.status == working)
 			else
 				if node.off ~= why then
 					e.disabled_by_script = true
 					e.custom_status = { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-" .. why } }
-					node.on, node.off = nil, why
+					node.on, node.off, node.marked = nil, why, nil
+				end
+				--- issue #743: its mark for this reason (`node.marked`; an assembler that was off before the marks, a save from
+				--- before, and one whose node the graph's rebuild made anew get theirs here), M.ASM_MARK_STEP new ones per step
+				if not node.marked and budget > 0 then
+					budget = budget - 1
+					M.asm_mark(s, unit, e, why)
+					marks = s.asm_marks
+					node.marked = true
 				end
 				w = M.asm_watts(e, false)
 			end
@@ -5812,6 +5869,7 @@ function M.rebuild(full)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
 	s.asm = {}                                             -- (issue #560)
+	s.asm_prune = true                                     -- (issue #743: M.assembler_step drops the marks of assemblers that are gone)
 	local names = M.node_names()
 	M.scan_decon(s)                                        -- (marked members are no members: M.set_marked)
 	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
@@ -6208,6 +6266,41 @@ local function info(net)
 end
 
 remote.add_interface("gregtorio-me-network", {
+	--- issue #743 (tests): the mark of an assembler that is switched off: its sprite, its blink interval, whether it is on
+	--- the entity, its id; nil without one. `drop`: the mark is taken away as a save from before the marks has none.
+	assembler_mark = function(entity, drop)
+		local s = state()
+		local unit = entity and entity.valid and entity.unit_number
+		local id = unit and s.asm_marks and s.asm_marks[unit]
+		local obj = id and rendering.get_object_by_id(id)
+		if drop then
+			if unit then
+				M.asm_mark(s, unit, entity, nil)
+				if s.nodes[unit] then s.nodes[unit].marked = nil end
+			end
+			return nil
+		end
+		if not (obj and obj.valid) then return nil end
+		local target = obj.target
+		return obj.sprite, obj.blink_interval, target and target.entity == entity, obj.id
+	end,
+	--- issue #743 (tests): how many new marks a step draws
+	assembler_mark_step = function() return M.ASM_MARK_STEP end,
+	--- issue #743 (tests): the number of marks the mod remembers, and how many of them are render objects that exist
+	assembler_marks = function()
+		local n, alive = 0, 0
+		for _, id in pairs(state().asm_marks or {}) do
+			n = n + 1
+			local obj = rendering.get_object_by_id(id)
+			if obj and obj.valid then alive = alive + 1 end
+		end
+		return n, alive
+	end,
+	--- issue #743 (tests): is the render object `id` still there
+	mark_alive = function(id)
+		local obj = id and rendering.get_object_by_id(id)
+		return obj ~= nil and obj.valid
+	end,
 	--- issue #229: what an ME Chest's window shows (M.chest_info), its input slot into a target, its view's grid entries
 	chest = function(entity) return M.chest_info(entity) end,
 	chest_take_input = function(entity, target) return M.chest_take_input(entity, target) end,

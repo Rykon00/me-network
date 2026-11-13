@@ -3441,6 +3441,24 @@ cable, built in one tick and removed in one tick; `bench --sizes 1000 --runs 3`,
 
 About 0.1 ms per member, what the other ME blocks cost (the burst of 998 buses, interfaces and cables: 99 to 105 ms).
 
+**The mark of an assembler that is switched off** (issue #743) is a render object on the entity, drawn by that slow step
+when it switches the assembler off and destroyed when it switches it on: nothing per tick, and nothing in a step in which
+no assembler changes its state (the blinking is the engine's: `blink_interval`). The ids are kept by unit number
+(`s.asm_marks`), so the graph's rebuild, which makes every node anew, does not draw a second mark. What a change of
+state costs, measured with one network of 2000 assemblers whose controller loses its power and gets it back
+(`M.assembler_step` under a LuaProfiler, one run on a quiet machine):
+
+| the step in which 2000 assemblers change | without marks | with a mark each |
+|---|---|---|
+| switched off | 6.4 ms | 14.6 ms |
+| switched on | 4.9 ms | 9.4 ms |
+| nothing changes | 3.6 ms | 3.5 ms |
+
+About 4 us to draw a mark and 2 us to destroy one. So that a big network that stops does not hitch, a step draws at
+most 250 new marks (`M.ASM_MARK_STEP`, about 1 ms): 2000 assemblers are marked within 8 seconds. Marks are removed at
+once, so no working assembler keeps one. (Later runs with the cap were on a busier machine, their unchanged step three
+times as dear; they show the marks arriving 250 a step and no number worth a table. The runtime test counts them.)
+
 **The scenes** have an assembler next to every pattern provider, members now: `bench --check origin/main --sizes 100,1000
 --runs 3` (three rounds in turns):
 
