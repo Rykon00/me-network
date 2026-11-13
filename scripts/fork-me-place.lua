@@ -24,18 +24,17 @@ local M = {}
 local SE = "space-exploration"
 local TTL = 600                          -- ticks an answer is kept
 
---- the zone name of the surface `index` from Space Exploration, nil without one or when the call fails
+--- the zone name and type of the surface `index` from Space Exploration, nil without one or when the call fails
 local function ask(index)
 	local iface = remote.interfaces[SE]
 	if not (iface and iface.get_zone_from_surface_index) then return nil end
 	local ok, zone = pcall(remote.call, SE, "get_zone_from_surface_index", { surface_index = index })
-	if ok and type(zone) == "table" and type(zone.name) == "string" and zone.name ~= "" then return zone.name end
+	if ok and type(zone) == "table" and type(zone.name) == "string" and zone.name ~= "" then return zone.name, zone.type end
 	return nil
 end
 
---- what to show for `surface` (a LuaSurface): a string, or a LocalisedString (a spaceship's display name)
-function M.name(surface)
-	if not script.active_mods[SE] then return surface.name end
+--- the kept answer for `surface`: { n = zone name or false, g = a planet or a moon, t = tick }
+local function entry(surface)
 	local s = storage.fork_me_place
 	if not s then
 		s = { names = {}, calls = 0 }
@@ -45,11 +44,26 @@ function M.name(surface)
 	local c = s.names[index]
 	if not c or now - c.t >= TTL then
 		s.calls = s.calls + 1
-		c = { n = ask(index) or false, t = now }
+		local name, kind = ask(index)
+		c = { n = name or false, g = kind == "planet" or kind == "moon", t = now }
 		s.names[index] = c
 	end
+	return c
+end
+
+--- what to show for `surface` (a LuaSurface): a string, or a LocalisedString (a spaceship's display name)
+function M.name(surface)
+	if not script.active_mods[SE] then return surface.name end
+	local c = entry(surface)
 	if c.n then return c.n end
 	return surface.localised_name or surface.name
+end
+
+--- issue #729: is `surface` the ground of a planet or a moon of Space Exploration (not an orbit, a belt, deep space or a
+--- spaceship in flight)? Without Space Exploration: false. From the same kept answer as the name.
+function M.ground(surface)
+	if not script.active_mods[SE] then return false end
+	return entry(surface).g == true
 end
 
 --- the map marker of `position` on `surface` for a message
@@ -76,6 +90,10 @@ remote.add_interface("me-network-place", {
 		return surface and M.gps({ x = x, y = y }, surface) or nil
 	end,
 	calls = function() return storage.fork_me_place and storage.fork_me_place.calls or 0 end,
+	ground = function(surface_index)
+		local surface = game.get_surface(surface_index)
+		return surface ~= nil and M.ground(surface)
+	end,
 })
 
 return M

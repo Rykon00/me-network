@@ -2070,6 +2070,7 @@ end
 --- second, and an assembler whose network does not work is switched off with a status saying why (`off`), and on again (`on`:
 --- switched on since its node was made). The usage per name is derived, read once per load.
 M.ASM_IDLE = 30
+M.SPACE_ASM = "me-space-molecular-assembler"
 M.asm_usage = {}
 function M.asm_watts(entity, crafting)
 	local name = entity.name
@@ -2115,6 +2116,10 @@ function M.assembler_step(s)
 			local e = node.entity
 			local net = s.nets[node.net]
 			local ok, why = M.usable(net)
+			--- issue #729: the ME Space Molecular Assembler rests on the ground of a planet or moon (a ship that landed
+			--- there): Space Exploration's space recipes are for space. (`node.space`: is it that block, read once per node)
+			if node.space == nil then node.space = e.name == M.SPACE_ASM end
+			if ok and node.space and M.place.ground(e.surface) then ok, why = false, "ground" end
 			local w
 			if ok then
 				if not node.on then
