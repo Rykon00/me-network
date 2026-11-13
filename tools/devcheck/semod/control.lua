@@ -46,6 +46,17 @@
 ---            remote interface, asked once per surface while the answer is kept (a second question in the same tick makes
 ---            no call); a surface that is no zone by its own name; the map marker of a message with the zone's name after
 ---            it; the quantum bridge's window data names the partner's zone.
+---   FRAGMENTS issue #710: core fragment processing. An ME Storage Bus on Space Exploration's fragment processing machine
+---            (the machine of the recipe category "core-fragment-processing", its pulveriser) makes the machine's output
+---            slots network storage to take from: the network counts what lies there, an extraction takes it out of the
+---            machine, and what the network stores never goes into the machine. A storage bus on an assembling machine 2
+---            (no fragment processing) faces no item storage, as before.
+---   CHANCE   issue #710, part c: a product that comes by chance. A second pulveriser next to an ME Pattern Provider with a
+---            crafting pattern of the helper's recipe zz-me-se-chance (2 stone into an iron stick and, at 50 %, an iron gear
+---            wheel). Five jobs of 6 gears each, one after the other: every job ends "done" with at least the 6 gears it was
+---            asked for in the network (the plan runs the recipe 12 times; when chance gave fewer than 6 the job adds runs
+---            and takes their stone from the network), the sticks of every run are in the network, and at least one of the
+---            five jobs needed more runs than its plan (else the test shows nothing: another seed, other amounts).
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -254,6 +265,192 @@ local function space_asm_done()
 	end
 	report("SPACEASM", problems, "the ME Space Molecular Assembler on scaffold in orbit crafted " .. tostring(a.amount) .. " " .. tostring(a.product)
 		.. " (recipe " .. tostring(a.recipe) .. ", one of " .. tostring(a.recipes) .. " space-crafting recipes with item ingredients only)")
+end
+
+--------------------------------------------------------------------------------
+--- FRAGMENTS (issue #710)
+--------------------------------------------------------------------------------
+
+--- the machine of core fragment processing (by its recipe category)
+local function fragment_machine()
+	local names = {}
+	for name, p in pairs(prototypes.get_entity_filtered{ { filter = "crafting-machine" } }) do
+		if p.crafting_categories and p.crafting_categories["core-fragment-processing"] and not p.hidden then names[#names + 1] = name end
+	end
+	table.sort(names)
+	return names[1]
+end
+
+local function fragments_build()
+	local problems = {}
+	local f = { problems = problems }
+	storage.fragments = f
+	local name = fragment_machine()
+	f.machine_name = name
+	if not name then problems[#problems + 1] = "no machine of the category core-fragment-processing" return end
+	local s = game.create_surface("me-se-fragments", { width = 128, height = 128 })
+	tiles(s, "refined-concrete", -16, -16, 30, 16)
+	for _, e in pairs(s.find_entities_filtered{ area = { { -16, -16 }, { 31, 17 } } }) do
+		if e.valid and e.type ~= "character" then e.destroy() end
+	end
+	local function at(n, x, y, extra) return place(s, problems, n, x, y, extra) end
+	local eei = at("electric-energy-interface", -4, -4)
+	if eei then eei.power_production = 5e6 eei.electric_buffer_size = 5e7 eei.energy = 5e7 end
+	at("substation", -1, -4)
+	f.ctrl = at("me-network-controller", 1, 1)                -- (tiles 0..1, 0..1)
+	f.drive = at("me-drive", 2.5, 0.5)
+	f.bus = at("me-storage-bus", 3.5, 0.5, { direction = defines.direction.east })
+	local p = prototypes.entity[name]
+	local w, h = p.tile_width, p.tile_height
+	--- the machine east of the bus (its left column at x = 4), without the build event (Space Exploration's own handlers)
+	f.machine = at(name, 4 + w / 2, h % 2 == 1 and 0.5 or 1, { raise_built = false })
+	--- the control: a storage bus on a machine that does no fragment processing
+	f.bus2 = at("me-storage-bus", 2.5, 1.5, { direction = defines.direction.south })
+	f.plain = at("assembling-machine-2", 2.5, 3.5, { raise_built = false })
+	if f.drive then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "me-16k-storage-cell", count = 1 }
+		if not remote.call(NET, "insert_cell", f.drive, inv[1], 1) then problems[#problems + 1] = "no cell in the drive" end
+		inv.destroy()
+	end
+	if f.machine then
+		--- a fragment recipe (the first by name with stone and another item among its products): the output slots are the
+		--- recipe's, and what a craft would leave there is put there
+		local recipes = {}
+		for rname, r in pairs(prototypes.recipe) do
+			local fragment = false
+			for k, v in pairs(r.categories or {}) do
+				if (type(k) == "string" and k or v) == "core-fragment-processing" then fragment = true end
+			end
+			local stone, other = false, nil
+			for _, x in pairs(r.products) do
+				if x.type == "item" and x.name == "stone" then stone = true
+				elseif x.type == "item" and (not other or x.name < other) then other = x.name end
+			end
+			if fragment and stone and other then recipes[#recipes + 1] = { rname, other } end
+		end
+		table.sort(recipes, function(x, y) return x[1] < y[1] end)
+		local pick = recipes[1]
+		if not pick then problems[#problems + 1] = "no core fragment recipe with stone and another item"
+		else
+			f.recipe, f.other = pick[1], pick[2]
+			game.forces.player.recipes[f.recipe].enabled = true
+			f.machine.set_recipe(f.recipe)
+			local out = f.machine.get_inventory(defines.inventory.crafter_output)
+			local a, c = out.insert{ name = "stone", count = 30 }, out.insert{ name = f.other, count = 12 }
+			if a ~= 30 or c ~= 12 then problems[#problems + 1] = "the machine's output took " .. a .. " stone and " .. c .. " " .. f.other .. " of 30 and 12" end
+		end
+	end
+	if f.plain then f.plain.get_inventory(defines.inventory.crafter_output).insert{ name = "stone", count = 5 } end
+	--- CHANCE (part c): a network of its own (the stone of the first one is in a machine's output), a CPU, a provider with
+	--- the pattern of the chance recipe, a second pulveriser next to it
+	local c = { jobs = {}, problems = {} }
+	storage.chance = c
+	local eei2 = at("electric-energy-interface", -4, -12)
+	if eei2 then eei2.power_production = 5e6 eei2.electric_buffer_size = 5e7 eei2.energy = 5e7 end
+	at("substation", -1, -12)
+	c.ctrl = at("me-network-controller", 1, -8)               -- (tiles 0..1, -9..-8)
+	c.drive = at("me-drive", 2.5, -8.5)
+	c.cpu = at("me-1k-crafting-storage", 2.5, -9.5)
+	c.provider = at("me-pattern-provider", 3.5, -8.5)
+	c.machine = at(name, 4 + w / 2, (h % 2 == 1 and 0.5 or 1) - 9, { raise_built = false })
+	if c.drive and c.provider and prototypes.recipe["zz-me-se-chance"] then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "me-16k-storage-cell", count = 1 }
+		remote.call(NET, "insert_cell", c.drive, inv[1], 1)
+		inv.destroy()
+		remote.call(NET, "store_in_drive", c.drive, "stone", 2000)
+		local pinv = game.create_inventory(2)
+		pinv.insert{ name = "me-blank-pattern", count = 1 }
+		local where, why = remote.call(PT, "encode_def", pinv, nil, { kind = "crafting", recipe = "zz-me-se-chance" })
+		local stack = pinv.find_item_stack("me-encoded-pattern")
+		if not (where and stack and remote.call(AC, "insert_pattern", c.provider, stack)) then
+			c.problems[#c.problems + 1] = "no pattern of the chance recipe in the provider: " .. tostring(why)
+		end
+		pinv.destroy()
+	else
+		c.problems[#c.problems + 1] = "the chance network was not built (or no recipe zz-me-se-chance)"
+	end
+end
+
+--- CHANCE: one job after the other (called every 30 ticks)
+local CHANCE_JOBS, CHANCE_AMOUNT = 5, 6
+local function chance_tick()
+	local c = storage.chance
+	if not (c and c.ctrl and c.ctrl.valid) or c.finished then return end
+	local function gears() return remote.call(NET, "count", c.ctrl, "iron-gear-wheel") end
+	local cur = c.jobs[#c.jobs]
+	if cur then
+		local job = remote.call(AC, "job", cur.id)
+		if job and (job.status == "running" or job.status == "queued") then return end
+		cur.status, cur.topups, cur.runs, cur.got = job and job.status, job and job.topups, job and job.total, gears() - cur.before
+		if #c.jobs >= CHANCE_JOBS then c.finished = true return end
+	end
+	local before = gears()
+	local id, why = remote.call(AC, "start", c.ctrl, "iron-gear-wheel", CHANCE_AMOUNT)
+	if not id then
+		c.problems[#c.problems + 1] = "job " .. (#c.jobs + 1) .. " did not start: " .. tostring(why)
+		c.finished = true
+		return
+	end
+	c.jobs[#c.jobs + 1] = { id = id, before = before }
+end
+
+local function chance_done()
+	local c = storage.chance
+	if not c then return end
+	local problems = c.problems
+	local topups, text = 0, {}
+	if #c.jobs < CHANCE_JOBS or not c.finished then
+		local cur = c.jobs[#c.jobs]
+		local job = cur and remote.call(AC, "job", cur.id)
+		problems[#problems + 1] = #c.jobs .. " of " .. CHANCE_JOBS .. " jobs ran to their end; the last one: " .. serpent.line(job and { status = job.status,
+			wait = job.wait, done = job.done, total = job.total, leases = job.leases, topups = job.topups, reason = job.reason, pool = job.pool })
+			.. ", the machine: " .. tostring(c.machine and c.machine.valid and c.machine.status) .. " recipe " .. tostring(c.machine and c.machine.valid and c.machine.get_recipe() and c.machine.get_recipe().name)
+	end
+	for i, j in ipairs(c.jobs) do
+		if j.status then
+			if j.status ~= "done" then problems[#problems + 1] = "job " .. i .. " ended " .. tostring(j.status) end
+			if (j.got or 0) < CHANCE_AMOUNT then problems[#problems + 1] = "job " .. i .. " made " .. tostring(j.got) .. " of " .. CHANCE_AMOUNT .. " gears" end
+			topups = topups + (j.topups or 0)
+			text[#text + 1] = tostring(j.got) .. " gears in " .. tostring(j.runs) .. " runs"
+		end
+	end
+	if topups == 0 and #problems == 0 then problems[#problems + 1] = "no job needed more runs than its plan: the test shows nothing (another seed)" end
+	local runs = 0
+	for _, j in ipairs(c.jobs) do runs = runs + (j.runs or 0) end
+	local sticks = c.ctrl and c.ctrl.valid and remote.call(NET, "count", c.ctrl, "iron-stick") or -1
+	if c.finished and sticks ~= runs then problems[#problems + 1] = "the network holds " .. sticks .. " iron sticks after " .. runs .. " runs" end
+	report("CHANCE", problems, CHANCE_JOBS .. " jobs of " .. CHANCE_AMOUNT .. " gears at 50 % a run (planned 12 runs each): "
+		.. table.concat(text, ", ") .. "; " .. topups .. " top-ups")
+end
+
+local function fragments_check()
+	local f = storage.fragments
+	if not f then return end
+	local problems = f.problems
+	if f.machine and f.ctrl and f.bus then
+		local function count(n) return remote.call(NET, "count", f.ctrl, n) end
+		local out = f.machine.get_inventory(defines.inventory.crafter_output)
+		local info = remote.call(SB, "info", f.bus) or {}
+		if info.status ~= "ok" or info.side ~= "item" then problems[#problems + 1] = "the bus on the machine: status " .. tostring(info.status) .. ", side " .. tostring(info.side) end
+		if count("stone") ~= 30 or count(f.other or "stone") ~= (f.other and 12 or 30) then
+			problems[#problems + 1] = "the network counts " .. count("stone") .. " stone and " .. count(f.other or "stone") .. " " .. tostring(f.other)
+				.. ", the machine's output holds 30 and 12"
+		end
+		local got = remote.call(NET, "extract", f.ctrl, "stone", 10)
+		if got ~= 10 or out.get_item_count("stone") ~= 20 then
+			problems[#problems + 1] = "an extraction of 10 stone took " .. tostring(got) .. ", the machine's output holds " .. out.get_item_count("stone")
+		end
+		local put = remote.call(NET, "insert", f.ctrl, "stone", 50)
+		if out.get_item_count("stone") ~= 20 then problems[#problems + 1] = "stone stored in the network went into the machine's output: " .. out.get_item_count("stone") end
+		if count("stone") ~= 70 then problems[#problems + 1] = "after 50 stone stored (" .. tostring(put) .. ") the network counts " .. count("stone") .. ", not 70" end
+		local info2 = remote.call(SB, "info", f.bus2) or {}
+		if info2.side == "item" and info2.status == "ok" then problems[#problems + 1] = "a storage bus on an assembling machine 2 has an item storage" end
+		if count("stone") ~= 70 then problems[#problems + 1] = "the assembling machine's output is counted: " .. count("stone") end
+	end
+	report("FRAGMENTS", problems, "a storage bus on " .. tostring(f.machine_name) .. " (recipe " .. tostring(f.recipe) .. "): its output slots, with stone and "
+		.. tostring(f.other) .. ", are network storage to take from")
 end
 
 --------------------------------------------------------------------------------
@@ -770,9 +967,13 @@ STEPS[10] = function()
 	place_test()
 	build()
 	space_asm_build()
+	fragments_build()
 end
 
-STEPS[150] = function() space_asm_start() end
+STEPS[150] = function()
+	space_asm_start()
+	fragments_check()
+end
 
 local function zones_check()
 	local t = storage.t
@@ -942,8 +1143,11 @@ STEPS[700] = function()
 	for _, p2 in ipairs(problems) do fail("SURFACE: " .. p2) end
 end
 
+for tick = 180, 1950, 30 do STEPS[tick] = STEPS[tick] or chance_tick end
+
 STEPS[2000] = function()
 	space_asm_done()
+	chance_done()
 	local got = job_done()
 	report("JOB", got == "done" and {} or { got }, "the job started before the launch ran over both moves and made its 32 iron sticks")
 	local problems = {}

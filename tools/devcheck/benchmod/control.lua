@@ -40,6 +40,8 @@ local V = require("compat")       -- issue #487: the calls that changed from Fac
 local NET, IO, SB, AC, CIRC, TERM = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-storagebus",
 	"gregtorio-me-autocraft", "gregtorio-me-circuit", "gregtorio-me-terminal"
 local SURFACE = "devcheck-bench"
+--- issue #708: the outposts and the ship (their functions below the latency probes)
+local SH = { W = 32, DOCK = "devcheck-dock", FLIGHT = "devcheck-flight" }
 local X0, Y0 = 8, 8                   -- the first cable row starts here; the spine runs at X0 - 1
 local PITCH = 11                      -- rows: 4 tiles north side, the cable, 4 tiles south side, 2 tiles power
 local SLOT = 4                        -- slot width: a 3x3 target and one free column
@@ -1114,6 +1116,7 @@ local function build_me()
 		end
 	end
 	b.lifs = nil
+	SH.outposts(b)                                                             -- (issue #708)
 	local net = remote.call(NET, "network", b.anchor)
 	local members_all, cells_all, fcells_all, sb_all, fsb_all = 0, 0, 0, 0, 0
 	for k = 1, K do
@@ -2419,6 +2422,321 @@ local function engine_profile(b)
 end
 
 --------------------------------------------------------------------------------
+--- issue #708: surfaces and a moved ship (Space Exploration)
+---
+--- Outposts (`C.outposts` = K, scene "me"): K more surfaces, each with an ME Quantum Bridge, eight cables, an ME Interface
+--- without rows and an ME Storage Bus on an empty chest; the partner bridges stand in a row north of the scene, cabled to
+--- the first network by the mod's cable router. The network then spans K + 1 surfaces and the window measures it as any
+--- other run (the outposts hold nothing, so the conservation check of the scene's surface stays whole).
+---
+--- The ship (`C.ship` = N, after the build burst): a network of its own of about N ME blocks on the surface
+--- "devcheck-dock" (a controller, two drives with cells, a 2x2 Crafting CPU, and per row of 32 tiles a cable row, import
+--- and storage buses on chests north of it and interfaces south of it: the burst's mix), moved to "devcheck-flight" and
+--- back the way Space Exploration's scripts/spaceship-clone.lua moves a spaceship: LuaSurface.clone_brush over the ship's
+--- tiles, then every original destroyed with raise_destroy, in one tick. Timed: the clone, the removal, the tick after
+--- (the mod's work of the next tick: the carried job, the wakes). Then the same number of steel chests moved the same way
+--- (the engine's and the other mods' share), then the ship again with an ME Quantum Bridge to the scene's network (a move
+--- of a part of a large network).
+--------------------------------------------------------------------------------
+
+
+function SH.outposts(b)
+	local K = C.outposts or 0
+	if K <= 0 then return end
+	local s = surface()
+	local QB = "gregtorio-me-qbridge"
+	local partners, made = {}, 0
+	--- (rows of 12 partners, 4 tiles apart, north of the scene: within its width at every size; a bridge draws its power
+	--- where it stands, so every row has its substations)
+	for row = 0, math.floor((K - 1) / 12) do power_row(Y0 - 14 - 7 * row + 2, X0 + 5, X0 + 6 + 48) end
+	for k = 1, K do
+		local col, row = (k - 1) % 12, math.floor((k - 1) / 12)
+		local e = s.create_entity{ name = "me-quantum-bridge", position = { X0 + 6 + 4 * col + 0.5, Y0 - 14 - 7 * row + 0.5 }, force = "player", raise_built = true }
+		if e then partners[k] = e else fail("outpost partner bridge " .. k) end
+	end
+	local members = { b.anchor }
+	for k = 1, K do members[#members + 1] = partners[k] end
+	local _, unreached = remote.call(NET, "connect", members, 4)
+	for _, e in pairs(unreached or {}) do fail("no cable path to the partner bridge at " .. e.position.x) end
+	for k = 1, K do
+		local o = game.create_surface("devcheck-outpost-" .. k, { width = 64, height = 64, peaceful_mode = true })
+		o.generate_with_lab_tiles = true
+		o.request_to_generate_chunks({ 0, 0 }, 1)
+		o.force_generate_chunk_requests()
+		local function at(name, x, yy, dir)
+			local e = o.create_entity{ name = name, position = { x, yy }, force = "player", direction = dir, raise_built = true }
+			if e then made = made + 1 else fail("outpost " .. k .. ": " .. name) end
+			return e
+		end
+		--- (a bridge draws its power where it stands)
+		local eei = o.create_entity{ name = "electric-energy-interface", position = { 0, 5 }, force = "player" }
+		if eei then eei.power_production = 5e7 eei.electric_buffer_size = 1e8 eei.energy = 1e8 end
+		o.create_entity{ name = "substation", position = { 3, 5 }, force = "player" }
+		local bridge = at("me-quantum-bridge", 0.5, 0.5)
+		for x = 2, 9 do at("me-cable", x + 0.5, 0.5) end
+		at("me-network-interface", 10.5, 0.5)
+		o.create_entity{ name = "steel-chest", position = { 9.5, -1.5 }, force = "player" }
+		at("me-storage-bus", 9.5, -0.5, defines.direction.north)
+		if bridge and partners[k] then
+			remote.call(QB, "set_frequency", bridge, 7000 + k)
+			remote.call(QB, "set_frequency", partners[k], 7000 + k)
+		end
+	end
+	b.outposts = { n = K, blocks = made }
+end
+
+--- at the first probe: every outpost is a part of the first network (the bridges link at the network's slow step)
+function SH.outposts_check(b)
+	local K = b.outposts and b.outposts.n or 0
+	if K <= 0 then return end
+	local net = remote.call(NET, "network", b.anchor)
+	local linked = 0
+	for k = 1, K do
+		local o = game.surfaces["devcheck-outpost-" .. k]
+		local i = o and o.find_entities_filtered{ name = "me-network-interface" }[1]
+		if i and remote.call(NET, "same_network", b.anchor, i) then linked = linked + 1 end
+	end
+	if linked ~= K then log("DEVCHECK-BENCH-SHIP-FAIL outposts in the first network: " .. linked .. " of " .. K) end
+	local n = 0
+	for _ in pairs(game.surfaces) do n = n + 1 end
+	log_json("OUTPOSTS", { surfaces = K, linked = linked, blocks = b.outposts.blocks, members = net and net.members, all_surfaces = n })
+end
+
+--- the ship's rows for about n ME blocks
+function SH.rows(n) return math.max(1, math.ceil((n - 8) / (3 * SH.W + 6))) end
+
+function SH.tiles(rows) return { x1 = -6, y1 = -4, x2 = SH.W + 1, y2 = rows * 6 + 1 } end
+
+function SH.surface(name, rows)
+	local s = game.surfaces[name]
+	if s then return s end
+	local t = SH.tiles(rows)
+	s = game.create_surface(name, { width = 2 * (t.x2 + 40), height = 2 * (t.y2 + 40), peaceful_mode = true })
+	s.generate_with_lab_tiles = true
+	s.always_day = true
+	s.request_to_generate_chunks({ t.x2 / 2, t.y2 / 2 }, math.ceil(math.max(t.x2, t.y2) / 32) + 2)
+	s.force_generate_chunk_requests()
+	return s
+end
+
+function SH.build(b, n)
+	local rows = SH.rows(n)
+	local s = SH.surface(SH.DOCK, rows)
+	SH.surface(SH.FLIGHT, rows)
+	local blocks = 0
+	local function at(name, x, y, dir)
+		local e = s.create_entity{ name = name, position = { x, y }, force = "player", direction = dir, raise_built = true }
+		if not e then fail("ship: " .. name .. " at " .. x .. "," .. y) return nil end
+		if name:sub(1, 3) == "me-" then blocks = blocks + 1 end
+		return e
+	end
+	local eei = at("electric-energy-interface", -4, -2)
+	if eei then eei.power_production = 5e7 eei.electric_buffer_size = 1e8 eei.energy = 1e8 end
+	at("substation", -4, 1)
+	local ctrl = at("me-network-controller", -2, -2)
+	at("me-cable", -0.5, -1.5)                                                -- (controller - spine, CPU - spine)
+	at("me-cable", -0.5, 3.5)
+	local drives = { at("me-drive", -0.5, 0.5), at("me-drive", -0.5, 1.5) }
+	for k = 0, 3 do at(k == 0 and "me-1k-crafting-storage" or "me-crafting-unit", -2.5 + k % 2, 3.5 + math.floor(k / 2)) end
+	for y = -2, rows * 6 do at("me-cable", 0.5, y + 0.5) end                    -- the spine at x = 0
+	for r = 0, rows - 1 do
+		local y = 2 + r * 6
+		for i = 1, SH.W do
+			at("me-cable", i + 0.5, y + 0.5)
+			local c = s.create_entity{ name = "steel-chest", position = { i + 0.5, y - 1.5 }, force = "player" }
+			if c and i % 2 == 1 then chest_fill(c, RAW[i % #RAW + 1], 1) end
+			at(i % 2 == 1 and "me-import-bus" or "me-storage-bus", i + 0.5, y - 0.5, defines.direction.north)
+			at("me-network-interface", i + 0.5, y + 1.5)
+		end
+	end
+	for k, d in ipairs(drives) do
+		if d then
+			for slot = 1, 4 do insert_cell(d, "me-64k-storage-cell", slot == 1 and { ["iron-plate"] = 5000, ["copper-plate"] = 3000 } or {}, slot) end
+		end
+	end
+	b.ship = { rows = rows, ctrl = ctrl, blocks = blocks, on = SH.DOCK }
+	return blocks
+end
+
+--- every entity on the ship's tiles of `from` is cloned to `to` and the originals are destroyed with raise_destroy, as
+--- Space Exploration's SpaceshipClone.clone does it; returns the entities moved and the two profilers
+function SH.move(from, to, t, label)
+	local positions = {}
+	for x = t.x1, t.x2 do for y = t.y1, t.y2 do positions[#positions + 1] = { x = x, y = y } end end
+	--- (a profile run: the functions of the clone and of the removal, each alone)
+	local prof = label and C.profile and remote.interfaces["zz-me-bench-profile"]
+	if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end
+	local pc = helpers.create_profiler()
+	from.clone_brush{ source_offset = { 0, 0 }, destination_offset = { 0, 0 }, destination_surface = to, clone_tiles = false,
+		clone_entities = true, clone_decoratives = false, clear_destination_entities = false,
+		clear_destination_decoratives = false, expand_map = true, source_positions = positions }
+	pc.stop()
+	if prof then
+		log("DEVCHECK-BENCH-PROF-BURST " .. label .. "-clone")
+		remote.call("zz-me-bench-profile", "report")
+		remote.call("zz-me-bench-profile", "enable", false, C.exclusive)
+	end
+	local pd = helpers.create_profiler()
+	local n = 0
+	for _, e in pairs(from.find_entities_filtered{ area = { { t.x1, t.y1 }, { t.x2 + 1, t.y2 + 1 } } }) do
+		if e.valid then
+			e.destroy{ raise_destroy = true }
+			n = n + 1
+		end
+	end
+	pd.stop()
+	if prof then
+		log("DEVCHECK-BENCH-PROF-BURST " .. label .. "-destroy")
+		remote.call("zz-me-bench-profile", "report")
+	end
+	return n, pc, pd
+end
+
+function SH.fly(b, label)
+	local ship = b.ship
+	local from = game.surfaces[ship.on]
+	local to = game.surfaces[ship.on == SH.DOCK and SH.FLIGHT or SH.DOCK]
+	local before = remote.call(NET, "network", ship.ctrl)
+	local pos = ship.ctrl.position
+	local p = helpers.create_profiler()
+	local n, pc, pd = SH.move(from, to, SH.tiles(ship.rows), label)
+	p.stop()
+	ship.on = to.name
+	ship.ctrl = to.find_entity("me-network-controller", pos)
+	local after = ship.ctrl and remote.call(NET, "network", ship.ctrl)
+	local spilled = from.count_entities_filtered{ type = "item-entity" }
+	log({ "", "DEVCHECK-BENCH-BURST ", label, " ", ship.blocks, " ", game.tick, " ", p })
+	log({ "", "DEVCHECK-BENCH-BURST ", label, "-clone ", n, " ", game.tick, " ", pc })
+	log({ "", "DEVCHECK-BENCH-BURST ", label, "-destroy ", n, " ", game.tick, " ", pd })
+	log_json("SHIP", { step = label, entities = n, blocks = ship.blocks, members_before = before and before.members, members_after = after and after.members,
+		cells_before = before and before.cells, cells_after = after and after.cells, spilled = spilled,
+		plates = ship.ctrl and remote.call(NET, "count", ship.ctrl, "iron-plate") })
+	if not (after and before and after.cells == before.cells and spilled == 0) then
+		fail("ship " .. label .. ": cells " .. tostring(before and before.cells) .. " -> " .. tostring(after and after.cells) .. ", spilled " .. spilled)
+		log_json("SHIPFAIL", { step = label })
+	end
+end
+
+--- the tick after a step: the script time of that tick is the mod's work a move leaves for the next tick
+function SH.after(label, n)
+	local p = helpers.create_profiler()
+	p.stop()
+	log({ "", "DEVCHECK-BENCH-BURST ", label, " ", n, " ", game.tick, " ", p })
+end
+
+function SH.tick(b, t)
+	local n = C.ship
+	if t == 1 then
+		local p = helpers.create_profiler()
+		local blocks = SH.build(b, n)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST ship-build ", blocks, " ", game.tick, " ", p })
+	elseif t == 120 then SH.fly(b, "ship-launch")
+	elseif t == 121 then SH.after("ship-launch-after", b.ship.blocks)
+	elseif t == 180 then SH.fly(b, "ship-land")
+	elseif t == 181 then SH.after("ship-land-after", b.ship.blocks)
+	elseif t == 240 then
+		--- the reference: as many steel chests as the ship has ME blocks, on a third surface, moved the same way
+		local rows = math.ceil(b.ship.blocks / SH.W)
+		local s = SH.surface("devcheck-plain", rows)
+		SH.surface("devcheck-plain-flight", rows)
+		local k = 0
+		for y = 0, rows - 1 do
+			for x = 1, SH.W do
+				if k < b.ship.blocks then
+					k = k + 1
+					s.create_entity{ name = "steel-chest", position = { x + 0.5, y + 0.5 }, force = "player", raise_built = true }
+				end
+			end
+		end
+		b.ship.plain_rows = rows
+	elseif t == 300 then
+		local rows = b.ship.plain_rows
+		local p = helpers.create_profiler()
+		local moved, pc, pd = SH.move(game.surfaces["devcheck-plain"], game.surfaces["devcheck-plain-flight"],
+			{ x1 = 0, y1 = -1, x2 = SH.W + 1, y2 = rows })
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST ship-plain ", moved, " ", game.tick, " ", p })
+		log({ "", "DEVCHECK-BENCH-BURST ship-plain-clone ", moved, " ", game.tick, " ", pc })
+		log({ "", "DEVCHECK-BENCH-BURST ship-plain-destroy ", moved, " ", game.tick, " ", pd })
+	elseif t == 360 then
+		--- the ship as a part of the scene's network: a quantum bridge on board, its partner cabled to the scene's network.
+		--- (The ship's own controller goes first: a network has one.)
+		local s = game.surfaces[b.ship.on]
+		local QB = "gregtorio-me-qbridge"
+		local old = b.ship.ctrl
+		local pos = old.position
+		old.destroy{ raise_destroy = true }
+		local on_ship = s.create_entity{ name = "me-quantum-bridge", position = { -4.5, 4.5 + 2 }, force = "player", raise_built = true }
+		local cable = s.create_entity{ name = "me-cable", position = { -2.5, 6.5 }, force = "player", raise_built = true }
+		local cable2 = s.create_entity{ name = "me-cable", position = { -1.5, 6.5 }, force = "player", raise_built = true }
+		local cable3 = s.create_entity{ name = "me-cable", position = { -0.5, 6.5 }, force = "player", raise_built = true }
+		local main = surface()
+		local partner = main.create_entity{ name = "me-quantum-bridge", position = { X0 + 3.5, Y0 - 9.5 }, force = "player", raise_built = true }
+		local _, unreached = remote.call(NET, "connect", { b.anchor, partner }, 4)
+		if not (on_ship and partner and cable and cable2 and cable3) or #(unreached or {}) > 0 then fail("ship: the bridge to the scene's network") end
+		remote.call(QB, "set_frequency", on_ship, 6999)
+		remote.call(QB, "set_frequency", partner, 6999)
+		remote.call(QB, "step")
+		b.ship.bridge_pos = on_ship and on_ship.position
+		b.ship.blocks = b.ship.blocks + 3
+	elseif t == 500 or t == 580 then
+		local label = t == 500 and "ship-bridged-launch" or "ship-bridged-land"
+		local ship = b.ship
+		local from = game.surfaces[ship.on]
+		local to = game.surfaces[ship.on == SH.DOCK and SH.FLIGHT or SH.DOCK]
+		local before = remote.call(NET, "network", b.anchor)
+		local was = from.find_entity("me-quantum-bridge", ship.bridge_pos)
+		if not (was and remote.call(NET, "same_network", b.anchor, was)) then fail("ship " .. label .. ": not in the scene's network through the bridge before the move") end
+		local p = helpers.create_profiler()
+		local moved, pc, pd = SH.move(from, to, SH.tiles(ship.rows), label)
+		p.stop()
+		ship.on = to.name
+		local bridge = to.find_entity("me-quantum-bridge", ship.bridge_pos)
+		local linked = bridge and remote.call(NET, "same_network", b.anchor, bridge)
+		local after = remote.call(NET, "network", b.anchor)
+		log({ "", "DEVCHECK-BENCH-BURST ", label, " ", ship.blocks, " ", game.tick, " ", p })
+		log({ "", "DEVCHECK-BENCH-BURST ", label, "-clone ", moved, " ", game.tick, " ", pc })
+		log({ "", "DEVCHECK-BENCH-BURST ", label, "-destroy ", moved, " ", game.tick, " ", pd })
+		log_json("SHIP", { step = label, entities = moved, blocks = ship.blocks, members_before = before and before.members,
+			members_after = after and after.members, cells_before = before and before.cells, cells_after = after and after.cells,
+			linked = linked or false, spilled = from.count_entities_filtered{ type = "item-entity" } })
+		if not (linked and after and before and after.members == before.members and after.cells == before.cells) then
+			fail("ship " .. label .. ": members " .. tostring(before and before.members) .. " -> " .. tostring(after and after.members)
+				.. ", linked " .. tostring(linked))
+			log_json("SHIPFAIL", { step = label })
+		end
+	elseif t == 501 or t == 581 then
+		SH.after(t == 501 and "ship-bridged-launch-after" or "ship-bridged-land-after", b.ship.blocks)
+	elseif t >= 600 then
+		for _, f in ipairs(fails) do log("DEVCHECK-BENCH-SHIP-FAIL " .. f) end
+		return true
+	end
+end
+
+local function on_ship_tick()
+	local b = storage.b
+	if SH.tick(b, game.tick - b.ship_t0) then
+		b.phase = "done"
+		script.on_event(defines.events.on_tick, nil)
+		log("DEVCHECK-BENCH-DONE")
+	end
+end
+
+--- the end of the run, or the ship first (issue #708)
+local function done(b)
+	if (C.ship or 0) > 0 and C.scene == "me" and not C.noent and not b.ship_t0 then
+		b.phase = "ship"
+		b.ship_t0 = game.tick
+		script.on_event(defines.events.on_tick, on_ship_tick)
+		return
+	end
+	b.phase = "done"
+	script.on_event(defines.events.on_tick, nil)
+	log("DEVCHECK-BENCH-DONE")
+end
+
+--------------------------------------------------------------------------------
 --- build burst (issue #38): `C.burst` ME blocks built in one tick and removed in one tick, connected to the
 --- network (a cable column from the spine's top up to a cable row; import and storage buses on chests north of the
 --- row, interfaces south of it), then the same number of plain chests, each timed. The devcheck reads the ticks'
@@ -2682,9 +3000,7 @@ local function on_burst_tick()
 		cable_ghost_tick(b, t)
 	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area))
 		and (t > 580 or (C.cable_ghosts or 0) == 0) then   -- (after #560's assembler burst, and #670's cable ghosts)
-		b.phase = "done"
-		script.on_event(defines.events.on_tick, nil)
-		log("DEVCHECK-BENCH-DONE")
+		done(b)                                              -- (issue #708: the ship first, when asked for)
 	end
 end
 
@@ -2694,9 +3010,7 @@ local function finish(b)
 		b.burst_t0 = game.tick
 		script.on_event(defines.events.on_tick, on_burst_tick)
 	else
-		b.phase = "done"
-		script.on_event(defines.events.on_tick, nil)
-		log("DEVCHECK-BENCH-DONE")
+		done(b)
 	end
 end
 
@@ -2762,6 +3076,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		start_jobs(b)
 	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
+		if C.scene == "me" then SH.outposts_check(b) end            -- (issue #708)
 		if C.scene == "planner" then planner_stock(b) end           -- (before the count: the stock is part of the world)
 		b.p0 = probe(b)
 		if C.scene == "planner" then planner_probe(b) end

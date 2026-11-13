@@ -2995,6 +2995,12 @@ local function job_step(s, job, work)
 
 	--- 4) done?
 	if job.done_runs >= job.total_runs and #job.leases == 0 then
+		--- issue #710: the product came by chance and less of it than asked for: more runs, while the network has the
+		--- ingredients
+		if M.chance_top_up(job, net) then
+			set_wait(job, nil)
+			return
+		end
 		job.closing = "done"
 		job.closing_steps = 0
 		set_wait(job, nil)
@@ -3464,6 +3470,59 @@ function M.start(entity, key, amount, owner, want, waker)
 	return id, nil, plan
 end
 
+--- Issue #710: a requested product that a recipe gives by chance (Space Exploration's core fragment processing: a product at
+--- 30 %; any recipe with a probability or a range). The plan counts the product at its expected yield (product_yield:
+--- amount x probability, a range at its mean) and runs the pattern ceil(amount / yield) times; every other product of the
+--- runs goes into the network as it always did. Chance may give less than the plan expected. When all runs are done and the
+--- job has made less of its item than asked for, it adds the runs the shortfall needs at the expected yield (again) and
+--- takes their ingredients from the network's stock, as the start did, and goes on; so a job is done when the requested
+--- amount is there (more than asked for goes into the network with the rest). It ends with what it has, as before this
+--- issue, when the stock lacks an ingredient of those runs (nothing is crafted for a top-up: the plan is not made again),
+--- or after TOP_UPS rounds (a product at a tiny chance must not keep a CPU for ever; the level maintainer or the Crafting
+--- Card that asked starts the next job). Only the step that makes the job's item is topped up: an intermediate that came
+--- short is taken from the network's stock, or stalls the job, as before (step 5 of job_step).
+M.TOP_UPS = 8
+function M.chance_top_up(job, net)
+	local key = job.item
+	if job.closing or not key or (job.topups or 0) >= M.TOP_UPS then return false end
+	local short = job.amount - (job.sent or 0) - (job.pool[key] or 0)
+	if short <= FLUID_EPS then return false end
+	for i = #job.steps, 1, -1 do                           -- (the item's own step is the last one that makes it)
+		local step = job.steps[i]
+		local yield, exact = def_yield(step.def, key)
+		if yield > 0 then
+			if exact then return false end
+			local runs = math.ceil(short / yield - 1e-9)
+			local inputs = def_inputs(step.def)
+			local take = {}
+			for j = 1, #inputs do
+				local k = inputs[j][1]
+				local lack = inputs[j][2] * runs - (job.pool[k] or 0)
+				if lack > FLUID_EPS then
+					if is_fluid(k) then lack = lack + FLUID_MARGIN end
+					if base_count(net, k) < lack then return false end
+					take[#take + 1] = { k, lack }
+				end
+			end
+			for _, t in ipairs(take) do
+				local got
+				if is_fluid(t[1]) then
+					got = fluids.remove_key(net, t[1], t[2])
+				else
+					local name, q = N.parse_key(t[1])
+					got = N.extract(net, name, q, t[2])
+				end
+				if got > 0 then pool_add(job, t[1], got) end
+			end
+			step.runs = step.runs + runs
+			job.total_runs = job.total_runs + runs
+			job.topups = (job.topups or 0) + 1
+			return true
+		end
+	end
+	return false
+end
+
 --- Issue #418: the plan of `amount` more joins `job`: its ingredients are taken out of the network into the job's pool, each
 --- step adds its runs to the job's step of the same pattern (or comes after the job's steps), the job's amount, runs and
 --- bytes grow. Returns the job's id, nil and the plan (as M.start does), and true (merged).
@@ -3597,7 +3656,7 @@ function M.job(id)
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool, sent = job.sent or 0,
 		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
-		steps = steps, reason = job.reason, problem = job.problem }
+		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0 }
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)

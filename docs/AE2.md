@@ -1191,6 +1191,38 @@ first, the Space Exploration file on top of it:
   inside `pcall`, and kept for 10 seconds per surface (`scripts/fork-me-place.lua`), so a window that refreshes every
   second asks once in ten. Without Space Exploration, or when the call fails, everything shows the surface's name as
   before.
+- **Core mining** (issue #710). Space Exploration's core miner gives core fragments without end and drops them on the
+  tile in front of its output, as a mining drill does. Three ways to put it on an ME network:
+  - an **ME Interface on the output tile**: the interface is a chest to the game, the miner fills it directly, and what
+    lies in an interface that is no row of it goes into the network at its next visit (no belt, no inserter);
+  - a chest on the output tile with an **ME Import Bus** (the fragments move into the network) or an **ME Storage Bus**
+    (they stay in the chest and count as network storage);
+  - with several miners, a belt to one chest with a bus, as with any ore.
+
+  **Core fragment processing** (the pulveriser, 20 fragments into up to a dozen products, some of them by chance, some
+  recipes with a fluid):
+  - kept running: an **ME Export Bus** with the fragment as its filter on the pulveriser fills it (set the pulveriser's
+    recipe), and an **ME Storage Bus on the pulveriser** makes its output slots network storage: everything the recipe
+    leaves there shows in the terminal and is taken out of the machine when the network needs it. This storage is to take
+    from only, the network never stores into a machine's output; it works on the machine of core fragment processing
+    alone (a storage bus on another crafting machine is what it was: its fluid boxes, or nothing). An **ME Import Bus** on
+    the pulveriser moves the products into the drives instead. A fluid product or ingredient goes through a second bus on
+    a pipe or tank of the pulveriser, or through pipes.
+  - on demand: an **ME Pattern Provider next to the pulveriser** with a crafting pattern of the fragment recipe (the
+    ME Pattern Terminal encodes it from the recipe). A job for one product runs the recipe as often as its expected yield
+    says, every other product goes into the network.
+
+  **Products that come by chance** (issue #710; a fragment recipe's product at 30 %, any recipe with a probability or a
+  range). The crafting plan counts such a product at its expected yield (amount × probability, a range at its mean) and
+  runs the recipe that often; all the other products of the runs go into the network, as byproducts always did. Chance
+  may give less than expected: when the runs are done and the job has made less of its item than was asked for, it adds
+  the runs the shortfall needs (again at the expected yield), takes their ingredients from the network's stock, and goes
+  on. So the job is done when the requested amount is there; what chance gives beyond it goes into the network. A job
+  ends with less than asked for only when the network has no more of an ingredient for those runs (nothing is crafted
+  for them, the plan is not made again) or after 8 such rounds (a product at a tiny chance must not hold a Crafting CPU
+  for ever; a level maintainer or a Crafting Card asks again). Only the job's own item is topped up this way; a part made
+  on the way that came short is taken from the network's stock as before. A processing pattern is not affected: its
+  rows are amounts every run gives.
 - **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
   one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
   an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while
@@ -1203,7 +1235,7 @@ first, the Space Exploration file on top of it:
   pad, its delivery cannon chest and its arcolink storage (a linked container), and with its machines like with any
   crafting machine.
 - **Many surfaces.** Nothing in the scheduler walks the surfaces or all members per tick: the blocks are visited from
-  queues, whatever surface they stand on (a measurement with Space Exploration: issue #708).
+  queues, whatever surface they stand on (measured with Space Exploration, 50 more surfaces and a moved ship: docs/PERFORMANCE.md, issue #708).
 - **Tested** headless by `devcheck.py se` (`tools/devcheck/semod`): the move is made the way Space Exploration's
   `scripts/spaceship-clone.lua` makes it; and by `devcheck.py launch` (issue #706): a real spaceship in Nauvis Orbit
   with an ME network on board, launched and landed on a headless server through Space Exploration's own

@@ -46,6 +46,25 @@ for _, list in pairs({ M.OUTPUT, M.INPUT, M.STORAGE }) do
 	list["linked-container"] = defines.inventory.linked_container_main
 end
 
+--- Issue #710 (Space Exploration's core fragment processing): a crafting machine whose output slots a storage bus makes
+--- network storage, to take from only (never to store into: they are a machine's output). It is the machine of the
+--- recipe category "core-fragment-processing" (Space Exploration's pulveriser): a fragment recipe has up to a dozen
+--- products, and a storage bus on the machine shows and hands out all of them without a chest and an inserter behind it.
+--- By prototype, cached; without that category (without Space Exploration) no machine is one and nothing changes.
+local output_cache = {}
+function M.output_storage(entity)
+	local t = entity.type
+	if t ~= "assembling-machine" and t ~= "furnace" then return false end
+	local name = entity.name
+	local v = output_cache[name]
+	if v == nil then
+		local categories = entity.prototype.crafting_categories
+		v = categories ~= nil and categories["core-fragment-processing"] == true
+		output_cache[name] = v
+	end
+	return v
+end
+
 --- the hidden side tanks of the ME Interface (prototypes/network.lua)
 M.SIDE = "me-network-interface-side"
 
