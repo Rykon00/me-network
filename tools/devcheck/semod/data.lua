@@ -5,5 +5,5 @@ data:extend({ {
 	ingredients = { { type = "item", name = "stone", amount = 2 } },
 	results = { { type = "item", name = "iron-stick", amount = 1 },
 		{ type = "item", name = "iron-gear-wheel", amount = 1, independent_probability = 0.5 } },
-	main_product = "iron-stick", icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+	main_product = "iron-stick", icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product",
 } })
