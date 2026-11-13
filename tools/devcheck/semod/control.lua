@@ -22,6 +22,19 @@
 ---            the Crafting CPU is in the mode "automation". After each move the job is the same job, running on the CPU
 ---            at the new place, the maintainer's row and the job's owner name each other, the machine's lease went along
 ---            (no "machine-lost"), the mode stayed; at the end the job is done and the 32 sticks are in the network.
+---   LOGISTICS issue #707: a logistic network on the ship that flies along. A roboport with 10 logistic robots, an ME
+---            Logistic Interface (Automatic mode) with an offer row (40 gears, of which a vanilla requester chest wants 20) and
+---            a request row (keep 20 stone bricks, which a vanilla passive provider holds), an ME Logistic Storage Bus that
+---            shows a vanilla storage chest (120 plastic bars). The robots are at work during both moves. After each move:
+---            the interface and the bus are in the roboport's logistic network of the new place (`rec.lid`, the bus's
+---            claim), the rows are the same, the interface has exactly its three hidden chests and none stands alone, the
+---            automatic mode keeps no stock of a logistic network that is gone, and every gear, brick and plastic bar is
+---            there exactly once (cells, chests, hidden chests, robots' cargo, the ground). At the end the requester has its
+---            20 gears and the network its 20 bricks. Robot attrition: between the moves a robot that carries an item is
+---            crashed the way the mod Robot Attrition (a dependency of Space Exploration) crashes one (its bot_crash: the
+---            cargo into a "logistic-robot-dropped-cargo" container marked for deconstruction, the robot dies; the mod itself
+---            only strikes logistic networks with more than 50 robots in the air and never on a spaceship). The item is still
+---            counted once, a construction robot brings it back and the deliveries end all the same.
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -48,8 +61,11 @@ local function report(key, problems, text)
 	return line .. (#problems > 0 and (" PROBLEMS: " .. table.concat(problems, " ;; ")) or "")
 end
 
-local SHIP = { x1 = -8, y1 = -6, x2 = 9, y2 = 5 }       -- the ship's tiles in Nauvis Orbit (inclusive)
-local REAL = { x1 = -8, y1 = -6, x2 = 9, y2 = 11 }      -- issue #706: the real ship (walls on its border, console, tank and engine below the network)
+local SHIP = { x1 = -8, y1 = -6, x2 = 21, y2 = 5 }      -- the ship's tiles in Nauvis Orbit (inclusive; x 10..20: the logistic network of issue #707)
+local REAL = { x1 = -8, y1 = -6, x2 = 21, y2 = 11 }     -- issue #706: the real ship (walls on its border, console, tank and engine below the network)
+local LIF, LIF_NAME = "gregtorio-me-logistic-interface", "me-logistic-interface"
+local LIF_CHESTS = { LIF_NAME .. "-provider", LIF_NAME .. "-requester", LIF_NAME .. "-storage" }
+local GOODS = { ["iron-gear-wheel"] = 100, ["stone-brick"] = 200, ["plastic-bar"] = 120 }   -- issue #707: what must stay exactly once
 local REAL_LAUNCH = settings.startup["zz-me-se-real-launch"] and settings.startup["zz-me-se-real-launch"].value
 local FLIGHT = "me-se-flight"                           -- the surface it flies on
 local LAND = { dx = 60, dy = 40 }                       -- where it lands on Nauvis, relative to its tiles
@@ -157,9 +173,28 @@ local function build(real)
 	t.machine = at("assembling-machine-2", 4.5, 3.5)
 	if t.machine then t.machine.set_recipe("iron-gear-wheel") end
 	t.provider2 = at("me-pattern-provider", 2.5, 3.5)             -- (issue #704: next to the machine, the job's provider)
+	--- issue #707: a logistic network on the ship
+	at("substation", 10, -4)
+	if real then
+		for _, x in ipairs({ 17, 19 }) do
+			local acc = at("accumulator", x, 3)
+			if acc then acc.energy = acc.electric_buffer_size end
+		end
+	end
+	t.robo = at("roboport", 13, -3)
+	if t.robo then
+		t.robo.energy = t.robo.electric_buffer_size           -- (an empty roboport draws megawatts: the real ship runs on accumulators)
+		t.robo.insert{ name = "logistic-robot", count = 10 }
+		t.robo.insert{ name = "construction-robot", count = 2 }
+	end
+	t.lif = at(LIF_NAME, 16.5, -3.5)
+	t.lsbus = at("me-logistic-storage-bus", 16.5, -1.5)
+	t.req = at("requester-chest", 18.5, -3.5)
+	t.store = at("storage-chest", 18.5, -1.5)
+	t.prov = at("passive-provider-chest", 18.5, 0.5)
 	local members = {}
 	for _, k in ipairs({ "ctrl", "drive", "provider", "iface", "port", "pterm", "ap", "maint", "sbus", "xbus", "tunnel_in",
-			"tunnel_out", "cpu", "cpu2", "bridge", "provider2" }) do
+			"tunnel_out", "cpu", "cpu2", "bridge", "provider2", "lif", "lsbus" }) do
 		if t[k] then members[#members + 1] = t[k] end
 	end
 	local _, unreached = remote.call(NET, "connect", members, 16)
@@ -225,6 +260,18 @@ local function build(real)
 			end
 			inv.destroy()
 		end
+	end
+	if t.drive then remote.call(NET, "store_in_drive", t.drive, "iron-gear-wheel", GOODS["iron-gear-wheel"]) end
+	if t.store then t.store.insert{ name = "plastic-bar", count = GOODS["plastic-bar"] } end
+	if t.prov then t.prov.insert{ name = "stone-brick", count = GOODS["stone-brick"] } end
+	if t.req then
+		local point = t.req.get_logistic_point(defines.logistic_member_index.logistic_container)
+		local section = point.get_section(1) or point.add_section()
+		section.set_slot(1, { value = { name = "iron-gear-wheel", quality = "normal", comparator = "=" }, min = 20 })
+	end
+	if t.lif then
+		remote.call(LIF, "set_row", t.lif, "offer", 1, "iron-gear-wheel", 40)
+		remote.call(LIF, "set_row", t.lif, "request", 1, "stone-brick", 20)
 	end
 	if t.cpu then remote.call(AC, "set_cpu_mode", t.cpu, "automation") end
 	if t.maint then
@@ -336,7 +383,124 @@ end
 --------------------------------------------------------------------------------
 
 local KEYS = { "ctrl", "drive", "provider", "iface", "port", "bench", "pterm", "ap", "maint", "chest", "sbus", "xchest", "xbus",
-	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2" }
+	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2", "robo", "lif", "lsbus", "req", "store", "prov" }
+
+--------------------------------------------------------------------------------
+--- issue #707: the logistic network on the ship
+--------------------------------------------------------------------------------
+
+--- how many of `name` exist on the ship's surface outside the ME network's cells: in chests (the hidden ones of the
+--- logistic interface too), in the robots, in the roboport and on the ground
+local function physical(surface, name)
+	local n = 0
+	for _, e in pairs(surface.find_entities_filtered{ type = { "container", "logistic-container", "roboport" } }) do
+		if e.force.name == "player" then n = n + e.get_item_count(name) end
+	end
+	for _, e in pairs(surface.find_entities_filtered{ type = { "logistic-robot", "construction-robot" } }) do
+		local inv = e.get_inventory(defines.inventory.robot_cargo)
+		if inv then n = n + inv.get_item_count(name) end
+	end
+	for _, e in pairs(surface.find_entities_filtered{ type = "item-entity" }) do
+		if e.stack.name == name then n = n + e.stack.count end
+	end
+	return n
+end
+
+--- Robot Attrition's bot_crash (its control.lua) on a logistic robot of the ship that carries something: "crashed <item>",
+--- or "none" while no robot carries anything
+local function crash_robot()
+	local t = storage.t
+	local ln = t.robo and t.robo.valid and t.robo.logistic_network
+	for _, bot in pairs(ln and ln.logistic_robots or {}) do
+		local inventory = bot.get_inventory(defines.inventory.robot_cargo)
+		if not inventory.is_empty() then
+			local name = inventory[1].name
+			local drop = bot.surface.create_entity{ name = "logistic-robot-dropped-cargo",
+				position = { x = bot.position.x, y = bot.position.y + 1 }, force = bot.force }
+			drop.get_inventory(defines.inventory.chest)[1].transfer_stack(inventory[1])
+			drop.order_deconstruction(bot.force)
+			bot.force = "neutral"
+			bot.die()
+			storage.crashed = name
+			return "crashed " .. name
+		end
+	end
+	return "none"
+end
+
+--- `done`: the deliveries must have ended too. Returns false while they have not (and `done` is not asked)
+local function logistics(problems, done)
+	local t = storage.t
+	for _, k in ipairs({ "robo", "lif", "lsbus", "req", "store", "prov" }) do
+		if not (t[k] and t[k].valid) then problems[#problems + 1] = "logistics: " .. k .. " is not there" return end
+	end
+	local s = t.lif.surface
+	local ln = t.robo.logistic_network
+	local lid = ln and ln.network_id
+	if not lid then problems[#problems + 1] = "logistics: the roboport has no logistic network" return end
+	local info = remote.call(LIF, "info", t.lif) or {}
+	if info.lid ~= lid then problems[#problems + 1] = "logistics: the interface is in logistic network " .. tostring(info.lid) .. ", the roboport's is " .. lid end
+	local o, r = info.offer and info.offer[1], info.request and info.request[1]
+	if not (o and o.key == "iron-gear-wheel" and o.amount == 40 and r and r.key == "stone-brick" and r.amount == 20) then
+		problems[#problems + 1] = "logistics: the interface's rows: " .. serpent.line({ o, r })
+	end
+	if info.status ~= "ok" then
+		local net = remote.call(NET, "network", t.ctrl)
+		problems[#problems + 1] = "logistics: the interface's status is " .. tostring(info.status) .. " (the network: " .. tostring(net and net.status)
+			.. ", same network as the controller: " .. tostring(remote.call(NET, "same_network", t.ctrl, t.lif)) .. ")"
+	end
+	local bus = remote.call(SB, "info", t.lsbus) or {}
+	if bus.status and bus.status ~= "ok" then problems[#problems + 1] = "logistics: the logistic storage bus's status is " .. tostring(bus.status) end
+	--- the hidden chests: three on the interface's tile, none anywhere else on the surface
+	local p = t.lif.position
+	local here = s.count_entities_filtered{ name = LIF_CHESTS, area = { { p.x - 0.4, p.y - 0.4 }, { p.x + 0.4, p.y + 0.4 } } }
+	local all = s.count_entities_filtered{ name = LIF_CHESTS }
+	if here ~= 3 or all ~= 3 then problems[#problems + 1] = "logistics: " .. here .. " hidden chests on the interface's tile, " .. all .. " on the surface (3 and 3)" end
+	--- the automatic mode's books name logistic networks that exist
+	local demand = remote.call(LIF, "demand") or {}
+	for id in pairs(demand.auto or {}) do
+		if id ~= lid then problems[#problems + 1] = "logistics: the automatic mode keeps a stock for logistic network " .. id .. " (the ship's is " .. lid .. ")" end
+	end
+	for id in pairs(demand.points or {}) do
+		if id ~= lid then problems[#problems + 1] = "logistics: a point list of logistic network " .. id .. " (the ship's is " .. lid .. ")" end
+	end
+	--- everything exactly once: the cells (the network's count less what the bus shows of the storage chests) and the rest
+	local shown = bus.status == "ok" or bus.status == nil
+	for name, want in pairs(GOODS) do
+		local count = remote.call(NET, "count", t.ctrl, name)
+		local in_storage = 0
+		for _, c in pairs(s.find_entities_filtered{ name = "storage-chest" }) do in_storage = in_storage + c.get_item_count(name) end
+		local cells = count - (shown and in_storage or 0)
+		local total = cells + physical(s, name)
+		if total ~= want then
+			problems[#problems + 1] = "logistics: " .. total .. " " .. name .. " exist (" .. cells .. " in cells, " .. physical(s, name)
+				.. " in chests, robots and on the ground; the network counts " .. count .. "), there were " .. want
+		end
+	end
+	if remote.call(NET, "count", t.ctrl, "plastic-bar") ~= t.store.get_item_count("plastic-bar") then
+		problems[#problems + 1] = "logistics: the network counts " .. remote.call(NET, "count", t.ctrl, "plastic-bar") .. " plastic bars through the logistic storage bus, the storage chest holds "
+			.. t.store.get_item_count("plastic-bar")
+	end
+	local gears, bricks = t.req.get_item_count("iron-gear-wheel"), remote.call(NET, "count", t.ctrl, "stone-brick")
+	local finished = gears == 20 and bricks == 20
+	if done then
+		if not storage.crashed then problems[#problems + 1] = "logistics: no robot was crashed (none carried an item between the moves)" end
+		local left = s.count_entities_filtered{ name = "logistic-robot-dropped-cargo" }
+		if left > 0 then problems[#problems + 1] = "logistics: " .. left .. " dropped cargo of the crashed robot was not collected" end
+	end
+	if done and not finished then
+		local where = {}
+		for _, e in pairs(s.find_entities_filtered{ type = { "container", "logistic-container", "logistic-robot", "construction-robot" } }) do
+			local inv = e.get_inventory(e.type:find("robot") and defines.inventory.robot_cargo or defines.inventory.chest)
+			local n = inv and inv.get_item_count("stone-brick") or 0
+			if n > 0 then where[#where + 1] = e.name .. " " .. n end
+		end
+		problems[#problems + 1] = "logistics: the requester chest holds " .. gears .. " of 20 gears, the network " .. bricks .. " of 20 stone bricks ("
+			.. table.concat(where, ", ") .. "; request row " .. serpent.line(info.request and info.request[1]) .. ", robots available "
+			.. ln.available_logistic_robots .. " of " .. ln.all_logistic_robots .. ")"
+	end
+	return finished
+end
 
 --------------------------------------------------------------------------------
 --- issue #704: the job that runs over the moves
@@ -486,6 +650,7 @@ STEPS[200] = function()
 	local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = t.ctrl.surface.index })
 	if not hook or hook.allow_delete ~= false then problems[#problems + 1] = "the surface with the network may be deleted" end
 	job_kept(problems)
+	if logistics(problems) then problems[#problems + 1] = "logistics: the robots' deliveries ended before the launch (nothing in flight during the move)" end
 	report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. " on power of that surface, bridged to Nauvis: " .. table.concat(storage.before, "; "))
 	--- the launch
 	problems = {}
@@ -508,6 +673,8 @@ STEPS[330] = function()
 	if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge ship - Nauvis is not linked" end
 	if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 	job_carried(problems)
+	logistics(problems)
+	crash_robot()                                            -- (issue #707: robot attrition, before the landing)
 	report("TRAVEL", problems, "the network works on the ship's surface, bridged to Nauvis; the crafting job runs on")
 	problems = {}
 	local from = t.ctrl.surface
@@ -529,6 +696,7 @@ STEPS[460] = function()
 		problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 	end
 	job_carried(problems)
+	logistics(problems)
 	report("LANDED", problems, "the network works on Nauvis as before the launch; the crafting job runs on")
 	--- COPY: a clone whose source stays
 	problems = {}
@@ -610,9 +778,13 @@ STEPS[700] = function()
 	for _, p2 in ipairs(problems) do fail("SURFACE: " .. p2) end
 end
 
-STEPS[950] = function()
+STEPS[2000] = function()
 	local got = job_done()
 	report("JOB", got == "done" and {} or { got }, "the job started before the launch ran over both moves and made its 32 iron sticks")
+	local problems = {}
+	logistics(problems, true)
+	report("LOGISTICS", problems, "the logistic interface and the logistic storage bus in the ship's logistic network over both moves: "
+		.. "nothing lost or doubled, the requester chest has its 20 gears, the network its 20 stone bricks")
 	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
 end
 
@@ -651,11 +823,23 @@ local function remember()
 	storage.where = where
 end
 
+--- the real ship runs on accumulators (an electric energy interface is too heavy for Space Exploration's integrity check):
+--- they are filled again at every step of the harness, the test is not about the ship's power plant
+local function charge()
+	local t = storage.t
+	if not (t and t.ctrl and t.ctrl.valid) then return end
+	for _, acc in pairs(t.ctrl.surface.find_entities_filtered{ name = "accumulator" }) do acc.energy = acc.electric_buffer_size end
+end
+
 if REAL_LAUNCH then
 	remote.add_interface("me-se-launch", {
-		--- the network inside a real spaceship in Nauvis Orbit; every technology researched (the integrity limit of the ship)
+		--- the network inside a real spaceship in Nauvis Orbit; the spaceship technologies researched (the integrity limit of the ship)
 		build = function()
-			game.forces.player.research_all_technologies()
+			--- (only the technologies of the ship's integrity: with every technology the robots of issue #707 would carry and
+			--- fly so much more that their deliveries ended before the launch)
+			for name, tech in pairs(game.forces.player.technologies) do
+				if name:find("spaceship", 1, true) then tech.researched = true end
+			end
 			local line = build(true)
 			remember()
 			return "Space Exploration " .. tostring(script.active_mods[SE]) .. ": " .. line
@@ -663,6 +847,7 @@ if REAL_LAUNCH then
 		--- before the launch: the network works; what it holds is kept for the comparisons
 		keep = function()
 			local t = storage.t
+			charge()
 			storage.before = snapshot()
 			local problems = {}
 			local net = remote.call(NET, "network", t.ctrl)
@@ -671,6 +856,7 @@ if REAL_LAUNCH then
 			if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface in orbit holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 			storage.old_ctrl = t.ctrl.unit_number
 			job_kept(problems)
+			if logistics(problems) then problems[#problems + 1] = "logistics: the robots' deliveries ended before the launch (nothing in flight during the move)" end
 			remember()
 			return report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. ", bridged to Nauvis: " .. table.concat(storage.before, "; "))
 		end,
@@ -692,6 +878,7 @@ if REAL_LAUNCH then
 				spilled = #list
 			end
 			moved_ok(problems, spilled, from)
+			charge()
 			if t.ctrl and t.ctrl.valid then
 				for _, p in ipairs(compare(storage.before, snapshot(), { status = true })) do problems[#problems + 1] = p end
 				if remote.call(MOVE, "resolve", storage.old_ctrl) ~= t.ctrl.unit_number then
@@ -704,6 +891,7 @@ if REAL_LAUNCH then
 		--- a while after a move: everything as before the launch, the bridge linked, the interfaces filled
 		works = function(key)
 			local t, problems = storage.t, {}
+			charge()
 			for _, p in ipairs(compare(storage.before, snapshot())) do problems[#problems + 1] = p end
 			if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge to Nauvis is not linked" end
 			if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
@@ -711,10 +899,24 @@ if REAL_LAUNCH then
 				problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 			end
 			job_carried(problems)
+			logistics(problems)
 			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " as before the launch; the crafting job runs on")
 		end,
+		--- issue #707: robot attrition, "crashed <item>" or "none" (no robot carries anything now)
+		crash = function() return crash_robot() end,
+		--- issue #707: "done" when the deliveries ended with everything in place, "running", or what is wrong
+		logistics = function()
+			local problems = {}
+			charge()
+			local finished = logistics(problems)
+			if #problems > 0 then return table.concat(problems, " ;; ") end
+			if not finished then return "running" end
+			problems = {}
+			logistics(problems, true)                            -- (the crashed robot's cargo collected)
+			return #problems == 0 and "done" or (problems[1]:find("not collected", 1, true) and "running" or table.concat(problems, " ;; "))
+		end,
 		--- issue #704: "done" when the job started before the launch made its sticks, "running", or what went wrong
-		job = function() return job_done() end,
+		job = function() charge() return job_done() end,
 		failures = function() return #fails end,
 	})
 end
