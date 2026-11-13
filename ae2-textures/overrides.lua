@@ -152,6 +152,18 @@ return {
 		["__me-network__/graphics/icons/hd/me-molecular-assembler.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
 	},
 	["item/me-molecular-assembler"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
+	--- ME Network issue #731: the ME Space Molecular Assembler (with Space Exploration only: data-final-fixes.lua lets these
+	--- entries be absent) is ME Network's assembler in a blue tint, so it gets the same AE2 pictures under that tint; no new image
+	["assembling-machine/me-space-molecular-assembler"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-molecular-assembler-idle.png"] = { filename = "__me-network-ae2-textures__/graphics/blocks/me-molecular-assembler-idle.png",
+			repeat_count = 12 },
+		["__me-network__/graphics/entity/fork/ae2/hd/me-molecular-assembler-working.png"] = {
+			filename = "__me-network-ae2-textures__/graphics/blocks/me-molecular-assembler-working.png", frame_count = 12, line_length = 1,
+			animation_speed = 0.045 },
+		["__me-network__/graphics/icons/hd/me-molecular-assembler.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
+	},
+	["item/me-space-molecular-assembler"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
+	["technology/me-space-autocrafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-autocrafting.png", icon_size = 256 },
 	--- the pattern provider (issue #269): AE2-Unofficial has none, so its purple interface skin (BlockInterfaceAlternate_Purple)
 	["display-panel/me-pattern-provider"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-pattern-provider.png"] = "__me-network-ae2-textures__/graphics/blocks/me-pattern-provider.png",
