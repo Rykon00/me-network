@@ -1955,6 +1955,7 @@ BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua 
 CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
 BURST_TICKS = 330               # after the latency probes: the build burst (build, remove, plain build, plain remove, issue #538: ghosts)
+SHIP_TICKS = 620                # issue #708: after the burst, the ship's steps (benchmod/control.lua SH.tick)
 CABLE_GHOST_TICKS = 260         # issue #670: after the burst, the cable ghost steps (ticks 330 to 580 of the burst)
 GHOST_WAIT = 600                # issue #538: the ghost paste waits for the allocation meter's ticks (ALLOC_FROM + ALLOC_TICKS)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
@@ -2354,6 +2355,10 @@ def bench_config(a, scene, size, variant, profile):
            "cable_ghosts": (getattr(a, "cable_ghosts", 0) or 0) if scene == "me" else 0,
            # issue #603: that many characters with the ME Wireless Module and logistic requests at an access point
            "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0,
+           # issue #708: about that many ME blocks as a ship moved between two surfaces after the burst; that many more
+           # surfaces with an outpost of the first network behind an ME Quantum Bridge
+           "ship": (getattr(a, "ship", 0) or 0) if scene == "me" and not variant.get("noent") and not variant.get("long") else 0,
+           "outposts": (getattr(a, "outposts", 0) or 0) if scene == "me" and not variant.get("noent") else 0,
            # issue #639: every import and export bus with a circuit condition and a logistic condition (in the check list)
            "conditions": bool(getattr(a, "conditions", False)) if scene == "me" else None}
     return cfg
@@ -2388,7 +2393,8 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
-        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0)
+        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0) \
+        + (SHIP_TICKS if cfg.get("ship") else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
     if not re.search(r"Performed (\d+) updates", log):
         print(f"  {label}: did not run\n{load_errors(log) or ''}")
@@ -2406,7 +2412,9 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
            "load": load_report(log, rows),
            "burst": burst_report(log, rows),
            "done": "DEVCHECK-BENCH-DONE" in log,
-           "errors": re.findall(r"(Error.*|non-recoverable.*)", log)[:3]}
+           # (issue #708: what the ship's steps and the outposts' check found)
+           "errors": (re.findall(r"(Error.*|non-recoverable.*)", log) + re.findall(r"DEVCHECK-BENCH-SHIP-FAIL (.*)", log))[:3],
+           "outposts": bench_json(log, "OUTPOSTS")}
     if cfg["scene"] == "planner":
         run["plan"] = plan_report(log)
     if cfg.get("slice"):
@@ -2766,7 +2774,13 @@ def print_bench(results):
         for what in ("build", "remove", "plain-build", "plain-remove", "asm-build", "asm-remove", "ghost-paste", "ghost-remove",
                      "cable-ghost-paste", "cable-ghost-paste-after", "cable-ghost-remove", "cable-ghost-remove-after",
                      "cable-ghost-paste2", "cable-ghost-build", "cable-ghost-build-after",
-                     "ghost-after"):
+                     "ghost-after",
+                     # issue #708: a ship moved as Space Exploration moves one (clone_brush, then raise_destroy)
+                     "ship-build", "ship-launch", "ship-launch-clone", "ship-launch-destroy", "ship-launch-after",
+                     "ship-land", "ship-land-clone", "ship-land-destroy", "ship-land-after",
+                     "ship-plain", "ship-plain-clone", "ship-plain-destroy",
+                     "ship-bridged-launch", "ship-bridged-launch-clone", "ship-bridged-launch-destroy", "ship-bridged-launch-after",
+                     "ship-bridged-land", "ship-bridged-land-clone", "ship-bridged-land-destroy", "ship-bridged-land-after"):
             v = b.get(what)
             if v:
                 print(f"  {scene_label(s)} {s['size']} {what:12}: {fmt(v.get('n'), 0)} entities, loop {fmt(v.get('ms'), 1)} ms, "
@@ -3035,6 +3049,11 @@ def main():
                    "in the logistic network after the build burst, then removed in one tick")
     p.add_argument("--cable-ghosts", type=int, default=0, metavar="N", help="issue #670: N ME Cable ghosts in a square after the "
                    "build burst: pasted in one tick, removed in one, pasted again and built in one (with the ticks after)")
+    p.add_argument("--ship", type=int, default=0, metavar="N", help="issue #708: after the build burst, a network of about N ME "
+                   "blocks moved to another surface and back the way Space Exploration moves a spaceship (clone_brush, then "
+                   "raise_destroy), then N plain chests, then the ship as a part of the scene's network behind a quantum bridge")
+    p.add_argument("--outposts", type=int, default=0, metavar="K", help="issue #708: K more surfaces, each with a small part of "
+                   "the first network behind an ME Quantum Bridge (the network spans K + 1 surfaces)")
     p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
                    "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")

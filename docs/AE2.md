@@ -1144,7 +1144,7 @@ first, the Space Exploration file on top of it:
   pad, its delivery cannon chest and its arcolink storage (a linked container), and with its machines like with any
   crafting machine.
 - **Many surfaces.** Nothing in the scheduler walks the surfaces or all members per tick: the blocks are visited from
-  queues, whatever surface they stand on (a measurement with Space Exploration: issue #708).
+  queues, whatever surface they stand on (measured with Space Exploration, 50 more surfaces and a moved ship: docs/PERFORMANCE.md, issue #708).
 - **Tested** headless by `devcheck.py se` (`tools/devcheck/semod`): the move is made the way Space Exploration's
   `scripts/spaceship-clone.lua` makes it; and by `devcheck.py launch` (issue #706): a real spaceship in Nauvis Orbit
   with an ME network on board, launched and landed on a headless server through Space Exploration's own
