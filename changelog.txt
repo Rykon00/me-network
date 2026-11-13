@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.7.0
+  Changes:
+    - The old ME Drive items from before the ME rework (ME Drive 1k to 256k and the old fluid drives) are removed (issue #690). ME Network 0.6.0 replaced every one a save held by an ME Drive with its storage cells. Should a stored one still turn up (inside a storage cell lying outside a drive), the network counts it as an ME Drive.
+    - Saves of ME Network before 0.6.0 are no longer loaded (issue #690): load such a save once with ME Network 0.6.0, save it, then update. A save from before 0.5.0 goes through 0.5.0 first. The save file is not changed when it is refused.
+---------------------------------------------------------------------------------------------------
 Version: 0.6.2
   Features:
     - Hovering an ME Cable, an ME Underground Cable or any ME block highlights its network around it in the purple of the cable (issue #699), as the game does for a pipe system with its pipe visualization: the cables as purple lines, the underground cables with the pipe-to-ground's picture and a dashed line to their partner. Only you see it, and it goes when you hover something else. It spreads from the cursor over a few ticks and covers about a zoomed-out screen, so a hover costs the same in a small base and in a megabase.

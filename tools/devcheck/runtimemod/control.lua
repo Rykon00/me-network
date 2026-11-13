@@ -76,7 +76,7 @@ end
 --- machine grid (no power poles of the grid reach there): the cable graph (join, split, two controllers, a member
 --- removed without an event, the cable router, power on and off), storage cells (insert and remove with the
 --- contents in tags, AE2 capacity, quality, a cell stored in a cell, the drive window's clicks, a destroyed drive
---- spills its cells, an old drive item, robots mining a drive with cells), the terminal's functions (take a stack,
+--- spills its cells, robots mining a drive with cells), the terminal's functions (take a stack,
 --- one, into the inventory, store the cursor and the inventory, search, sort, items that cannot be stored) and
 --- import/export (ME Interface filters, import and export bus, rotation, settings paste and blueprint tags).
 --------------------------------------------------------------------------------
@@ -655,20 +655,6 @@ function me_cells_test()
 			end
 		end
 		expect(spilled == 5, "the spilled cell carries " .. tostring(spilled) .. " copper plates")
-		--- an old drive item placed: its four cells are in the new drive
-		local old = s.create_entity{ name = "me-drive", position = { CX + 14.5, CY + 4.5 }, force = "player" }
-		inv[3].set_stack{ name = "me-drive-256k", count = 1 }
-		remote.call(NET, "built", old, inv[3])
-		local oi = remote.call(NET, "drive", old)
-		expect(oi[1] and oi[4] and oi[4].name == "me-256k-storage-cell" and not oi[5], "old 256k drive item: " .. serpent.line(oi))
-		local card = s.find_entities_filtered{ name = "item-on-ground", position = old.position, radius = 3 }
-		--- the old item's extra part comes back if the game has it (Gregtorio's acceleration card), else nothing
-		if prototypes.item["acceleration-card"] then
-			expect(#card == 1 and card[1].stack.name == "acceleration-card", "the old drive's acceleration card was not given back")
-		else
-			expect(#card == 0, "an old drive item without an acceleration card in the game dropped " .. #card .. " items")
-		end
-		for _, g in pairs(card) do g.destroy() end
 		--- robots mine a drive with two loaded cells: drive and cells (with their contents) arrive in the storage chest
 		local rd = s.create_entity{ name = "me-drive", position = { CX + 15.5, CY + 8.5 }, force = "player", raise_built = true }
 		inv[3].set_stack{ name = "me-1k-storage-cell", count = 1 }
@@ -2995,69 +2981,8 @@ function fluid_cell_test()
 		"export bus: moved " .. moved .. ", tank " .. t2.get_fluid_count("water") .. ", network " .. water())
 	local bf = remote.call(IO, "get_bus", eb)
 	expect(bf and serpent.line(bf.filters) == serpent.line({ "fluid/water" }), "fluid bus filters " .. serpent.line(bf))
-	--- old fluid drive items: placing one gives an ME Drive with four fluid cells holding its fluid
-	local old = s.create_entity{ name = "me-drive", position = { FX + 16.5, FY + 6.5 }, force = "player" }
-	inv[4].set_stack{ name = "me-fluid-drive-1k", count = 1 }
-	inv[4].tags = { fork_me_fluids = { water = 12345, chlorine = 10 } }
-	remote.call(NET, "built", old, inv[4])
-	local oi, total = remote.call(NET, "drive", old), 0
-	for _, cell in pairs(oi) do for _, v in pairs(cell.items) do total = total + v end end
-	expect(oi[4] and oi[4].name == "me-1k-fluid-storage-cell" and not oi[5] and near(total, 12355), "old fluid drive item: " .. serpent.line(oi))
-	--- more fluid than four cells hold: more cells in the free slots, nothing lost
-	local big = s.create_entity{ name = "me-drive", position = { FX + 18.5, FY + 6.5 }, force = "player" }
-	inv[4].set_stack{ name = "me-fluid-drive-1k", count = 1 }
-	inv[4].tags = { fork_me_fluids = { water = 40000 } }
-	remote.call(NET, "built", big, inv[4])
-	local bi = remote.call(NET, "drive", big)
-	total = 0
-	for _, cell in pairs(bi) do for _, v in pairs(cell.items) do total = total + v end end
-	expect(bi[5] and near(total, 40000), "an old item with more fluid than four cells hold: " .. serpent.line(bi))
-	--- issue #689: the conversion of 0.6.0 replaces the old drive items a save holds: in a chest, on the ground, in the network
-	local chest = s.create_entity{ name = "iron-chest", position = { FX + 20.5, FY + 6.5 }, force = "player" }
-	local ci = chest.get_inventory(defines.inventory.chest)
-	ci[1].set_stack{ name = "me-drive-1k", count = 2 }
-	ci[2].set_stack{ name = "me-fluid-drive-1k", count = 1 }
-	ci[2].tags = { fork_me_fluids = { water = 40000 } }
-	ci[3].set_stack{ name = "me-drive-256k", count = 1 }
-	local gpos = { FX + 24.5, FY + 6.5 }
-	s.create_entity{ name = "item-on-ground", position = gpos, stack = { name = "me-drive-4k", count = 1 } }
-	local net_drives = remote.call(NET, "count", t, "me-drive")
-	local net_cells = remote.call(NET, "count", t, "me-1k-storage-cell")
-	expect(remote.call(NET, "insert", t, "me-drive-1k", 1) == 1, "an old drive item not stored in the network")
-	local converted = remote.call("gregtorio-me-legacy-drives", "convert")
-	expect(converted == 6, "old drive items converted: " .. tostring(converted) .. " (expected 6)")
-	local cc = {}
-	for i = 1, #ci do
-		if ci[i].valid_for_read then cc[ci[i].name] = (cc[ci[i].name] or 0) + ci[i].count end
-	end
-	expect(ci[1].valid_for_read and ci[1].name == "me-drive" and ci[1].count == 2, "the drive in the old item's slot: " .. serpent.line(cc))
-	expect(cc["me-drive"] == 4 and cc["me-1k-storage-cell"] == 8 and cc["me-256k-storage-cell"] == 4
-		and (cc["me-1k-fluid-storage-cell"] or 0) >= 5 and not cc["me-drive-1k"] and not cc["me-fluid-drive-1k"]
-		and not cc["me-drive-256k"] and (not prototypes.item["acceleration-card"] or cc["acceleration-card"] == 1),
-		"chest after the conversion: " .. serpent.line(cc))
-	local fluid_total = 0
-	for i = 1, #ci do
-		local st = ci[i]
-		if st.valid_for_read and st.name == "me-1k-fluid-storage-cell" then
-			local stored = st.tags and st.tags.fork_me_cell
-			for _, v in pairs(stored and stored.items or {}) do fluid_total = fluid_total + v end
-		end
-	end
-	expect(near(fluid_total, 40000), "the old fluid drive's fluid in its cells: " .. fluid_total)
-	local gc = {}
-	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do
-		gc[g.stack.name] = (gc[g.stack.name] or 0) + g.stack.count
-	end
-	expect(gc["me-drive"] == 1 and gc["me-4k-storage-cell"] == 4 and not gc["me-drive-4k"], "ground after the conversion: " .. serpent.line(gc))
-	expect(remote.call(NET, "count", t, "me-drive-1k") == 0 and remote.call(NET, "count", t, "me-drive") == net_drives + 1
-		and remote.call(NET, "count", t, "me-1k-storage-cell") == net_cells + 4,
-		"network after the conversion: drives " .. remote.call(NET, "count", t, "me-drive") .. ", cells "
-		.. remote.call(NET, "count", t, "me-1k-storage-cell") .. ", old " .. remote.call(NET, "count", t, "me-drive-1k"))
-	expect(remote.call("gregtorio-me-legacy-drives", "convert") == 0, "a second conversion found old items")
-	chest.destroy()
-	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do g.destroy() end
 	inv.destroy()
-	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses, old fluid drive items")
+	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses")
 end
 
 --- Issue #68 step R3: cell partitions and drive priorities (insertion and extraction order), drive settings
@@ -3737,7 +3662,7 @@ end
 --- into the input inventory, the fluid into an input box), an import bus on such a machine (the output inventory and
 --- an output box; the input box is left alone); a storage bus that faces a chest, then a tank (it becomes the fluid
 --- side), then a cable; mixed filters; the old fluid blocks and the old entities of before the ME rework are gone
---- (issue #146), the old drive items stay.
+--- (issue #146), and so are the old drive items (issue #690).
 --------------------------------------------------------------------------------
 
 local UX, UY = 300, 240
@@ -3931,7 +3856,7 @@ function unified_test()
 	si = remote.call("gregtorio-me-storagebus", "info", sb)
 	expect(si and si.status == "me-target" and si.side == "item" and fluid("lubricant") == 0, "rotated onto the cable " .. serpent.line(si))
 
-	--- the old fluid blocks are gone (issue #146): no entity, no item; the old drive items stay (they place an ME Drive)
+	--- the old fluid blocks are gone (issue #146): no entity, no item; the old drive items too (issue #690)
 	for _, old_name in pairs({ "me-fluid-interface", "me-fluid-import-bus", "me-fluid-export-bus", "me-fluid-storage-bus" }) do
 		expect(prototypes.entity[old_name] == nil and prototypes.item[old_name] == nil, old_name .. " still exists")
 		expect(prototypes.recipe[old_name] == nil, "the recipe " .. old_name .. " exists")
@@ -3940,9 +3865,9 @@ function unified_test()
 		local p = prototypes.entity[old_name]
 		expect(p == nil, "the old entity " .. old_name .. " still exists")
 	end
-	for _, old_name in pairs({ "me-drive-256k", "me-fluid-drive-256k" }) do
-		local p = prototypes.item[old_name]
-		expect(p and p.hidden and p.place_result and p.place_result.name == "me-drive", "the old drive item " .. old_name)
+	--- issue #690: the old drive items are gone as well
+	for _, old_name in pairs({ "me-drive-1k", "me-drive-256k", "me-fluid-drive-1k", "me-fluid-drive-256k" }) do
+		expect(prototypes.item[old_name] == nil, "the old drive item " .. old_name .. " still exists")
 	end
 	for _, eff in pairs(prototypes.technology["me-fluid-storage"].effects) do
 		expect(not (eff.recipe and eff.recipe:find("^me%-fluid%-") and not eff.recipe:find("cell")), "me-fluid-storage unlocks " .. tostring(eff.recipe))

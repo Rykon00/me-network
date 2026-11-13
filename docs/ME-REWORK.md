@@ -3208,7 +3208,9 @@ pattern migration of issue #80 (`migrate_providers`, `migrate_job`) and the old 
 `fork_me_migrate_fluids` and `fork_me_unify`.
 
 **Kept:** the old drive items (`me-drive-<tier>`, `me-fluid-drive-<tier>`, hidden): 0.5.0 never converted them in
-inventories, so a 0.5.0 save may still hold them; placing one gives an ME Drive with its cells (and its fluid). The item
+inventories, so a 0.5.0 save may still hold them; placing one gives an ME Drive with its cells (and its fluid). Issue
+#689: 0.6.0 replaced every one a save held by an ME Drive with its cells; issue #690: 0.7.0 removed them (and refuses
+saves from before 0.6.0; a stored key of one counts as `me-drive`). The item
 names of the old fluid blocks stay in the mod-data `fork-me-fluids` (`unified.items`) for the alias of stored keys (a
 cell's tags or a pattern that still names one counts it as the unified item) and in `ME_NETWORK.removed` (a recipe of
 another mod that makes one would stop the game from loading now: `data-final-fixes.lua` drops it). A stray item of an
