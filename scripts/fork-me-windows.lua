@@ -676,7 +676,7 @@ function M.refresh_qbridge(player, frame, first)
 		caption = { prefix .. "other-surface", p.place or p.surface }
 	end
 	G.find(frame, "fork_me_qb_status").caption = caption
-	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
+	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt_power(d.watts),
 		string.format("%.0f", 100 * (d.buffer > 0 and d.energy / d.buffer or 0)) }
 	local r = G.find(frame, "fork_me_qb_range")
 	if r then
