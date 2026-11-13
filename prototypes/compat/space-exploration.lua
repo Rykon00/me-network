@@ -69,6 +69,9 @@ local C256 = se("se-data-storage-substrate", "stone-brick")       -- ... of the 
 local C1024 = se("se-empty-data", "stone-brick")                  -- ... of the 1024k, 4096k and 16384k component: blank data cards
 local C4096, C16384 = C1024, C1024
 local QUANTUM = se("se-quantum-processor", "battery")             -- quantum ring (ME Quantum Bridge), energy science 3
+--- issue #714: the singularity of the ME Quantum Bridge's chamber is a naquium cube (deep space 1), the one the Singularity
+--- cells took before issue #709: the bridge is a deep space 1 block (the technologies below say why)
+local BRIDGE_CORE = se("se-naquium-cube", nil)
 local ENERGY_CELL = se("se-space-accumulator", "accumulator")     -- dense energy cell of the Singularity cells
 --- issue #709: the matter condenser of the Singularity cells is the naquium tessaract (deep space 2; the naquium cube of deep
 --- space 1 before). The tessaract itself is folded with arcospheres in Space Exploration's own recipe; the cell's recipe
@@ -88,7 +91,7 @@ local SWAPS = {
 	["me-singularity-storage-cell"] = { ["accumulator"] = each(ENERGY_CELL), add = { { CONDENSER, 1 } } },
 	["me-singularity-fluid-storage-cell"] = { ["accumulator"] = each(ENERGY_CELL), add = { { CONDENSER, 1 } } },
 	--- eight rings (their energy cell the quantum part) and the chamber's 4 quartz glass (no stand-in without a glass item)
-	["me-quantum-bridge"] = { ["battery"] = each(QUANTUM), add = { { NEW_GLASS, 4 } } },
+	["me-quantum-bridge"] = { ["battery"] = each(QUANTUM), add = { { NEW_GLASS, 4 }, { BRIDGE_CORE, 1 } } },
 	["me-crafting-accelerator-4x"] = { add = { { ACCELERATOR, 4 } } },          -- (the wiring of its 4 co-processing units)
 	["me-crafting-accelerator-256x"] = { add = { { ACCELERATOR_2, 1 } } },
 	["me-crafting-accelerator-1024x"] = { add = { { ACCELERATOR_2, 1 } } },
@@ -151,9 +154,15 @@ end)
 ---     Singularity cells' tier and gates nothing. Co-processing stays at space science.
 ---   - Quantum crafting and the accelerators: energy science 1; the second accelerators: energy science 3 (quantum processor);
 ---     the crafting storages take the component of their storage tier: its packs with the energy pack of quantum crafting.
----   - ME Quantum Bridge: astronomic and energy science 3. It joins networks on any two surfaces without a limit, which in
----     Space Exploration is what cargo rockets, the space elevator and spaceships are for; it comes with the spaceship's tier
----     and the quantum processor, far below Space Exploration's own links (arcolink storage: deep space 4).
+---   - ME Quantum Bridge: deep space 1 (issue #714; astronomic and energy science 3 before). It joins networks on any two
+---     surfaces at once and without a limit, items and fluids, which in Space Exploration is the work of cargo rockets and
+---     the delivery cannon (rocket science), the space elevator (2000 x 60 s with energy 1, astronomic 1 and material 2)
+---     and spaceships (astronomic 3); Space Exploration's own instant link, arcolink storage, is deep space 4 behind
+---     Teleportation (10 000 x 60 s). At astronomic and energy 3 the bridge came in the same tier as the spaceship and made
+---     it pointless as a freighter the moment it was researched. Deep space 1 is the tier after every specialist line is
+---     done: rockets, the elevator and ships have carried the base through four science tiers by then; it is still three
+---     tiers below the arcolink, and one below the Singularity cells (deep space 2), which take four bridges. Its recipe
+---     takes a naquium cube (deep space 1), so the technology follows Naquium cube; 500 x 60 s as the naquium technologies.
 ---   - Singularity cells: deep space 2 (issue #709: the naquium tessaract, after Space Exploration's technology of that
 ---     name, at its cost of 500 x 60 s); the Singularity crafting storage, which takes the cell's component: deep space 2
 ---     as well, after the cells. The end of the storage ladder is then two steps past 16384k (Supercomputer 3, issue #712):
@@ -176,13 +185,13 @@ local function line(name)
 end
 local MATERIAL, ENERGY, ASTRONOMIC, BIOLOGICAL = line("material"), line("energy"), line("astronomic"), line("biological")
 
+local DEEP_1 = pack("se-deep-space-science-pack-1", UTILITY)
 local DEEP_2 = pack("se-deep-space-science-pack-2", UTILITY)
 
 local T_BLUE = { RED, GREEN, BLUE }
 local T_ROCKET = { RED, GREEN, BLUE, ROCKET }
 local T_SPACE = { RED, GREEN, BLUE, ROCKET, SPACE }
 local function t_energy(i) return { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, ENERGY[i] } end
-local T_BRIDGE = { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, ASTRONOMIC[3], ENERGY[3] }
 --- issue #712: the packs of Space Exploration's Supercomputer 3 (the 16384k tier of the data line)
 local T_DATA_3 = { RED, GREEN, BLUE, ROCKET, SPACE, UTILITY, PRODUCTION, ENERGY[3], MATERIAL[3], BIOLOGICAL[3] }
 local function t_deep(deep)
@@ -243,7 +252,7 @@ local TECHS = {
 	["me-crafting-storage-1024k"] = { 100, 60, t_energy(1) },
 	["me-crafting-storage-4096k"] = { 200, 60, t_energy(3) },
 	["me-crafting-storage-16384k"] = { 300, 60, T_DATA_3 },
-	["me-quantum-bridge"] = { 300, 60, T_BRIDGE, { "se-quantum-processor", "se-astronomic-science-pack-3" }, NO_UTILITY },
+	["me-quantum-bridge"] = { 500, 60, t_deep(DEEP_1), { "se-quantum-processor", "se-naquium-cube" }, NO_UTILITY },
 	["me-storage-singularity"] = { 500, 60, t_deep(DEEP_2), { "se-naquium-tessaract", "se-space-accumulator" },
 		{ ["electric-energy-accumulators"] = true } },
 	["me-crafting-storage-singularity"] = { 500, 60, t_deep(DEEP_2) },

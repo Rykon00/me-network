@@ -307,7 +307,10 @@ script.on_event(defines.events.script_raised_destroy, function(event)
 	if moved and link then fork_qbridge.step() end
 end, REMOVED_FILTER)
 --- a surface that is deleted or cleared takes its entities without an event: its members leave first
-script.on_event({ defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, move.on_surface_gone)
+script.on_event({ defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, function(event)
+	move.on_surface_gone(event)
+	fork_net.place.on_surface_gone(event)                     -- (issue #713: the kept name of the surface)
+end)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
 --- interfaces and buses, storage buses, ME IO Ports (issue #386), crafting jobs, provider rescans, level maintainers and

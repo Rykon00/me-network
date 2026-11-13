@@ -71,6 +71,10 @@
   Exploration's own functions on a headless server, pinned to its version 0.7.64) and
   `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`); the general suite
   runs with it as well (`all --with-mod space-exploration`, issue #705).
+- A surface is named for the player through `N.place.name(surface)` and a map marker of a message through
+  `N.place.gps(position, surface)` (`scripts/fork-me-place.lua`, issue #713: Space Exploration's zone names), never through
+  `surface.name` in a caption or a message. A call of another mod's remote interface is always guarded: the mod active, the
+  interface and the function there, `pcall`, the answer checked.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:

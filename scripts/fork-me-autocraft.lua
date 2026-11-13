@@ -884,7 +884,7 @@ function M.tell_waiting(p, player, by_hand)
 	local last = s.told[player.index]
 	if last and game.tick < last + 600 then return end
 	s.told[player.index] = game.tick
-	local gps = string.format("[gps=%d,%d,%s]", math.floor(e.position.x), math.floor(e.position.y), e.surface.name)
+	local gps = N.place.gps(e.position, e.surface)            -- (issue #713: with the zone's name)
 	if c > 0 then player.print({ "fork-me-pattern.waiting-cards-message", c, gps }) end
 	if n > 0 then player.print({ "fork-me-pattern.waiting-message", n, gps }) end
 end
@@ -1199,8 +1199,7 @@ local function vanish_provider(s, p)
 	if n > 0 and surface then
 		local force = game.forces[p.force or "player"]
 		if force then
-			force.print({ "fork-me-pattern.provider-vanished", n,
-				string.format("[gps=%d,%d,%s]", math.floor(p.position.x), math.floor(p.position.y), surface.name) })
+			force.print({ "fork-me-pattern.provider-vanished", n, N.place.gps(p.position, surface) })
 		end
 	end
 	p.slots = {}
@@ -3750,8 +3749,7 @@ local function resize_provider(p)
 		end
 	end
 	if n > 0 and p.entity.valid then
-		p.entity.force.print({ "fork-me-pattern.provider-shrunk", n, string.format("[gps=%d,%d,%s]", math.floor(p.position.x),
-			math.floor(p.position.y), p.entity.surface.name) })
+		p.entity.force.print({ "fork-me-pattern.provider-shrunk", n, N.place.gps(p.position, p.entity.surface) })
 	end
 	changed(p)
 end

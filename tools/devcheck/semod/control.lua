@@ -42,6 +42,10 @@
 ---            crafting storage, a pattern provider, the assembler next to it) crafts a recipe of the category "space-crafting"
 ---            that no ME Molecular Assembler can craft (the first one with item ingredients only), started as a job; the
 ---            assembler is a member of the network that carries it (the provider is cabled only through it).
+---   ZONES    issue #713: what a surface is called. Nauvis Orbit and Nauvis by their zone names from Space Exploration's
+---            remote interface, asked once per surface while the answer is kept (a second question in the same tick makes
+---            no call); a surface that is no zone by its own name; the map marker of a message with the zone's name after
+---            it; the quantum bridge's window data names the partner's zone.
 ---   FRAGMENTS issue #710: core fragment processing. An ME Storage Bus on Space Exploration's fragment processing machine
 ---            (the machine of the recipe category "core-fragment-processing", its pulveriser) makes the machine's output
 ---            slots network storage to take from: the network counts what lies there, an extraction takes it out of the
@@ -971,8 +975,37 @@ STEPS[150] = function()
 	fragments_check()
 end
 
+local function zones_check()
+	local t = storage.t
+	local problems = {}
+	local PLACE = "me-network-place"
+	local orbit_surface, nauvis = t.ctrl.surface, game.surfaces.nauvis
+	local calls = remote.call(PLACE, "calls")
+	local a = remote.call(PLACE, "name", orbit_surface.index)
+	local b = remote.call(PLACE, "name", nauvis.index)
+	if a ~= "Nauvis Orbit" then problems[#problems + 1] = "the orbit is called " .. serpent.line(a) end
+	if b ~= "Nauvis" then problems[#problems + 1] = "Nauvis is called " .. serpent.line(b) end
+	local after = remote.call(PLACE, "calls")
+	remote.call(PLACE, "name", orbit_surface.index)
+	remote.call(PLACE, "name", nauvis.index)
+	if remote.call(PLACE, "calls") ~= after then problems[#problems + 1] = "a second question in the same tick asked Space Exploration again" end
+	if after - calls > 2 then problems[#problems + 1] = (after - calls) .. " calls for two surfaces" end
+	local plain = game.surfaces["me-se-platform"] or game.create_surface("me-se-plain", { width = 32, height = 32 })
+	local c = remote.call(PLACE, "name", plain.index)
+	if c ~= plain.name then problems[#problems + 1] = "a surface without a zone is called " .. serpent.line(c) .. ", not " .. plain.name end
+	local gps = remote.call(PLACE, "gps", nauvis.index, 12.7, -3.2)
+	if not (type(gps) == "table" and gps[2] == "[gps=12,-4,nauvis]" and gps[4] == "Nauvis") then problems[#problems + 1] = "the map marker: " .. serpent.line(gps) end
+	local info = remote.call(QB, "info", t.bridge)
+	if not (info and info.partner and info.partner.place == "Nauvis" and info.partner.surface == "nauvis") then
+		problems[#problems + 1] = "the bridge's partner: " .. serpent.line(info and info.partner)
+	end
+	report("ZONES", problems, "Nauvis Orbit and Nauvis by their zone names (" .. (after - calls) .. " calls, kept), a surface without a zone by its own, "
+		.. "the map marker and the bridge's partner with the zone")
+end
+
 STEPS[200] = function()
 	local t = storage.t
+	zones_check()
 	storage.before = snapshot()
 	local problems = {}
 	local net = remote.call(NET, "network", t.ctrl)
@@ -1236,7 +1269,14 @@ if REAL_LAUNCH then
 			end
 			job_carried(problems)
 			logistics(problems)
-			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " as before the launch; the crafting job runs on")
+			--- issue #713: in flight the ship's surface is no zone: it is called by the display name Space Exploration gave it
+			--- (the ship's name), not "spaceship-1"
+			local place = remote.call("me-network-place", "name", t.ctrl.surface.index)
+			if key == "TRAVEL" and (place == nil or place == t.ctrl.surface.name) then
+				problems[#problems + 1] = "the ship's surface is called " .. serpent.line(place)
+			end
+			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " (shown as " .. serpent.line(place)
+				.. ") as before the launch; the crafting job runs on")
 		end,
 		--- issue #707: robot attrition, "crashed <item>" or "none" (no robot carries anything now)
 		crash = function() return crash_robot() end,

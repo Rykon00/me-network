@@ -491,7 +491,8 @@ function M.on_tick(tick)
 	end
 end
 
-local function where(e) return { surface = e.surface.name, x = e.position.x, y = e.position.y } end
+--- (`place`, issue #713: what the window calls the surface)
+local function where(e) return { surface = e.surface.name, place = N.place.name(e.surface), x = e.position.x, y = e.position.y } end
 
 --- What the window shows: { kind ("item" or "fluid"), freq, output, status, input = { surface, x, y } (an output's input, or
 --- the input that holds the frequency), outputs (how many carry), bound (how many outputs the frequency has) }. Status:

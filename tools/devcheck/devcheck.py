@@ -1545,6 +1545,7 @@ SE_TESTS = [
     ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
     ("LOGISTICS", "a logistic interface and a logistic storage bus in the ship's logistic network (issue #707)"),
     ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting recipe on a platform (issue #711)"),
+    ("ZONES", "Space Exploration's zone names for the windows and messages (issue #713)"),
     ("FRAGMENTS", "a storage bus on Space Exploration's fragment processing machine (issue #710)"),
     ("CHANCE", "a job for a product that comes by chance ends with the amount asked for (issue #710)"),
     ("SURFACE", "a deleted surface leaves nothing in storage"),

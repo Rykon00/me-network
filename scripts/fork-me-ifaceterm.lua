@@ -171,6 +171,11 @@ function M.entry_view(e)
 	local pos = e.entity.position
 	local v = { kind = e.kind, unit = e.unit, label = e.label, near = e.near or {},
 		position = { x = math.floor(pos.x), y = math.floor(pos.y) } }
+	--- issue #713: with Space Exploration the list says where a block stands (a network spans its zones)
+	if script.active_mods["space-exploration"] then
+		v.surface = e.entity.surface.index
+		v.place = N.place.name(e.entity.surface)
+	end
 	if e.kind == "provider" then
 		v.title = e.label or { "entity-name." .. PROVIDER }
 		v.slots = {}
@@ -189,7 +194,8 @@ end
 
 --- the signature of what an entry's part shows (rebuilt only when it changed)
 local function entry_sig(v, editing)
-	local sig = { v.kind, v.unit, tostring(v.label), v.position.x, v.position.y, table.concat(v.near, "+"), tostring(editing) }
+	local sig = { v.kind, v.unit, tostring(v.label), v.position.x, v.position.y, table.concat(v.near, "+"), tostring(editing),
+		tostring(v.surface), type(v.place) == "string" and v.place or "" }
 	if v.slots then
 		for slot, d in ipairs(v.slots) do
 			sig[#sig + 1] = d and (tostring(d.id or d.recipe) .. ":" .. tostring(d.ok) .. ":" .. tostring(d.reason) .. ":"
@@ -236,8 +242,7 @@ end
 function M.locate(player, e)
 	e.surface.create_entity{ name = "highlight-box", position = e.position, source = e, box_type = "copy",
 		render_player_index = player.index, blink_interval = 20, time_to_live = LOCATE_TICKS }
-	player.print({ "fork-me-iface-terminal.located", e.localised_name,
-		string.format("[gps=%d,%d,%s]", math.floor(e.position.x), math.floor(e.position.y), e.surface.name) })
+	player.print({ "fork-me-iface-terminal.located", e.localised_name, N.place.gps(e.position, e.surface) })
 end
 
 --------------------------------------------------------------------------------
@@ -272,7 +277,8 @@ function M.build_entry(box, v, editing)
 		local l = head.add{ type = "label", caption = v.title, style = "caption_label" }
 		l.style.maximal_width = 220
 	end
-	head.add{ type = "label", caption = { "fork-me-iface-terminal.position", v.position.x, v.position.y } }
+	head.add{ type = "label", caption = v.place and { "fork-me-iface-terminal.position-on", v.position.x, v.position.y, v.place }
+		or { "fork-me-iface-terminal.position", v.position.x, v.position.y } }
 	for _, name in ipairs(v.near) do
 		if prototypes.entity[name] then
 			head.add{ type = "sprite", sprite = "entity/" .. name, tooltip = prototypes.entity[name].localised_name }
