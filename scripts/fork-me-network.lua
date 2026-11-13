@@ -1702,6 +1702,9 @@ end
 --- the network's amount of `key` went up (`up`) or down: the version of its contents and the waiting endpoints
 local function moved_key(net, key, up)
 	net.cver = (net.cver or 0) + 1
+	--- issue #721: the keys that moved since the circuit interfaces' list was made (net.ckeys, kept while such a list is)
+	local ck = net.ckeys
+	if ck then ck[key] = true end
 	local waits = up and net.wait_in or net.wait_out
 	if waits then
 		if waits[key] then fire(net, waits, key) end
@@ -1993,6 +1996,7 @@ function net_cell(net, cid, cell, sign)
 		end
 	end
 	net.cver = (net.cver or 0) + 1
+	net.ckeys = nil                                   -- (issue #721: a whole cell came or went: the list is made anew)
 	if woken then
 		table.sort(woken)
 		for _, key in ipairs(woken) do fire(net, waits, key) end
