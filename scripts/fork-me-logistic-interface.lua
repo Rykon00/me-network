@@ -1519,6 +1519,10 @@ function M.on_moved(source, destination)
 	local a, b = rec_of(source), rec_of(destination)
 	if not (a and b) or a == b then return end
 	cards.move_cards(source, destination)
+	if a.cjobs or a.cretry then                                -- (issue #704: the jobs its Crafting Card started, as the ME Interface's)
+		b.cjobs, b.cretry, b.cstat = a.cjobs, a.cretry, a.cstat
+		a.cjobs, a.cretry = nil, nil
+	end
 	for field in pairs(CHESTS) do
 		local c = a[field]
 		if c and c.valid then

@@ -981,6 +981,29 @@ function M.on_removed(entity)
 	end
 end
 
+--- Issue #704: the level maintainer `source` was moved to `destination` (scripts/fork-me-move.lua). The clone has its rows
+--- already (M.on_built with a source); the job of each row, its state and what the circuit's rows hold go to it, so the
+--- maintainer at the new place waits for the job it started and does not start a second one. (The jobs themselves name
+--- the clone as their owner: M.carry_links of scripts/fork-me-autocraft.lua.)
+function M.on_moved(source, destination)
+	if not (source.valid and destination.valid and source.name == MAINTAINER and destination.name == MAINTAINER) then return end
+	local s = storage.fork_ae2
+	local a, b = s and s.maintainers[source.unit_number], s and s.maintainers[destination.unit_number]
+	if not (a and b) or a == b then return end
+	local from, to = rows_of(a), rows_of(b)
+	for i, row in ipairs(from) do
+		local t = to[i]
+		if t and t.key == row.key then
+			t.job, t.status, t.missing, t.retry, t.noted, t.stock, t.target = row.job, row.status, row.missing, row.retry,
+				row.noted, row.stock, row.target
+			row.job, row.noted = nil, nil
+		end
+	end
+	b.crows, a.crows = a.crows, nil
+	b.job, b.status, b.stock, b.target, b.missing = a.job, a.status, a.stock, a.target, a.missing
+	a.job = nil
+end
+
 --- copy the settings (shift right click, shift left click); the game copies the lamp's circuit condition
 --- and the combinator's signals itself, the interface rewrites them at once
 function M.on_entity_settings_pasted(event)

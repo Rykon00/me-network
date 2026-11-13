@@ -2892,6 +2892,13 @@ end
 function M.on_moved(source, destination)
 	cards.move_cards(source, destination)
 	icards.move_cards(source, destination)
+	--- issue #704: the jobs its Crafting Card started and the retries it waits for (the jobs name the clone as their owner:
+	--- M.carry_links of scripts/fork-me-autocraft.lua)
+	local a, b = rec_of(source.unit_number), rec_of(destination.unit_number)
+	if a and b and a ~= b and (a.cjobs or a.cretry) then
+		b.cjobs, b.cretry, b.cnext, b.cstat = a.cjobs, a.cretry, a.cnext, a.cstat
+		a.cjobs, a.cretry, a.cnext = nil, nil, nil
+	end
 end
 
 remote.add_interface("gregtorio-me-io", {
