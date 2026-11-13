@@ -23,12 +23,13 @@
 ---    (issue #705). With Space Exploration their box is -0.36 .. 0.36.
 --- 4. The ME Space Molecular Assembler (issue #711, the maintainer's option A): a second ME Molecular Assembler for Space
 ---    Exploration's recipes of the category "space-crafting" (its space assembling machine's own: space belts and pipes,
----    the first science packs' parts). It is the same block made by the same function (ME_NETWORK.make_molecular_assembler
----    with a name): one tile, item recipes only, five Acceleration Cards, a member of the ME network that draws its power
----    through the controller, served by ME Pattern Providers next to it; its categories are the ME Molecular Assembler's and
----    "space-crafting". It stands only in space and not on a spaceship:
+---    the first science packs' parts) and, since issue #729, "space-manufacturing" (its space manufactory's; the ones
+---    without a fluid). It is the same block made by the same function (ME_NETWORK.make_molecular_assembler with a name):
+---    one tile, item recipes only, five Acceleration Cards, a member of the ME network that draws its power through the
+---    controller, served by ME Pattern Providers next to it; its categories are the ME Molecular Assembler's and those
+---    two. It stands only in space:
 ---      - like Space Exploration's own space machines it collides with ground and water tiles, so it is built on space
----        platform scaffold and plating only;
+---        platform scaffold and plating, and since issue #729 on spaceship floor;
 ---      - Space Exploration makes a hidden "-grounded" twin of every machine with a "space-..." category that can stand on
 ---        spaceship floor, and swaps the two when a ship lands on a planet (its EntitySwap.swap_structure: the new entity is
 ---        made and the old one destroyed without an event). A block of the ME network is known by its unit number, so the
