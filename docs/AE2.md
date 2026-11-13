@@ -1186,6 +1186,18 @@ first, the Space Exploration file on top of it:
   - on demand: an **ME Pattern Provider next to the pulveriser** with a crafting pattern of the fragment recipe (the
     ME Pattern Terminal encodes it from the recipe). A job for one product runs the recipe as often as its expected yield
     says, every other product goes into the network.
+
+  **Products that come by chance** (issue #710; a fragment recipe's product at 30 %, any recipe with a probability or a
+  range). The crafting plan counts such a product at its expected yield (amount × probability, a range at its mean) and
+  runs the recipe that often; all the other products of the runs go into the network, as byproducts always did. Chance
+  may give less than expected: when the runs are done and the job has made less of its item than was asked for, it adds
+  the runs the shortfall needs (again at the expected yield), takes their ingredients from the network's stock, and goes
+  on. So the job is done when the requested amount is there; what chance gives beyond it goes into the network. A job
+  ends with less than asked for only when the network has no more of an ingredient for those runs (nothing is crafted
+  for them, the plan is not made again) or after 8 such rounds (a product at a tiny chance must not hold a Crafting CPU
+  for ever; a level maintainer or a Crafting Card asks again). Only the job's own item is topped up this way; a part made
+  on the way that came short is taken from the network's stock as before. A processing pattern is not affected: its
+  rows are amounts every run gives.
 - **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
   one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
   an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while

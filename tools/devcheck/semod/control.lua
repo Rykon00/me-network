@@ -47,6 +47,12 @@
 ---            slots network storage to take from: the network counts what lies there, an extraction takes it out of the
 ---            machine, and what the network stores never goes into the machine. A storage bus on an assembling machine 2
 ---            (no fragment processing) faces no item storage, as before.
+---   CHANCE   issue #710, part c: a product that comes by chance. A second pulveriser next to an ME Pattern Provider with a
+---            crafting pattern of the helper's recipe zz-me-se-chance (2 stone into an iron stick and, at 50 %, an iron gear
+---            wheel). Five jobs of 6 gears each, one after the other: every job ends "done" with at least the 6 gears it was
+---            asked for in the network (the plan runs the recipe 12 times; when chance gave fewer than 6 the job adds runs
+---            and takes their stone from the network), the sticks of every run are in the network, and at least one of the
+---            five jobs needed more runs than its plan (else the test shows nothing: another seed, other amounts).
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -332,6 +338,87 @@ local function fragments_build()
 		end
 	end
 	if f.plain then f.plain.get_inventory(defines.inventory.crafter_output).insert{ name = "stone", count = 5 } end
+	--- CHANCE (part c): a network of its own (the stone of the first one is in a machine's output), a CPU, a provider with
+	--- the pattern of the chance recipe, a second pulveriser next to it
+	local c = { jobs = {}, problems = {} }
+	storage.chance = c
+	local eei2 = at("electric-energy-interface", -4, -12)
+	if eei2 then eei2.power_production = 5e6 eei2.electric_buffer_size = 5e7 eei2.energy = 5e7 end
+	at("substation", -1, -12)
+	c.ctrl = at("me-network-controller", 1, -8)               -- (tiles 0..1, -9..-8)
+	c.drive = at("me-drive", 2.5, -8.5)
+	c.cpu = at("me-1k-crafting-storage", 2.5, -9.5)
+	c.provider = at("me-pattern-provider", 3.5, -8.5)
+	c.machine = at(name, 4 + w / 2, (h % 2 == 1 and 0.5 or 1) - 9, { raise_built = false })
+	if c.drive and c.provider and prototypes.recipe["zz-me-se-chance"] then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "me-16k-storage-cell", count = 1 }
+		remote.call(NET, "insert_cell", c.drive, inv[1], 1)
+		inv.destroy()
+		remote.call(NET, "store_in_drive", c.drive, "stone", 2000)
+		local pinv = game.create_inventory(2)
+		pinv.insert{ name = "me-blank-pattern", count = 1 }
+		local where, why = remote.call(PT, "encode_def", pinv, nil, { kind = "crafting", recipe = "zz-me-se-chance" })
+		local stack = pinv.find_item_stack("me-encoded-pattern")
+		if not (where and stack and remote.call(AC, "insert_pattern", c.provider, stack)) then
+			c.problems[#c.problems + 1] = "no pattern of the chance recipe in the provider: " .. tostring(why)
+		end
+		pinv.destroy()
+	else
+		c.problems[#c.problems + 1] = "the chance network was not built (or no recipe zz-me-se-chance)"
+	end
+end
+
+--- CHANCE: one job after the other (called every 30 ticks)
+local CHANCE_JOBS, CHANCE_AMOUNT = 5, 6
+local function chance_tick()
+	local c = storage.chance
+	if not (c and c.ctrl and c.ctrl.valid) or c.finished then return end
+	local function gears() return remote.call(NET, "count", c.ctrl, "iron-gear-wheel") end
+	local cur = c.jobs[#c.jobs]
+	if cur then
+		local job = remote.call(AC, "job", cur.id)
+		if job and (job.status == "running" or job.status == "queued") then return end
+		cur.status, cur.topups, cur.runs, cur.got = job and job.status, job and job.topups, job and job.total, gears() - cur.before
+		if #c.jobs >= CHANCE_JOBS then c.finished = true return end
+	end
+	local before = gears()
+	local id, why = remote.call(AC, "start", c.ctrl, "iron-gear-wheel", CHANCE_AMOUNT)
+	if not id then
+		c.problems[#c.problems + 1] = "job " .. (#c.jobs + 1) .. " did not start: " .. tostring(why)
+		c.finished = true
+		return
+	end
+	c.jobs[#c.jobs + 1] = { id = id, before = before }
+end
+
+local function chance_done()
+	local c = storage.chance
+	if not c then return end
+	local problems = c.problems
+	local topups, text = 0, {}
+	if #c.jobs < CHANCE_JOBS or not c.finished then
+		local cur = c.jobs[#c.jobs]
+		local job = cur and remote.call(AC, "job", cur.id)
+		problems[#problems + 1] = #c.jobs .. " of " .. CHANCE_JOBS .. " jobs ran to their end; the last one: " .. serpent.line(job and { status = job.status,
+			wait = job.wait, done = job.done, total = job.total, leases = job.leases, topups = job.topups, reason = job.reason, pool = job.pool })
+			.. ", the machine: " .. tostring(c.machine and c.machine.valid and c.machine.status) .. " recipe " .. tostring(c.machine and c.machine.valid and c.machine.get_recipe() and c.machine.get_recipe().name)
+	end
+	for i, j in ipairs(c.jobs) do
+		if j.status then
+			if j.status ~= "done" then problems[#problems + 1] = "job " .. i .. " ended " .. tostring(j.status) end
+			if (j.got or 0) < CHANCE_AMOUNT then problems[#problems + 1] = "job " .. i .. " made " .. tostring(j.got) .. " of " .. CHANCE_AMOUNT .. " gears" end
+			topups = topups + (j.topups or 0)
+			text[#text + 1] = tostring(j.got) .. " gears in " .. tostring(j.runs) .. " runs"
+		end
+	end
+	if topups == 0 and #problems == 0 then problems[#problems + 1] = "no job needed more runs than its plan: the test shows nothing (another seed)" end
+	local runs = 0
+	for _, j in ipairs(c.jobs) do runs = runs + (j.runs or 0) end
+	local sticks = c.ctrl and c.ctrl.valid and remote.call(NET, "count", c.ctrl, "iron-stick") or -1
+	if c.finished and sticks ~= runs then problems[#problems + 1] = "the network holds " .. sticks .. " iron sticks after " .. runs .. " runs" end
+	report("CHANCE", problems, CHANCE_JOBS .. " jobs of " .. CHANCE_AMOUNT .. " gears at 50 % a run (planned 12 runs each): "
+		.. table.concat(text, ", ") .. "; " .. topups .. " top-ups")
 end
 
 local function fragments_check()
@@ -1023,8 +1110,11 @@ STEPS[700] = function()
 	for _, p2 in ipairs(problems) do fail("SURFACE: " .. p2) end
 end
 
+for tick = 180, 1950, 30 do STEPS[tick] = STEPS[tick] or chance_tick end
+
 STEPS[2000] = function()
 	space_asm_done()
+	chance_done()
 	local got = job_done()
 	report("JOB", got == "done" and {} or { got }, "the job started before the launch ran over both moves and made its 32 iron sticks")
 	local problems = {}
