@@ -4732,6 +4732,26 @@ the item types of the network. That is the known cost of an unfiltered Circuit I
 times as high in a game with three times the items. It has nothing to do with surfaces; a follow-up issue asks for a
 cheaper unfiltered update. Everything else of the profile is as in vanilla.
 
+**Issue #721, the first step.** Two sorts are gone from that path. `network_signals` sorted the order strings of all
+signals at every list (2900 strings, a string comparison each); it now keeps the rank of every order string seen so far
+(a memo per load, sorted again only when a new one appears) and lays the signals out by rank. `view` picked the 1000
+largest of an unfiltered interface by sorting one formatted string per signal; it now sorts the plain amounts, takes the
+amount of the last one that fits and keeps the list's order for ties. (The old key was `1e16 - amount` as text; doubles
+step by 2 up there, so two amounts one apart could swap places at the cut. The new pick is exact.) The same scene
+(`bench --sizes 1000 --runs 1 --ticks 1200 --profile 1000 --exclusive --with-mod space-exploration`, own time per
+function):
+
+| | before | after |
+|---|---|---|
+| script, ms/tick (unprofiled run) | 0.749 | 0.612 |
+| p99 of a tick, ms | 12.50 | 7.02 |
+| `circuit.circuit_step`, us/call | 2066 | 1397 |
+| `circuit.network_signals`, us/call | 8424 | 6426 |
+
+What is left is the walk over every key of the network once a second (a table per signal) and the engine's write of
+1000 slots; a list that is kept and changed only for the keys that moved would take the walk away (not done: the list
+is game state, and items with tags and fluids at several temperatures share one signal).
+
 ### A ship moved in one tick
 
 `bench --ship N` (after the build burst): a network of its own of about N ME blocks (a controller, two drives with eight

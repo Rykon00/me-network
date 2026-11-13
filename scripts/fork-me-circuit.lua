@@ -476,6 +476,7 @@ end
 --- from 1 unit, rounded down. Issue #5: straight from the network's totals, in a fixed order (the 1000 an interface
 --- writes are chosen by amount in `view`). Issue #503: a key whose item or fluid no longer exists (on_configuration_changed
 --- maps or drops such keys; one it missed) makes no signal: the engine refuses an unknown name.
+local rank, ranked = {}, {}     -- order string -> its place among the order strings seen so far; those, sorted
 local function network_signals(net, filter)
 	local out, by_item = {}, {}
 	if N.usable(net) then
@@ -515,12 +516,33 @@ local function network_signals(net, filter)
 		end
 		for i = n + 1, #out do out[i] = nil end
 	end
-	--- sorted by the order strings (the string comparison, no Lua comparator)
-	local keys, by_key = {}, {}
-	for i, sig in ipairs(out) do keys[i], by_key[sig.order] = sig.order, sig end
-	table.sort(keys)
-	for i, k in ipairs(keys) do out[i] = by_key[k] end
-	return out
+	--- sorted by the order strings. Issue #721: no sort per list; every order string seen so far has its rank among them
+	--- (`rank`, a pure memo kept per load: the ranks follow the string comparison, so every list comes out as a sort of its
+	--- own strings would give it), and the signals are laid out by rank. Only a string seen for the first time sorts the
+	--- known ones again: once per item, fluid and quality of the game at most.
+	local fresh
+	for _, sig in ipairs(out) do
+		if not rank[sig.order] then
+			ranked[#ranked + 1] = sig.order
+			rank[sig.order] = 0
+			fresh = true
+		end
+	end
+	if fresh then
+		table.sort(ranked)
+		for i, k in ipairs(ranked) do rank[k] = i end
+	end
+	local at = {}
+	for _, sig in ipairs(out) do at[rank[sig.order]] = sig end
+	local sorted, n = {}, 0
+	for i = 1, #ranked do
+		local sig = at[i]
+		if sig then
+			n = n + 1
+			sorted[n] = sig
+		end
+	end
+	return sorted
 end
 
 --- The sorted signals of the whole network, shared by its circuit interfaces (in storage, net.sigs, because which
@@ -616,16 +638,24 @@ local function view(list, filter)
 		end
 	end
 	if #out <= MAX_SIGNALS then return out end
-	local keys, by_key = {}, {}
-	for i, sig in ipairs(out) do
-		local k = string.format("%017.0f", 1e16 - sig.count) .. sig.order
-		keys[i], by_key[k] = k, sig
+	--- issue #721: the MAX_SIGNALS largest through the amount of the last one that fits (a sort of plain numbers): every
+	--- larger amount is written, and of those with exactly that amount the first in the list's order (type, name, quality)
+	local counts = {}
+	for i, sig in ipairs(out) do counts[i] = sig.count end
+	table.sort(counts)
+	local least = counts[#counts - MAX_SIGNALS + 1]
+	local room = MAX_SIGNALS
+	for i = #counts, #counts - MAX_SIGNALS + 1, -1 do
+		if counts[i] > least then room = room - 1 else break end
 	end
-	table.sort(keys)
-	local keep = {}
-	for i = 1, MAX_SIGNALS do keep[by_key[keys[i]]] = true end
 	local top = {}
-	for _, sig in ipairs(out) do if keep[sig] then top[#top + 1] = sig end end
+	for _, sig in ipairs(out) do
+		if sig.count > least then top[#top + 1] = sig
+		elseif sig.count == least and room > 0 then
+			room = room - 1
+			top[#top + 1] = sig
+		end
+	end
 	return top
 end
 
@@ -1121,6 +1151,13 @@ end
 --- Other mods and the devcheck runtime test use the same code paths. Keys are item names or
 --- "fluid/<name>".
 remote.add_interface("gregtorio-me-circuit", {
+	--- issue #721 (tests): the signals an unfiltered interface writes of a list ({ { order, count } } in the list's order):
+	--- their order strings
+	top = function(list)
+		local out = {}
+		for i, sig in ipairs(view(list)) do out[i] = sig.order end
+		return out
+	end,
 	--- issue #420 (tests): what the last write of a circuit interface wrote ("section", a number of slots, "none"; nil: nothing
 	--- since `clear`)
 	last_write = function(entity, clear)

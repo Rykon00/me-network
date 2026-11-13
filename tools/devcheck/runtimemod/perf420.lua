@@ -211,6 +211,27 @@ return function(H)
 			expect(#p == 0, "the section after a change that left the amounts: " .. line(p))
 			local w = remote.call(CI, "last_write", ci, true)
 			expect(w == nil, "a change that left the amounts wrote " .. tostring(w))
+			--- issue #721: the 1000 largest of a longer list, picked without the sort of formatted strings: the same signals
+			--- as a sort by amount picks (ties by the order string), in the list's order. 1500 signals in order, amounts
+			--- with many ties (also across the cut) and one above 32 bit.
+			local list, keys, by_key = {}, {}, {}
+			for i = 1, 1500 do
+				local sig = { order = string.format("item/n%04d/normal", i), count = (i * 7919) % 97 + 1 }
+				if i == 700 then sig.count = 5e9 end
+				list[i] = sig
+				local k = string.format("%016.0f", 1e15 - sig.count) .. sig.order   -- (1e15: exact; the old pick took 1e16, where doubles step by 2)
+				keys[i], by_key[k] = k, sig
+			end
+			table.sort(keys)
+			local keep, want = {}, {}
+			for i = 1, 1000 do keep[by_key[keys[i]]] = true end
+			for _, sig in ipairs(list) do if keep[sig] then want[#want + 1] = sig.order end end
+			local got = remote.call(CI, "top", list)
+			local same = #got == #want
+			for i = 1, #want do if got[i] ~= want[i] then same = false break end end
+			expect(same, "the 1000 largest of 1500 signals: " .. #got .. " picked, not the ones a sort by amount and order picks")
+			local few = remote.call(CI, "top", { list[3], list[9] })
+			expect(#few == 2 and few[1] == list[3].order and few[2] == list[9].order, "a short list is written whole: " .. line(few))
 			return finish()
 		end
 	end
