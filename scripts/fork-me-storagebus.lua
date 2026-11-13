@@ -218,7 +218,8 @@ local function inventory_of(rec)
 		local here = e.surface.find_entities_filtered{ position = T.front(e), type = "cargo-wagon", limit = 1 }[1]
 		if here ~= t then return nil end
 	end
-	return T.inventory(t, INVENTORY[t.type])            -- (made once per load: issue #59)
+	--- (issue #710: a fragment processing machine's output slots; made once per load: issue #59)
+	return T.inventory(t, INVENTORY[t.type] or defines.inventory.crafter_output)
 end
 
 --------------------------------------------------------------------------------
@@ -236,7 +237,7 @@ local Q = {}                                          -- (the item spec of a han
 local ITEM = {
 	--- items of `key` the inventory takes now
 	room = function(rec, key)
-		if rec.mode == "read" or not allowed(rec, key) then return 0 end
+		if rec.mode == "read" or rec.out or not allowed(rec, key) then return 0 end   -- (rec.out, issue #710: a machine's output)
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
@@ -246,7 +247,7 @@ local ITEM = {
 	end,
 	--- put up to `count` into the inventory; returns the count inserted
 	insert = function(rec, key, count)
-		if rec.mode == "read" or not allowed(rec, key) then return 0 end
+		if rec.mode == "read" or rec.out or not allowed(rec, key) then return 0 end
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
@@ -290,7 +291,7 @@ local ITEM = {
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
 	--- works on an inventory now; a bus facing nothing destroys nothing)
 	voids = function(rec, key)
-		if rec.mode == "read" or not allowed(rec, key) then return false end
+		if rec.mode == "read" or rec.out or not allowed(rec, key) then return false end
 		return item_of(key) ~= nil and rec.status == "ok" and inventory_of(rec) ~= nil
 	end,
 	--- issue #479: can the bus ever hold `key` (its kind of items; the mode and the filter are the engine's, N.never_stores)?
@@ -310,7 +311,7 @@ N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HAND
 local function release(s, rec)
 	local tu = rec.target_unit
 	if tu and s.claims[tu] == rec.unit then s.claims[tu] = nil end
-	rec.target, rec.target_unit = nil, nil
+	rec.target, rec.target_unit, rec.out = nil, nil, nil
 end
 
 --- is the inventory owner `tu` used by another bus that still faces it?
@@ -385,12 +386,15 @@ local function resolve(s, rec)
 			if N.kind_of(o.name) or o.name:sub(1, 3) == "me-" then
 				status = "me-target"                     -- an ME block (or an old ME chest, an interface's side): no loops
 				break
-			elseif INVENTORY[o.type] and o.unit_number then
+			elseif (INVENTORY[o.type] or T.output_storage(o)) and o.unit_number then
 				if claimed_by_other(s, rec, o.unit_number) then
 					status = "shared-target"
 				else
 					s.claims[o.unit_number] = rec.unit
 					rec.target, rec.target_unit = o, o.unit_number
+					--- issue #710: the output slots of a fragment processing machine: the network takes from them and never
+					--- stores into them (the item side wins over the machine's fluid boxes)
+					rec.out = not INVENTORY[o.type] or nil
 					status = nil
 				end
 				break

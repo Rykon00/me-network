@@ -42,6 +42,11 @@
 ---            crafting storage, a pattern provider, the assembler next to it) crafts a recipe of the category "space-crafting"
 ---            that no ME Molecular Assembler can craft (the first one with item ingredients only), started as a job; the
 ---            assembler is a member of the network that carries it (the provider is cabled only through it).
+---   FRAGMENTS issue #710: core fragment processing. An ME Storage Bus on Space Exploration's fragment processing machine
+---            (the machine of the recipe category "core-fragment-processing", its pulveriser) makes the machine's output
+---            slots network storage to take from: the network counts what lies there, an extraction takes it out of the
+---            machine, and what the network stores never goes into the machine. A storage bus on an assembling machine 2
+---            (no fragment processing) faces no item storage, as before.
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -250,6 +255,111 @@ local function space_asm_done()
 	end
 	report("SPACEASM", problems, "the ME Space Molecular Assembler on scaffold in orbit crafted " .. tostring(a.amount) .. " " .. tostring(a.product)
 		.. " (recipe " .. tostring(a.recipe) .. ", one of " .. tostring(a.recipes) .. " space-crafting recipes with item ingredients only)")
+end
+
+--------------------------------------------------------------------------------
+--- FRAGMENTS (issue #710)
+--------------------------------------------------------------------------------
+
+--- the machine of core fragment processing (by its recipe category)
+local function fragment_machine()
+	local names = {}
+	for name, p in pairs(prototypes.get_entity_filtered{ { filter = "crafting-machine" } }) do
+		if p.crafting_categories and p.crafting_categories["core-fragment-processing"] and not p.hidden then names[#names + 1] = name end
+	end
+	table.sort(names)
+	return names[1]
+end
+
+local function fragments_build()
+	local problems = {}
+	local f = { problems = problems }
+	storage.fragments = f
+	local name = fragment_machine()
+	f.machine_name = name
+	if not name then problems[#problems + 1] = "no machine of the category core-fragment-processing" return end
+	local s = game.create_surface("me-se-fragments", { width = 128, height = 128 })
+	tiles(s, "refined-concrete", -16, -16, 30, 16)
+	for _, e in pairs(s.find_entities_filtered{ area = { { -16, -16 }, { 31, 17 } } }) do
+		if e.valid and e.type ~= "character" then e.destroy() end
+	end
+	local function at(n, x, y, extra) return place(s, problems, n, x, y, extra) end
+	local eei = at("electric-energy-interface", -4, -4)
+	if eei then eei.power_production = 5e6 eei.electric_buffer_size = 5e7 eei.energy = 5e7 end
+	at("substation", -1, -4)
+	f.ctrl = at("me-network-controller", 1, 1)                -- (tiles 0..1, 0..1)
+	f.drive = at("me-drive", 2.5, 0.5)
+	f.bus = at("me-storage-bus", 3.5, 0.5, { direction = defines.direction.east })
+	local p = prototypes.entity[name]
+	local w, h = p.tile_width, p.tile_height
+	--- the machine east of the bus (its left column at x = 4), without the build event (Space Exploration's own handlers)
+	f.machine = at(name, 4 + w / 2, h % 2 == 1 and 0.5 or 1, { raise_built = false })
+	--- the control: a storage bus on a machine that does no fragment processing
+	f.bus2 = at("me-storage-bus", 2.5, 1.5, { direction = defines.direction.south })
+	f.plain = at("assembling-machine-2", 2.5, 3.5, { raise_built = false })
+	if f.drive then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "me-16k-storage-cell", count = 1 }
+		if not remote.call(NET, "insert_cell", f.drive, inv[1], 1) then problems[#problems + 1] = "no cell in the drive" end
+		inv.destroy()
+	end
+	if f.machine then
+		--- a fragment recipe (the first by name with stone and another item among its products): the output slots are the
+		--- recipe's, and what a craft would leave there is put there
+		local recipes = {}
+		for rname, r in pairs(prototypes.recipe) do
+			local fragment = false
+			for k, v in pairs(r.categories or {}) do
+				if (type(k) == "string" and k or v) == "core-fragment-processing" then fragment = true end
+			end
+			local stone, other = false, nil
+			for _, x in pairs(r.products) do
+				if x.type == "item" and x.name == "stone" then stone = true
+				elseif x.type == "item" and (not other or x.name < other) then other = x.name end
+			end
+			if fragment and stone and other then recipes[#recipes + 1] = { rname, other } end
+		end
+		table.sort(recipes, function(x, y) return x[1] < y[1] end)
+		local pick = recipes[1]
+		if not pick then problems[#problems + 1] = "no core fragment recipe with stone and another item"
+		else
+			f.recipe, f.other = pick[1], pick[2]
+			game.forces.player.recipes[f.recipe].enabled = true
+			f.machine.set_recipe(f.recipe)
+			local out = f.machine.get_inventory(defines.inventory.crafter_output)
+			local a, c = out.insert{ name = "stone", count = 30 }, out.insert{ name = f.other, count = 12 }
+			if a ~= 30 or c ~= 12 then problems[#problems + 1] = "the machine's output took " .. a .. " stone and " .. c .. " " .. f.other .. " of 30 and 12" end
+		end
+	end
+	if f.plain then f.plain.get_inventory(defines.inventory.crafter_output).insert{ name = "stone", count = 5 } end
+end
+
+local function fragments_check()
+	local f = storage.fragments
+	if not f then return end
+	local problems = f.problems
+	if f.machine and f.ctrl and f.bus then
+		local function count(n) return remote.call(NET, "count", f.ctrl, n) end
+		local out = f.machine.get_inventory(defines.inventory.crafter_output)
+		local info = remote.call(SB, "info", f.bus) or {}
+		if info.status ~= "ok" or info.side ~= "item" then problems[#problems + 1] = "the bus on the machine: status " .. tostring(info.status) .. ", side " .. tostring(info.side) end
+		if count("stone") ~= 30 or count(f.other or "stone") ~= (f.other and 12 or 30) then
+			problems[#problems + 1] = "the network counts " .. count("stone") .. " stone and " .. count(f.other or "stone") .. " " .. tostring(f.other)
+				.. ", the machine's output holds 30 and 12"
+		end
+		local got = remote.call(NET, "extract", f.ctrl, "stone", 10)
+		if got ~= 10 or out.get_item_count("stone") ~= 20 then
+			problems[#problems + 1] = "an extraction of 10 stone took " .. tostring(got) .. ", the machine's output holds " .. out.get_item_count("stone")
+		end
+		local put = remote.call(NET, "insert", f.ctrl, "stone", 50)
+		if out.get_item_count("stone") ~= 20 then problems[#problems + 1] = "stone stored in the network went into the machine's output: " .. out.get_item_count("stone") end
+		if count("stone") ~= 70 then problems[#problems + 1] = "after 50 stone stored (" .. tostring(put) .. ") the network counts " .. count("stone") .. ", not 70" end
+		local info2 = remote.call(SB, "info", f.bus2) or {}
+		if info2.side == "item" and info2.status == "ok" then problems[#problems + 1] = "a storage bus on an assembling machine 2 has an item storage" end
+		if count("stone") ~= 70 then problems[#problems + 1] = "the assembling machine's output is counted: " .. count("stone") end
+	end
+	report("FRAGMENTS", problems, "a storage bus on " .. tostring(f.machine_name) .. " (recipe " .. tostring(f.recipe) .. "): its output slots, with stone and "
+		.. tostring(f.other) .. ", are network storage to take from")
 end
 
 --------------------------------------------------------------------------------
@@ -766,9 +876,13 @@ STEPS[10] = function()
 	place_test()
 	build()
 	space_asm_build()
+	fragments_build()
 end
 
-STEPS[150] = function() space_asm_start() end
+STEPS[150] = function()
+	space_asm_start()
+	fragments_check()
+end
 
 STEPS[200] = function()
 	local t = storage.t

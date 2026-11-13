@@ -1166,6 +1166,26 @@ first, the Space Exploration file on top of it:
   Crafting Card or the ME Logistic Interface that asked for it still waits for that job. Nothing has to be finished or
   cancelled before a launch. (A CPU that does not arrive whole, because only a part of it stood on the ship, pauses its
   job, which then takes the next CPU that fits, as when a CPU is rebuilt.)
+- **Core mining** (issue #710). Space Exploration's core miner gives core fragments without end and drops them on the
+  tile in front of its output, as a mining drill does. Three ways to put it on an ME network:
+  - an **ME Interface on the output tile**: the interface is a chest to the game, the miner fills it directly, and what
+    lies in an interface that is no row of it goes into the network at its next visit (no belt, no inserter);
+  - a chest on the output tile with an **ME Import Bus** (the fragments move into the network) or an **ME Storage Bus**
+    (they stay in the chest and count as network storage);
+  - with several miners, a belt to one chest with a bus, as with any ore.
+
+  **Core fragment processing** (the pulveriser, 20 fragments into up to a dozen products, some of them by chance, some
+  recipes with a fluid):
+  - kept running: an **ME Export Bus** with the fragment as its filter on the pulveriser fills it (set the pulveriser's
+    recipe), and an **ME Storage Bus on the pulveriser** makes its output slots network storage: everything the recipe
+    leaves there shows in the terminal and is taken out of the machine when the network needs it. This storage is to take
+    from only, the network never stores into a machine's output; it works on the machine of core fragment processing
+    alone (a storage bus on another crafting machine is what it was: its fluid boxes, or nothing). An **ME Import Bus** on
+    the pulveriser moves the products into the drives instead. A fluid product or ingredient goes through a second bus on
+    a pipe or tank of the pulveriser, or through pipes.
+  - on demand: an **ME Pattern Provider next to the pulveriser** with a crafting pattern of the fragment recipe (the
+    ME Pattern Terminal encodes it from the recipe). A job for one product runs the recipe as often as its expected yield
+    says, every other product goes into the network.
 - **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
   one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
   an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while
