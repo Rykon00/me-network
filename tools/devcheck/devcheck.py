@@ -968,6 +968,12 @@ def check_textures(a, base_sec):
     applied = re.findall(rf"data-final-fixes\.lua:\d+: {TEXTURES}: (.*)", log)
     skipped = [l for l in applied if "SKIPPED" in l]
     problems += [f"override skipped: {l}" for l in skipped]
+    # issue #731: the entries of a prototype made only with Space Exploration may be absent, but not in a run with it
+    absent = [l for l in applied if "ABSENT" in l]
+    if "space-exploration" in (getattr(a, "with_mod", None) or []):
+        problems += [f"override absent in a run with Space Exploration: {l}" for l in absent]
+    elif absent:
+        print(f"overrides of prototypes made only with another mod, absent in this run: {len(absent)}")
     stray = sorted({p for p, _ in base_sec.get("PATHS", []) if p.startswith(f"__{TEXTURES}__/")})
     if stray:
         problems.append(f"without the texture mod the prototypes name its files: {stray[:3]}")
@@ -985,7 +991,7 @@ def check_textures(a, base_sec):
     real = real_override_keys()
     done = {l.split(": ", 1)[0] for l in applied if "SKIPPED" not in l}
     problems += [f"override of overrides.lua not applied: {k}" for k in real if k not in done]
-    print(f"overrides applied: {len(applied) - len(skipped)} ({len(real)} of overrides.lua, the {len(cases)} "
+    print(f"overrides applied: {len(applied) - len(skipped) - len(absent)} ({len(real)} of overrides.lua, the {len(cases)} "
           f"stand-ins), skipped: {len(skipped)}")
     print("stand-ins and copy removed: " + ("yes" if not (copy.exists() or (MODS / TEXTURES).exists()) else "NO"))
     report("problems of the texture mod run", problems)
