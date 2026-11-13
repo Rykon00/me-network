@@ -552,7 +552,22 @@ local function build(real)
 		inv.destroy()
 		remote.call(AC, "set_priority", t.provider, 3)
 	end
-	if t.iface then remote.call(IO, "set_interface_slot", t.iface, 1, "iron-plate", "normal", 50) end
+	if t.iface then
+		remote.call(IO, "set_interface_slot", t.iface, 1, "iron-plate", "normal", 50)
+		--- issue #714: a fluid row on a side (1000 water in the north tank), carried by the move like the item row
+		if not (remote.call(IO, "set_interface_key", t.iface, 2, "fluid/water", 1000) and remote.call(IO, "set_interface_side", t.iface, 1, 2)) then
+			problems[#problems + 1] = "the interface did not take its fluid row"
+		end
+	end
+	--- issue #714: two Pattern Capacity Cards in the first provider's card slots
+	if t.provider then
+		for _ = 1, 2 do
+			local inv = cell("me-pattern-capacity-card")
+			local why = remote.call(AC, "provider_shift_in", t.provider, inv[1])
+			if inv[1].valid_for_read then problems[#problems + 1] = "the provider did not take a Pattern Capacity Card: " .. tostring(why) end
+			inv.destroy()
+		end
+	end
 	if t.xbus then
 		remote.call(IO, "set_bus_filters", t.xbus, { "stone" })       -- (nothing of it in the network: the bus only keeps its setting)
 		local inv = cell("me-capacity-card")
@@ -683,6 +698,10 @@ local function snapshot()
 	put("export filters", bus and table.concat(bus.filters, ",") or "none")
 	put("export cards", inv_names(remote.call(IO, "bus_inventory", t.xbus)))
 	put("interface", serpent.line(remote.call(IO, "get_interface_config", t.iface)))
+	put("interface sides", serpent.line(remote.call(IO, "get_interface_sides", t.iface)))
+	local tank = (remote.call(IO, "interface_tanks", t.iface) or {})[1]
+	put("interface water", tank and tank.valid and math.floor(tank.get_fluid_count("water") + 0.5) or "no tank")
+	put("provider cards", inv_names(remote.call(AC, "provider_inventory", t.provider)))
 	put("storage bus", serpent.line((remote.call(SB, "get_settings", t.sbus) or {}).mode))
 	put("port cells", inv_names(remote.call(PORT, "cells", t.port)))
 	local wb = remote.call(BENCH, "info", t.bench)
@@ -696,6 +715,16 @@ local function snapshot()
 	local g = remote.call(AC, "group_info", t.cpu)
 	put("cpu", g and (tostring(g.n or g.blocks) .. " blocks, " .. tostring(g.bytes) .. " bytes") or "none")
 	return out
+end
+
+--- issue #714: the snapshot before the first move has the fluid side filled and the provider's two cards (so that "the
+--- same after the move" says something)
+local function extras(problems)
+	local have = {}
+	for _, row in ipairs(storage.before) do have[row:match("^[^=]+")] = row:match("=(.*)$") end
+	if have["interface water"] ~= "1000" then problems[#problems + 1] = "the interface's fluid side holds " .. tostring(have["interface water"]) .. " water, not 1000" end
+	local _, n = tostring(have["provider cards"]):gsub("me%-pattern%-capacity%-card", "")
+	if n ~= 2 then problems[#problems + 1] = "the provider's cards: " .. tostring(have["provider cards"]) .. " (two Pattern Capacity Cards)" end
 end
 
 local function compare(before, after, skip)
@@ -1008,6 +1037,7 @@ STEPS[200] = function()
 	zones_check()
 	storage.before = snapshot()
 	local problems = {}
+	extras(problems)
 	local net = remote.call(NET, "network", t.ctrl)
 	if not (net and net.status == "ok") then problems[#problems + 1] = "the network in orbit does not work: " .. tostring(net and net.status) end
 	if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge orbit - Nauvis is not linked" end
@@ -1219,6 +1249,7 @@ if REAL_LAUNCH then
 			charge()
 			storage.before = snapshot()
 			local problems = {}
+			extras(problems)
 			local net = remote.call(NET, "network", t.ctrl)
 			if not (net and net.status == "ok") then problems[#problems + 1] = "the network in orbit does not work: " .. tostring(net and net.status) end
 			if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge orbit - Nauvis is not linked" end
