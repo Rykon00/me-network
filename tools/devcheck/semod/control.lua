@@ -156,9 +156,10 @@ end
 
 local SPACE_ASM = "me-space-molecular-assembler"
 
---- the first recipe (by name) of the category "space-crafting" with item ingredients and products only that the ME Molecular
---- Assembler cannot craft
-local function space_recipe()
+--- the first recipe (by name) of the category `category` ("space-crafting" without one) with item ingredients and products
+--- only that the ME Molecular Assembler cannot craft
+local function space_recipe(category)
+	category = category or "space-crafting"
 	local plain = {}
 	for c in pairs(prototypes.entity["me-molecular-assembler"].crafting_categories) do plain[c] = true end
 	local names = {}
@@ -166,11 +167,15 @@ local function space_recipe()
 		local space, other = false, false
 		for k, v in pairs(r.categories or {}) do                 -- (a list of names, or names as keys)
 			local c = type(k) == "string" and k or v
-			if c == "space-crafting" then space = true end
+			if c == category then space = true end
 			if plain[c] then other = true end
 		end
 		local items = #r.products > 0
-		for _, x in pairs(r.ingredients) do if x.type ~= "item" then items = false end end
+		for _, x in pairs(r.ingredients) do
+			--- (an ingredient of more than a stack is a pattern no machine takes: "stack")
+			if x.type ~= "item" or x.amount > prototypes.item[x.name].stack_size then items = false end
+		end
+		if r.energy > 30 then items = false end
 		for _, x in pairs(r.products) do
 			if x.type ~= "item" or (x.probability or x.independent_probability or 1) < 1 or not x.amount then items = false end
 		end
@@ -221,14 +226,34 @@ local function space_asm_build()
 		a.product = r.products[1].name
 		a.amount = r.products[1].amount * 2
 	end
+	--- issue #729: a recipe of the space manufactory (item ingredients only), a second pattern in the same provider
+	local recipe2, n2 = space_recipe("space-manufacturing")
+	a.recipe2, a.recipes2 = recipe2, n2
+	if not recipe2 then problems[#problems + 1] = "no recipe of the category space-manufacturing with item ingredients only" end
+	if recipe2 and a.drive and a.provider then
+		local r = prototypes.recipe[recipe2]
+		game.forces.player.recipes[recipe2].enabled = true
+		for _, ing in pairs(r.ingredients) do remote.call(NET, "store_in_drive", a.drive, ing.name, ing.amount * 3) end
+		local pinv = game.create_inventory(2)
+		pinv.insert{ name = "me-blank-pattern", count = 1 }
+		local where, why = remote.call(PT, "encode_def", pinv, nil, { kind = "crafting", recipe = recipe2 })
+		local stack = pinv.find_item_stack("me-encoded-pattern")
+		if not (where and stack and remote.call(AC, "insert_pattern", a.provider, stack)) then
+			problems[#problems + 1] = "no pattern of " .. recipe2 .. " in the provider: " .. tostring(why)
+		end
+		pinv.destroy()
+		a.product2 = r.products[1].name
+		a.amount2 = r.products[1].amount * 2
+	end
 	--- the prototype: the ME Molecular Assembler's categories and space-crafting, its speed, five card slots, no twin
 	local base = prototypes.entity["me-molecular-assembler"]
 	for c in pairs(base.crafting_categories) do
 		if not proto.crafting_categories[c] then problems[#problems + 1] = "it lacks the ME Molecular Assembler's category " .. c end
 	end
 	if not proto.crafting_categories["space-crafting"] then problems[#problems + 1] = "it lacks the category space-crafting" end
+	if not proto.crafting_categories["space-manufacturing"] then problems[#problems + 1] = "it lacks the category space-manufacturing" end
 	for c in pairs(proto.crafting_categories) do
-		if not base.crafting_categories[c] and c ~= "space-crafting" then problems[#problems + 1] = "a category of its own: " .. c end
+		if not base.crafting_categories[c] and c ~= "space-crafting" and c ~= "space-manufacturing" then problems[#problems + 1] = "a category of its own: " .. c end
 	end
 	if proto.get_crafting_speed() ~= base.get_crafting_speed() then problems[#problems + 1] = "its crafting speed is " .. proto.get_crafting_speed() end
 	if proto.module_inventory_size ~= base.module_inventory_size then problems[#problems + 1] = "its card slots: " .. tostring(proto.module_inventory_size) end
@@ -251,6 +276,15 @@ local function space_asm_start()
 	if not id then a.problems[#a.problems + 1] = "the job of " .. a.amount .. " " .. a.product .. " did not start: " .. tostring(why) end
 end
 
+--- issue #729: the second job, the space manufactory's recipe (started when the first is done: one Crafting CPU)
+local function space_asm_second()
+	local a = storage.space_asm
+	if not (a and a.recipe2 and a.product2 and a.ctrl and a.ctrl.valid) then return end
+	local id, why = remote.call(AC, "start", a.ctrl, a.product2, a.amount2)
+	a.job2 = id
+	if not id then a.problems[#a.problems + 1] = "the job of " .. a.amount2 .. " " .. a.product2 .. " did not start: " .. tostring(why) end
+end
+
 local function space_asm_done()
 	local a = storage.space_asm
 	if not a then return end
@@ -263,8 +297,20 @@ local function space_asm_done()
 				.. "), the network holds " .. tostring(got)
 		end
 	end
+	if a.job2 then
+		local job = remote.call(AC, "job", a.job2)
+		local got = remote.call(NET, "count", a.ctrl, a.product2)
+		if not (job and job.status == "done" and got >= a.amount2) then
+			problems[#problems + 1] = "the job of " .. a.amount2 .. " " .. a.product2 .. " (space manufactory) is " .. tostring(job and job.status) .. " ("
+				.. serpent.line(job and job.reason) .. "), the network holds " .. tostring(got)
+		end
+	elseif a.recipe2 then
+		problems[#problems + 1] = "the job of the space manufactory's recipe " .. a.recipe2 .. " was not started"
+	end
 	report("SPACEASM", problems, "the ME Space Molecular Assembler on scaffold in orbit crafted " .. tostring(a.amount) .. " " .. tostring(a.product)
-		.. " (recipe " .. tostring(a.recipe) .. ", one of " .. tostring(a.recipes) .. " space-crafting recipes with item ingredients only)")
+		.. " (recipe " .. tostring(a.recipe) .. ", one of " .. tostring(a.recipes) .. " space-crafting recipes with item ingredients only) and "
+		.. tostring(a.amount2) .. " " .. tostring(a.product2) .. " (recipe " .. tostring(a.recipe2) .. ", one of " .. tostring(a.recipes2)
+		.. " space-manufacturing recipes with item ingredients only)")
 end
 
 --------------------------------------------------------------------------------
@@ -1169,6 +1215,7 @@ STEPS[460] = function()
 end
 
 STEPS[700] = function()
+	space_asm_second()                                      -- (issue #729)
 	local problems = {}
 	for _, pad in ipairs(storage.pads or {}) do
 		local n = pad.ctrl and pad.ctrl.valid and remote.call(NET, "count", pad.ctrl, "iron-plate")

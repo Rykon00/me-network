@@ -1027,8 +1027,11 @@ is built, and the assembler is one entity everywhere.
 **The ME Space Molecular Assembler** (issue #711; with Space Exploration, also with the recipes setting off, not with
 Gregtorio Continued) is the assembler for those recipes: the same block (one tile, item recipes only, five Acceleration
 Cards, power through the ME Controller, a member of the network that carries it, served by the ME Pattern Providers next to
-it) with the ME Molecular Assembler's categories and `space-crafting`, the category of Space Exploration's space assembling
-machine (space transport belts and pipes, parts of the first space science packs). Its picture is the assembler's in a
+it) with the ME Molecular Assembler's categories, `space-crafting`, the category of Space Exploration's space assembling
+machine (space transport belts and pipes, parts of the first space science packs), and `space-manufacturing`, the space
+manufactory's (issue #729: its recipes without a fluid, 12 of them that fit a pattern in 0.7.64, blank data cards among
+them; a recipe with a fluid needs the real manufactory next to an ME Pattern Provider, the assembler has no fluid
+boxes). Its picture is the assembler's in a
 blue tint. It is made from an ME Molecular Assembler, 2 heat shielding and 4 low density structure, and unlocked by **ME
 Space Autocrafting** (after ME Autocrafting and Space Exploration's Space Assembling, at that technology's cost: 100 × 60 s
 with red, green, blue and rocket science).
