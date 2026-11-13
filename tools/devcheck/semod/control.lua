@@ -35,6 +35,13 @@
 ---            cargo into a "logistic-robot-dropped-cargo" container marked for deconstruction, the robot dies; the mod itself
 ---            only strikes logistic networks with more than 50 robots in the air and never on a spaceship). The item is still
 ---            counted once, a construction robot brings it back and the deliveries end all the same.
+---   SPACEASM issue #711: the ME Space Molecular Assembler. It can be built on space platform scaffold and plating, not
+---            on spaceship floor and not on Nauvis (PLACE knows it); Space Exploration made no "-grounded" or "-spaced" twin
+---            of it; it has the ME Molecular Assembler's categories and "space-crafting", its speed, five Acceleration Card
+---            slots and no power connection. On scaffold on a surface of its own a network (controller, drive, a 1k
+---            crafting storage, a pattern provider, the assembler next to it) crafts a recipe of the category "space-crafting"
+---            that no ME Molecular Assembler can craft (the first one with item ingredients only), started as a job; the
+---            assembler is a member of the network that carries it (the provider is cabled only through it).
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -110,18 +117,139 @@ local function place_test()
 	end
 	table.sort(names)
 	local nauvis = game.surfaces.nauvis
+	--- (issue #711: the ME Space Molecular Assembler stands on the platforms only, not on a ship and not on a planet)
+	local SPACE_ONLY = { ["me-space-molecular-assembler"] = { ["se-spaceship-floor"] = false } }
 	for _, name in ipairs(names) do
 		n = n + 1
+		local rule = SPACE_ONLY[name]
 		for _, f in ipairs(floors) do
-			if prototypes.tile[f[1]] and not s.can_place_entity{ name = name, position = { f[2] + 4.5, 0.5 }, force = "player",
-					build_check_type = defines.build_check_type.manual } then
-				problems[#problems + 1] = name .. " cannot be built on " .. f[1]
+			local want = not (rule and rule[f[1]] == false)
+			if prototypes.tile[f[1]] and s.can_place_entity{ name = name, position = { f[2] + 4.5, 0.5 }, force = "player",
+					build_check_type = defines.build_check_type.manual } ~= want then
+				problems[#problems + 1] = name .. (want and " cannot" or " can") .. " be built on " .. f[1]
 			end
 		end
 		local pos = nauvis.find_non_colliding_position(name, { 200, 200 }, 40, 1)
-		if not pos then problems[#problems + 1] = name .. " cannot be built on Nauvis" end
+		if (pos ~= nil) ~= (rule == nil) then problems[#problems + 1] = name .. (rule and " can" or " cannot") .. " be built on Nauvis" end
 	end
 	report("PLACE", problems, n .. " blocks on scaffold, plating, spaceship floor and Nauvis")
+end
+
+--------------------------------------------------------------------------------
+--- SPACEASM (issue #711)
+--------------------------------------------------------------------------------
+
+local SPACE_ASM = "me-space-molecular-assembler"
+
+--- the first recipe (by name) of the category "space-crafting" with item ingredients and products only that the ME Molecular
+--- Assembler cannot craft
+local function space_recipe()
+	local plain = {}
+	for c in pairs(prototypes.entity["me-molecular-assembler"].crafting_categories) do plain[c] = true end
+	local names = {}
+	for name, r in pairs(prototypes.recipe) do
+		local space, other = false, false
+		for k, v in pairs(r.categories or {}) do                 -- (a list of names, or names as keys)
+			local c = type(k) == "string" and k or v
+			if c == "space-crafting" then space = true end
+			if plain[c] then other = true end
+		end
+		local items = #r.products > 0
+		for _, x in pairs(r.ingredients) do if x.type ~= "item" then items = false end end
+		for _, x in pairs(r.products) do
+			if x.type ~= "item" or (x.probability or x.independent_probability or 1) < 1 or not x.amount then items = false end
+		end
+		if space and not other and items and not r.hidden then names[#names + 1] = name end
+	end
+	table.sort(names)
+	return names[1], #names
+end
+
+local function space_asm_build()
+	local problems = {}
+	local proto = prototypes.entity[SPACE_ASM]
+	if not proto then report("SPACEASM", { "no entity " .. SPACE_ASM }, "") return end
+	--- (a surface of its own: the ship's orbit must be free of ME blocks after the launch)
+	local s = game.create_surface("me-se-platform", { width = 128, height = 128 })
+	local X, Y = 0, 0
+	tiles(s, "se-space-platform-scaffold", X - 2, Y - 4, X + 12, Y + 4)
+	local function at(name, x, y) return place(s, problems, name, x, y) end
+	local eei = at("electric-energy-interface", X, Y - 2)
+	if eei then eei.power_production = 5e6 eei.electric_buffer_size = 5e7 eei.energy = 5e7 end
+	at("substation", X + 3, Y - 2)
+	local a = {}
+	storage.space_asm = a
+	a.ctrl = at("me-network-controller", X + 1, Y + 1)        -- (tiles X..X+1, Y..Y+1)
+	a.drive = at("me-drive", X + 2.5, Y + 0.5)
+	a.cpu = at("me-1k-crafting-storage", X + 3.5, Y + 0.5)
+	a.asm = at(SPACE_ASM, X + 4.5, Y + 0.5)                   -- (the provider is in the network through the assembler alone)
+	a.provider = at("me-pattern-provider", X + 5.5, Y + 0.5)
+	local recipe, n = space_recipe()
+	a.recipe, a.recipes = recipe, n
+	if not recipe then problems[#problems + 1] = "no recipe of the category space-crafting with item ingredients only" end
+	if recipe and a.drive and a.provider then
+		local r = prototypes.recipe[recipe]
+		game.forces.player.recipes[recipe].enabled = true
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "me-16k-storage-cell", count = 1 }
+		if not remote.call(NET, "insert_cell", a.drive, inv[1], 1) then problems[#problems + 1] = "no cell in the drive" end
+		inv.destroy()
+		for _, ing in pairs(r.ingredients) do remote.call(NET, "store_in_drive", a.drive, ing.name, ing.amount * 3) end
+		local pinv = game.create_inventory(2)
+		pinv.insert{ name = "me-blank-pattern", count = 1 }
+		local where, why = remote.call(PT, "encode_def", pinv, nil, { kind = "crafting", recipe = recipe })
+		local stack = pinv.find_item_stack("me-encoded-pattern")
+		if not (where and stack and remote.call(AC, "insert_pattern", a.provider, stack)) then
+			problems[#problems + 1] = "no pattern of " .. recipe .. " in the provider: " .. tostring(why)
+		end
+		pinv.destroy()
+		a.product = r.products[1].name
+		a.amount = r.products[1].amount * 2
+	end
+	--- the prototype: the ME Molecular Assembler's categories and space-crafting, its speed, five card slots, no twin
+	local base = prototypes.entity["me-molecular-assembler"]
+	for c in pairs(base.crafting_categories) do
+		if not proto.crafting_categories[c] then problems[#problems + 1] = "it lacks the ME Molecular Assembler's category " .. c end
+	end
+	if not proto.crafting_categories["space-crafting"] then problems[#problems + 1] = "it lacks the category space-crafting" end
+	for c in pairs(proto.crafting_categories) do
+		if not base.crafting_categories[c] and c ~= "space-crafting" then problems[#problems + 1] = "a category of its own: " .. c end
+	end
+	if proto.get_crafting_speed() ~= base.get_crafting_speed() then problems[#problems + 1] = "its crafting speed is " .. proto.get_crafting_speed() end
+	if proto.module_inventory_size ~= base.module_inventory_size then problems[#problems + 1] = "its card slots: " .. tostring(proto.module_inventory_size) end
+	if proto.electric_energy_source_prototype then problems[#problems + 1] = "it has a power connection" end
+	for _, suffix in ipairs({ "-grounded", "-spaced" }) do
+		if prototypes.entity[SPACE_ASM .. suffix] then problems[#problems + 1] = "Space Exploration made the twin " .. SPACE_ASM .. suffix end
+		if base and prototypes.entity["me-molecular-assembler" .. suffix] then problems[#problems + 1] = "Space Exploration made the twin me-molecular-assembler" .. suffix end
+	end
+	a.problems = problems
+end
+
+local function space_asm_start()
+	local a = storage.space_asm
+	if not (a and a.recipe and a.ctrl and a.ctrl.valid) then return end
+	if not remote.call(NET, "same_network", a.ctrl, a.provider) then a.problems[#a.problems + 1] = "the provider behind the assembler is not in the network" end
+	local net = remote.call(NET, "network", a.ctrl)
+	if not (net and net.status == "ok") then a.problems[#a.problems + 1] = "the network on the scaffold does not work: " .. tostring(net and net.status) end
+	local id, why = remote.call(AC, "start", a.ctrl, a.product, a.amount)
+	a.job = id
+	if not id then a.problems[#a.problems + 1] = "the job of " .. a.amount .. " " .. a.product .. " did not start: " .. tostring(why) end
+end
+
+local function space_asm_done()
+	local a = storage.space_asm
+	if not a then return end
+	local problems = a.problems or {}
+	if a.job then
+		local job = remote.call(AC, "job", a.job)
+		local got = remote.call(NET, "count", a.ctrl, a.product)
+		if not (job and job.status == "done" and got == a.amount) then
+			problems[#problems + 1] = "the job of " .. a.amount .. " " .. a.product .. " is " .. tostring(job and job.status) .. " (" .. serpent.line(job and job.reason)
+				.. "), the network holds " .. tostring(got)
+		end
+	end
+	report("SPACEASM", problems, "the ME Space Molecular Assembler on scaffold in orbit crafted " .. tostring(a.amount) .. " " .. tostring(a.product)
+		.. " (recipe " .. tostring(a.recipe) .. ", one of " .. tostring(a.recipes) .. " space-crafting recipes with item ingredients only)")
 end
 
 --------------------------------------------------------------------------------
@@ -637,7 +765,10 @@ local STEPS = {}
 STEPS[10] = function()
 	place_test()
 	build()
+	space_asm_build()
 end
+
+STEPS[150] = function() space_asm_start() end
 
 STEPS[200] = function()
 	local t = storage.t
@@ -779,6 +910,7 @@ STEPS[700] = function()
 end
 
 STEPS[2000] = function()
+	space_asm_done()
 	local got = job_done()
 	report("JOB", got == "done" and {} or { got }, "the job started before the launch ran over both moves and made its 32 iron sticks")
 	local problems = {}

@@ -108,6 +108,9 @@ local function kinds()
 	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
 	--- (M.assembler_power); another mod's (ME_NETWORK.make_molecular_assembler) has the same name
 	k["me-molecular-assembler"] = "assembler"
+	--- issue #711: the ME Space Molecular Assembler (with Space Exploration) is the same kind: every code path of the assembler
+	--- (the graph, its power through the controller, the providers next to it) is the one above
+	k["me-space-molecular-assembler"] = "assembler"
 	k["me-level-maintainer"] = "maintainer"
 	k["me-circuit-interface"] = "circuit"
 	k["me-fluid-interface"] = "fluid-interface"

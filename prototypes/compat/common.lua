@@ -73,6 +73,8 @@ function M.remake_assembler(keep)
 	end
 	ME.make_molecular_assembler{ base = "assembling-machine-2", crafting_categories = categories,
 		crafting_speed = assembler.crafting_speed, energy_usage = assembler.energy_usage }
+	--- (issue #711: the ME Space Molecular Assembler follows: the same categories and its own)
+	if ME.space_assembler then ME.space_assembler.make() end
 	return categories
 end
 

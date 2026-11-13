@@ -60,7 +60,8 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Space Exploration** (issue #703, `docs/API.md` "Space Exploration"): `prototypes/compat/space-exploration-early.lua`
   (always with it: the technologies out of its procedural pass, every entity allowed in space; a new technology is covered
-  through `ME_NETWORK.technologies`, a new entity through its name `me-...` or its item) and
+  through `ME_NETWORK.technologies`, a new entity through its name `me-...` or its item; issue #711: the ME Space Molecular
+  Assembler is made there too, a second name of `ME_NETWORK.make_molecular_assembler` and the same runtime kind "assembler") and
   `prototypes/compat/space-exploration.lua` (recipes and tiers, the startup setting). A block that holds items in script
   storage (cells, patterns, cards, slot inventories) needs a `M.on_moved(source, destination)` in its module and its place
   in `move.hooks` of `control.lua` (`scripts/fork-me-move.lua`: a clone whose source a script destroys in the same tick is a

@@ -21,9 +21,75 @@
 ---    -0.2 .. 0.2). The blocks of a Crafting CPU are one slab with a box of -0.35 .. 0.35 (issue #268: no gap a character
 ---    walks into), which leaves 0.3 tiles between two of them: exactly this character's width, so it fitted between them
 ---    (issue #705). With Space Exploration their box is -0.36 .. 0.36.
+--- 4. The ME Space Molecular Assembler (issue #711, the maintainer's option A): a second ME Molecular Assembler for Space
+---    Exploration's recipes of the category "space-crafting" (its space assembling machine's own: space belts and pipes,
+---    the first science packs' parts). It is the same block made by the same function (ME_NETWORK.make_molecular_assembler
+---    with a name): one tile, item recipes only, five Acceleration Cards, a member of the ME network that draws its power
+---    through the controller, served by ME Pattern Providers next to it; its categories are the ME Molecular Assembler's and
+---    "space-crafting". It stands only in space and not on a spaceship:
+---      - like Space Exploration's own space machines it collides with ground and water tiles, so it is built on space
+---        platform scaffold and plating only;
+---      - Space Exploration makes a hidden "-grounded" twin of every machine with a "space-..." category that can stand on
+---        spaceship floor, and swaps the two when a ship lands on a planet (its EntitySwap.swap_structure: the new entity is
+---        made and the old one destroyed without an event). A block of the ME network is known by its unit number, so the
+---        swap would take the assembler out of the network. With the spaceship layer in its mask no twin is made and it
+---        cannot be built on a ship; a ship carries ME Molecular Assemblers.
+---    Its recipe is an ME Molecular Assembler with heat shielding and low density structure (what Space Exploration's space
+---    assembling machine adds to its base); its technology follows ME Autocrafting and Space Exploration's Space Assembling
+---    with that technology's cost (the first one that unlocks a "space-crafting" recipe). Not with Gregtorio Continued (its
+---    recipes are its own).
 --------------------------------------------------------------------------------
 
 local ME = ME_NETWORK
+
+if not mods["gregtorio-continued"] and data.raw["recipe-category"]["space-crafting"] and spaceship_collision_layer then
+	local NAME = "me-space-molecular-assembler"
+	local TINT = { r = 0.62, g = 0.8, b = 1 }
+	local function has(kind, name) return data.raw[kind] and data.raw[kind][name] ~= nil end
+	local shielding = has("item", "se-heat-shielding") and "se-heat-shielding" or "steel-plate"
+	ME.add_item{
+		name = NAME,
+		icon = ME.hd_icons .. "me-molecular-assembler.png",
+		icon_size = 64,
+		subgroup = "fork-me-autocrafting",
+		order = "f2",
+		stack_size = 10,
+		place_result = NAME,
+		fields = { icon = nil, icons = { { icon = ME.hd_icons .. "me-molecular-assembler.png", icon_size = 64, tint = TINT } } },
+		recipe = { energy_required = 5, ingredients = {
+			{ type = "item", name = "me-molecular-assembler", amount = 1 },
+			{ type = "item", name = shielding, amount = 2 },
+			{ type = "item", name = "low-density-structure", amount = 4 },
+		} },
+	}
+	data.raw.item[NAME].icon = nil
+	--- the entity: the ME Molecular Assembler as it is now, plus "space-crafting" (made again after the compatibility files
+	--- remade the assembler, prototypes/compat/common.lua)
+	ME.space_assembler = { name = NAME }
+	function ME.space_assembler.make()
+		local base = data.raw["assembling-machine"]["me-molecular-assembler"]
+		local categories = { "space-crafting" }
+		for _, c in pairs(base.crafting_categories or {}) do
+			if c ~= "space-crafting" then categories[#categories + 1] = c end
+		end
+		ME.make_molecular_assembler{ name = NAME, base = "assembling-machine-2", crafting_categories = categories,
+			crafting_speed = base.crafting_speed, energy_usage = base.energy_usage, tint = TINT,
+			collision_mask = { layers = { ground_tile = true, water_tile = true, item = true, object = true, player = true,
+				[spaceship_collision_layer] = true } } }
+		ME.space_assembler.categories = categories
+	end
+	ME.space_assembler.make()
+	local packs = { { "automation-science-pack", 1 }, { "logistic-science-pack", 1 }, { "chemical-science-pack", 1 } }
+	if has("tool", "se-rocket-science-pack") then packs[#packs + 1] = { "se-rocket-science-pack", 1 } end
+	local prerequisites = { "me-autocrafting" }
+	if has("technology", "se-space-assembling") then prerequisites[#prerequisites + 1] = "se-space-assembling" end
+	ME.add_technology{ name = "me-space-autocrafting", prerequisites = prerequisites,
+		unit = { count = 100, time = 60, ingredients = packs }, recipes = { NAME } }
+	--- (the picture of ME Autocrafting in the assembler's tint: no file of its own)
+	local tech = data.raw.technology["me-space-autocrafting"]
+	tech.icons = { { icon = ME.technology_path .. "me-autocrafting.png", icon_size = 256, tint = TINT } }
+	tech.icon, tech.icon_size = nil, nil
+end
 
 se_procedural_tech_exclusions = se_procedural_tech_exclusions or {}
 local excluded = {}
