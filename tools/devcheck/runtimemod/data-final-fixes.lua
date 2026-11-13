@@ -24,7 +24,7 @@ local function recipe(name, n_items, n_fluids)
 	data:extend({ {
 		type = "recipe", name = name, categories = { "zz-devcheck-paste" }, energy_required = 1, enabled = false,
 		ingredients = ingredients, results = { { type = "item", name = items[1], amount = 1 } },
-		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+		icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product",
 	} })
 end
 recipe("zz-devcheck-paste-many", 20, 5)        -- more than the rows and filters of every block
@@ -32,7 +32,7 @@ recipe("zz-devcheck-paste-many", 20, 5)        -- more than the rows and filters
 data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", categories = { "zz-devcheck-paste" }, energy_required = 1, enabled = false,
 	ingredients = { { type = "item", name = items[1], amount = 3 }, { type = "fluid", name = fluids[1], amount = 6000 } },
 	results = { { type = "item", name = items[1], amount = 1 } },
-	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
+	icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product" } })
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
 
 --- Issue #588: since Gregtorio #612 its gear recipe `iron-gear-crafting-table`, the one the autocrafting tests craft, also uses
@@ -84,7 +84,7 @@ do
 		m.next_upgrade, m.fast_replaceable_group = nil, nil
 		m.localised_name = src.localised_name or { "entity-name.ev-macerator" }
 		data:extend({ m, { type = "item", name = "zz-devcheck-macerator", localised_name = m.localised_name,
-			icon = "__base__/graphics/icons/signal/signal-info.png", stack_size = 50, place_result = "zz-devcheck-macerator",
+			icon = "__base__/graphics/icons/iron-gear-wheel.png", stack_size = 50, place_result = "zz-devcheck-macerator",
 			subgroup = "intermediate-product" } })
 	end
 end
@@ -97,7 +97,7 @@ do
 		type = "recipe", name = "zz-devcheck-scan", categories = { macerator and macerator.crafting_categories[1] or "crafting" },
 		energy_required = 1, enabled = false,
 		ingredients = { { type = "item", name = "raw-iron", amount = 1 } }, results = { { type = "item", name = "crushed-iron", amount = 1 } },
-		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+		icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product",
 	} })
 end
 
@@ -109,7 +109,7 @@ do
 	if cat then
 		data:extend({ { type = "recipe", name = "zz-devcheck-macerate-plate", categories = { cat }, energy_required = 4, enabled = true,
 			ingredients = { { type = "item", name = "iron-plate", amount = 1 } }, results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } },
-			icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
+			icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product" } })
 	end
 end
 
@@ -189,7 +189,7 @@ if ma and ma.crafting_categories and ma.crafting_categories[1] then
 		type = "recipe", name = "zz-devcheck-fast-gear", categories = { ma.crafting_categories[1] }, energy_required = 0.1,
 		enabled = false, ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
 		results = { { type = "item", name = "iron-gear-wheel", amount = 1 } },
-		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+		icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product",
 	} })
 end
 

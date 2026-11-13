@@ -1158,10 +1158,26 @@ def unlock_order(sec):
     return out
 
 
+def check_helper_paths():
+    """issue #732: every `__base__/` and `__core__/` picture a helper mod of tools/devcheck names exists in the game's
+    data. The headless game loads no image, so a wrong path shows only when a graphical client loads the helper mod (it
+    stops at the sprite atlas)."""
+    problems, count = [], 0
+    for lua in sorted(HERE.glob("*mod/*.lua")):
+        for n, line in enumerate(lua.read_text(encoding="utf-8").splitlines(), 1):
+            for mod, rest in re.findall(r"__(base|core)__/([^\"']+\.png)", line):
+                count += 1
+                if not (FACTORIO / "data" / mod / rest).is_file():
+                    problems.append(f"{lua.relative_to(ROOT).as_posix()}:{n}: __{mod}__/{rest} is not in the game's data "
+                                    "(a graphical client stops on it)")
+    print(f"helper mods' pictures of the base game: {count} paths, " + ("all exist" if not problems else f"{len(problems)} missing"))
+    return problems
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only, with_mods=with_mods(a))
     print("mods: " + mods_label(a, a.base_only))
-    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture()
+    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture() + check_helper_paths()
     if a.with_gregtorio:
         # issue #239: no AE2 graphics in a Gregtorio run; since issue #325 me-network requires the texture mod, so the
         # Gregtorio run loads its empty stand-in (texture_stand_in), never the texture mod itself or a zip of it
