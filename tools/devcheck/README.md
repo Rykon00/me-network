@@ -66,7 +66,14 @@ prerequisite or unlocked before the technology, no Space Exploration item missin
 `devcheck.py se` (the helper mod `semod/`) is its runtime test: every block on space platform scaffold, plating and
 spaceship floor, a network in Nauvis Orbit moved to a ship surface and onto Nauvis the way Space Exploration moves a
 spaceship (`clone_brush`, then every original destroyed with `raise_destroy`), a clone that stays a copy, storage buses on
-its landing pad, launch pad and delivery cannon chest, a deleted surface. The general runtime suite runs with it too
+its landing pad, launch pad and delivery cannon chest, a deleted surface. `devcheck.py launch` (issue #706) is the real
+flight: a headless server, the same network inside a real spaceship in Nauvis Orbit (spaceship floor, walls, console, a
+rocket engine, a booster tank with liquid rocket fuel; the helper's startup setting `zz-me-se-real-launch`), Space
+Exploration's integrity check passed, then its own `Spaceship.launch` and `Spaceship.land_at_position` called through RCON
+in its Lua state (`/silent-command __space-exploration__ ...`), and after each move what the network holds and how its
+blocks are set compared with before, nothing spilled, the ship's cleared surface without a recorded block. Those functions
+are no API of Space Exploration, so the test is pinned to 0.7.64 (`SE_VERSION` in `devcheck.py`) and refuses another
+version: read its `scripts/spaceship.lua` again before raising the pin. The general runtime suite runs with it too
 (issue #705: `all --with-mod space-exploration`, as with Krastorio 2), with the stand-ins of `runtimemod/`: the transport
 belt keeps the base game's recipe (AAI Industry makes it from a motor), the cases of a spoiling item are left out (nothing
 spoils without Space Age) and the rocket silo of the provider test is built without the build event (Space Exploration
