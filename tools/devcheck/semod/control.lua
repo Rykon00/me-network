@@ -132,8 +132,8 @@ local function place_test()
 	end
 	table.sort(names)
 	local nauvis = game.surfaces.nauvis
-	--- (issue #711: the ME Space Molecular Assembler stands on the platforms only, not on a ship and not on a planet)
-	local SPACE_ONLY = { ["me-space-molecular-assembler"] = { ["se-spaceship-floor"] = false } }
+	--- (issues #711, #729: the ME Space Molecular Assembler stands on the platforms and on spaceship floor, not on a planet)
+	local SPACE_ONLY = { ["me-space-molecular-assembler"] = {} }
 	for _, name in ipairs(names) do
 		n = n + 1
 		local rule = SPACE_ONLY[name]
@@ -502,6 +502,8 @@ local function build(real)
 	t.machine = at("assembling-machine-2", 4.5, 3.5)
 	if t.machine then t.machine.set_recipe("iron-gear-wheel") end
 	t.provider2 = at("me-pattern-provider", 2.5, 3.5)             -- (issue #704: next to the machine, the job's provider)
+	--- issue #729: an ME Space Molecular Assembler on the ship (spaceship floor)
+	if prototypes.entity["me-space-molecular-assembler"] then t.sasm = at("me-space-molecular-assembler", 6.5, 1.5) end
 	--- issue #707: a logistic network on the ship
 	at("substation", 10, -4)
 	if real then
@@ -523,7 +525,7 @@ local function build(real)
 	t.prov = at("passive-provider-chest", 18.5, 0.5)
 	local members = {}
 	for _, k in ipairs({ "ctrl", "drive", "provider", "iface", "port", "pterm", "ap", "maint", "sbus", "xbus", "tunnel_in",
-			"tunnel_out", "cpu", "cpu2", "bridge", "provider2", "lif", "lsbus" }) do
+			"tunnel_out", "cpu", "cpu2", "bridge", "provider2", "lif", "lsbus", "sasm" }) do
 		if t[k] then members[#members + 1] = t[k] end
 	end
 	local _, unreached = remote.call(NET, "connect", members, 16)
@@ -727,6 +729,24 @@ local function extras(problems)
 	if n ~= 2 then problems[#problems + 1] = "the provider's cards: " .. tostring(have["provider cards"]) .. " (two Pattern Capacity Cards)" end
 end
 
+--- issue #729: the ship's ME Space Molecular Assembler is the same block in the ship's network after every move (Space
+--- Exploration has no "-grounded" twin to swap it for), switched on in space and off on the ground of a planet or moon
+--- (`ground`: what the place must be, nil: whatever the mod says of the surface)
+local function sasm_check(problems, ground)
+	local t = storage.t
+	if not prototypes.entity["me-space-molecular-assembler"] then return end
+	if prototypes.entity["me-space-molecular-assembler-grounded"] then problems[#problems + 1] = "Space Exploration made a grounded twin of the ME Space Molecular Assembler" end
+	local e = t.sasm
+	if not (e and e.valid) then problems[#problems + 1] = "the ship's ME Space Molecular Assembler is not there" return end
+	if not remote.call(NET, "same_network", t.ctrl, e) then problems[#problems + 1] = "the ship's ME Space Molecular Assembler is not in the ship's network" end
+	local is = remote.call("me-network-place", "ground", e.surface.index)
+	if ground ~= nil and is ~= ground then problems[#problems + 1] = e.surface.name .. " counts as " .. (is and "ground" or "space") end
+	if e.disabled_by_script ~= is then
+		problems[#problems + 1] = "the ship's ME Space Molecular Assembler is switched " .. (e.disabled_by_script and "off" or "on") .. " on " .. e.surface.name
+			.. " (" .. (is and "ground" or "space") .. ")"
+	end
+end
+
 local function compare(before, after, skip)
 	local problems = {}
 	for i, row in ipairs(before) do
@@ -741,7 +761,7 @@ end
 --------------------------------------------------------------------------------
 
 local KEYS = { "ctrl", "drive", "provider", "iface", "port", "bench", "pterm", "ap", "maint", "chest", "sbus", "xchest", "xbus",
-	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2", "robo", "lif", "lsbus", "req", "store", "prov" }
+	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2", "robo", "lif", "lsbus", "req", "store", "prov", "sasm" }
 
 --------------------------------------------------------------------------------
 --- issue #707: the logistic network on the ship
@@ -1045,6 +1065,7 @@ STEPS[200] = function()
 	local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = t.ctrl.surface.index })
 	if not hook or hook.allow_delete ~= false then problems[#problems + 1] = "the surface with the network may be deleted" end
 	job_kept(problems)
+	sasm_check(problems, false)
 	if logistics(problems) then problems[#problems + 1] = "logistics: the robots' deliveries ended before the launch (nothing in flight during the move)" end
 	report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. " on power of that surface, bridged to Nauvis: " .. table.concat(storage.before, "; "))
 	--- the launch
@@ -1068,6 +1089,7 @@ STEPS[330] = function()
 	if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge ship - Nauvis is not linked" end
 	if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 	job_carried(problems)
+	sasm_check(problems, false)
 	logistics(problems)
 	crash_robot()                                            -- (issue #707: robot attrition, before the landing)
 	report("TRAVEL", problems, "the network works on the ship's surface, bridged to Nauvis; the crafting job runs on")
@@ -1091,6 +1113,7 @@ STEPS[460] = function()
 		problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 	end
 	job_carried(problems)
+	sasm_check(problems, true)                               -- (issue #729: on Nauvis it rests)
 	logistics(problems)
 	report("LANDED", problems, "the network works on Nauvis as before the launch; the crafting job runs on")
 	--- COPY: a clone whose source stays
@@ -1299,6 +1322,7 @@ if REAL_LAUNCH then
 				problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 			end
 			job_carried(problems)
+			sasm_check(problems)
 			logistics(problems)
 			--- issue #713: in flight the ship's surface is no zone: it is called by the display name Space Exploration gave it
 			--- (the ship's name), not "spaceship-1"

@@ -1033,13 +1033,16 @@ blue tint. It is made from an ME Molecular Assembler, 2 heat shielding and 4 low
 Space Autocrafting** (after ME Autocrafting and Space Exploration's Space Assembling, at that technology's cost: 100 × 60 s
 with red, green, blue and rocket science).
 
-Where it stands: on **space platform scaffold and space platform plating only**. Like Space Exploration's own space
-machines it cannot be built on a planet; unlike them it cannot be built on a spaceship either. Space Exploration swaps
-every machine with a `space-...` category on a ship for its "grounded" twin when the ship lands on a planet, by making a
-new entity and removing the old one without an event; an ME block is known to its network by its entity, so the swap
-would take the assembler out of the network and leave its Acceleration Cards to chance. A machine that cannot stand on
-spaceship floor gets no twin. A ship carries ME Molecular Assemblers; the space recipes are crafted on the platform it
-docks at.
+Where it stands (issue #729): on **space platform scaffold, space platform plating and spaceship floor**. Like Space
+Exploration's own space machines it cannot be built on a planet. Space Exploration swaps every machine with a `space-...`
+category on a ship for its "grounded" twin when the ship lands on a planet, by making a new entity and removing the old
+one without an event; an ME block is known to its network by its entity, so that swap would take the assembler out of
+the network and leave its Acceleration Cards to chance. The assembler therefore has no twin (its mask has the spaceship
+layer while Space Exploration makes the twins and loses it in ME Network's last data stage), and the rule the twin
+stands for is kept by the network: while the assembler stands **on the ground of a planet or moon** (its ship landed
+there) it is switched off with the status "Works in space only", and on again within a second of the next launch. Its
+cards, its place in the network and a job waiting for it stay as they are. An orbit, an asteroid belt, deep space and a
+ship in flight are space.
 
 #### Technologies with Space Exploration
 

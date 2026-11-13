@@ -32,8 +32,10 @@
 ---      - Space Exploration makes a hidden "-grounded" twin of every machine with a "space-..." category that can stand on
 ---        spaceship floor, and swaps the two when a ship lands on a planet (its EntitySwap.swap_structure: the new entity is
 ---        made and the old one destroyed without an event). A block of the ME network is known by its unit number, so the
----        swap would take the assembler out of the network. With the spaceship layer in its mask no twin is made and it
----        cannot be built on a ship; a ship carries ME Molecular Assemblers.
+---        swap would take the assembler out of the network. With the spaceship layer in its mask no twin is made;
+---        issue #729: data-final-fixes.lua, which runs after Space Exploration's, takes the layer out again, so the
+---        assembler can be built on spaceship floor and is never swapped. On the ground of a planet or moon (a landed
+---        ship) the network switches it off instead (M.assembler_step, status "works in space only").
 ---    Its recipe is an ME Molecular Assembler with heat shielding and low density structure (what Space Exploration's space
 ---    assembling machine adds to its base); its technology follows ME Autocrafting and Space Exploration's Space Assembling
 ---    with that technology's cost (the first one that unlocks a "space-crafting" recipe). Not with Gregtorio Continued (its
