@@ -975,7 +975,7 @@ formation core the electronic circuit.
 | diamond (Advanced Card) | processing unit | processing unit (rocket science in Space Exploration) |
 | dense energy cell (wireless terminal and module) | batteries | batteries |
 | dense energy cell of the Singularity cells | accumulator | space accumulator |
-| quantum ring (ME Quantum Bridge) | battery (its energy cell) | quantum processor (energy science 3) |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | quantum processor (energy science 3); the bridge also takes a naquium cube (issue #714; deep space science 1) |
 | matter condenser (Singularity cells) | (the bridges) | a naquium tessaract more (issue #709; deep space science 2) |
 | the crafting accelerators | - | 4 holmium cable more in the 4x accelerator; a quantum processor more in the 256x, 1024x and 4096x accelerator |
 
@@ -1002,7 +1002,7 @@ AE2, the cards):
 | Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
 | Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
 | ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
-| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 quantum processor, 32 Fluix Cable, 4 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 quantum processor, 32 Fluix Cable, 4 glass, 1 naquium cube |
 | ME Blank Pattern | 2 glass, 3 copper cable, 1 stone, 2 iron plate, 1 copper plate |
 | ME Molecular Assembler | 4 iron plate, 2 glass, 2 electronic circuit, 1 assembling machine 1 |
 | ME 4x Crafting Accelerator | 4 ME Crafting Co-Processing Unit, 4 holmium cable |
@@ -1073,10 +1073,25 @@ Where the tiers come from:
 - **Quantum crafting and the crafting accelerators: energy science 1; the second accelerators: energy science 3.** The
   crafting storages take the storage component of their tier, so they need its packs and the energy pack of quantum
   crafting.
-- **ME Quantum Bridge: astronomic and energy science 3.** It joins networks on any two surfaces without a limit, which in
-  Space Exploration is the work of cargo rockets, delivery cannons, the space elevator and spaceships. It comes with the
-  spaceship's tier (astronomic science 3) and the quantum processor (energy science 3): late enough that the rockets
-  matter for most of a game, far below Space Exploration's own instant link (arcolink storage: deep space science 4).
+- **ME Quantum Bridge: deep space science 1** (issue #714; astronomic and energy science 3 before). It joins networks on
+  any two surfaces at once and without a limit, items and fluids, which in Space Exploration is the work of:
+
+  | Space Exploration's way between surfaces | Technology | Tier |
+  |---|---|---|
+  | cargo rocket (launch pad, landing pad), delivery cannon | 500 / 200 × 60 s | rocket science |
+  | space elevator (a planet and its orbit) | 2000 × 60 s | energy 1, astronomic 1, material 2 |
+  | spaceship | 200 × 60 s | astronomic 3 |
+  | arcolink storage (instant, a few slots) | 5000 × 60 s behind Teleportation (10 000 × 60 s) | deep space 4 |
+
+  At astronomic and energy science 3 the bridge came in the same tier as the spaceship, and with it a base needed no
+  freighter from the moment it was researched: one bridge on a planet and one in its orbit replace the elevator, a pair
+  per outpost replaces the ships and the rockets. Space Exploration prices an instant link at deep space 4. **Deep space
+  science 1** is the tier after all four specialist lines are done: rockets, the elevator and ships have carried the base
+  through four science tiers by then, the bridge is still three tiers below the arcolink (and is the stronger link), and it
+  stays one tier below the Singularity cells (deep space 2), which take four bridges. Until then a network is one per
+  surface, and what crosses surfaces crosses them Space Exploration's way, into an ME Storage Bus on a landing pad or an
+  ME Interface. The recipe takes a **naquium cube** (the one the Singularity cells gave up for the tessaract, issue #709),
+  so the technology follows Naquium cube and Quantum processor, 500 × 60 s as the naquium technologies.
   Its name has none of the words (`teleport`, `dimension`, `stargate`, `portal`) for which Space Exploration puts a
   technology behind its Teleportation technology and deep space science 4.
 - **Singularity cells and the Singularity crafting storage: deep space science 2** (issue #709). The cells take a **naquium
@@ -1113,7 +1128,7 @@ green, blue and rocket science, after ME Autocrafting and Space Assembling.
 | ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 |  |
 | ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 |  |
 | ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ME 16384k Storage's packs |  |
-| ME Quantum Bridge | 1500 × 30 s, red to utility | 300 × 60 s, to space, utility, astronomic 3, energy 3 | Quantum processor, Astronomic science pack 3 |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 500 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 1 | Quantum processor, Naquium cube |
 | ME Singularity Storage | 2500 × 30 s, red to utility | 500 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 2 | Naquium tessaract, Space accumulator (instead of Electric energy accumulators) |
 | ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same |  |
 
