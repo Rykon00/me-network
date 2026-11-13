@@ -1022,7 +1022,24 @@ AE2, the cards):
 The ME Molecular Assembler is made again after Space Exploration's and AAI Industry's changes, from the assembling machine
 2's item categories at that point. It never gets a `space-...` category (the space assembling machine's recipes): Space
 Exploration makes a second, "grounded" prototype of a machine that has one and can stand on land and swaps the two when it
-is built, and the assembler is one entity everywhere (an assembler for space: issue #711).
+is built, and the assembler is one entity everywhere.
+
+**The ME Space Molecular Assembler** (issue #711; with Space Exploration, also with the recipes setting off, not with
+Gregtorio Continued) is the assembler for those recipes: the same block (one tile, item recipes only, five Acceleration
+Cards, power through the ME Controller, a member of the network that carries it, served by the ME Pattern Providers next to
+it) with the ME Molecular Assembler's categories and `space-crafting`, the category of Space Exploration's space assembling
+machine (space transport belts and pipes, parts of the first space science packs). Its picture is the assembler's in a
+blue tint. It is made from an ME Molecular Assembler, 2 heat shielding and 4 low density structure, and unlocked by **ME
+Space Autocrafting** (after ME Autocrafting and Space Exploration's Space Assembling, at that technology's cost: 100 × 60 s
+with red, green, blue and rocket science).
+
+Where it stands: on **space platform scaffold and space platform plating only**. Like Space Exploration's own space
+machines it cannot be built on a planet; unlike them it cannot be built on a spaceship either. Space Exploration swaps
+every machine with a `space-...` category on a ship for its "grounded" twin when the ship lands on a planet, by making a
+new entity and removing the old one without an event; an ME block is known to its network by its entity, so the swap
+would take the assembler out of the network and leave its Acceleration Cards to chance. A machine that cannot stand on
+spaceship floor gets no twin. A ship carries ME Molecular Assemblers; the space recipes are crafted on the platform it
+docks at.
 
 #### Technologies with Space Exploration
 
@@ -1057,6 +1074,9 @@ Where the tiers come from:
 - **Singularity cells: deep space science 1** (naquium cube); **the Singularity crafting storage: deep space science 2.**
   Space Exploration adds deep space science 1 to every technology with `singularity` in its name; the ME technologies
   are left out of that pass and set here.
+
+ME Space Autocrafting (the ME Space Molecular Assembler, issue #711) exists only with Space Exploration: 100 × 60 s, red,
+green, blue and rocket science, after ME Autocrafting and Space Assembling.
 
 | Technology | Without Space Exploration | With Space Exploration | Space Exploration prerequisite added |
 |---|---|---|---|

@@ -210,6 +210,8 @@ local TECHS = {
 	["me-fluid-storage"] = { 400, 30, T_BLUE },
 	["me-upgrade-cards"] = { 400, 30, T_ROCKET, { "processing-unit" } },
 	["me-autocrafting"] = { 200, 60, T_ROCKET, { "processing-unit" } },
+	--- (issue #711: the ME Space Molecular Assembler, with Space Assembling, whose cost it has)
+	["me-space-autocrafting"] = { 100, 60, T_ROCKET, { "se-space-assembling" } },
 	["me-automation"] = { 200, 60, T_ROCKET },
 	["me-wireless"] = { 200, 60, T_ROCKET, nil, nil, { "kr-lithium-sulfur-battery" } },
 	["me-wireless-link"] = { 100, 60, T_ROCKET },

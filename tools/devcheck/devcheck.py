@@ -1544,6 +1544,7 @@ SE_TESTS = [
     ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
     ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
     ("LOGISTICS", "a logistic interface and a logistic storage bus in the ship's logistic network (issue #707)"),
+    ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting recipe on a platform (issue #711)"),
     ("SURFACE", "a deleted surface leaves nothing in storage"),
 ]
 

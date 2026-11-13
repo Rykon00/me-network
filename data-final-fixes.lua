@@ -46,7 +46,7 @@ do
 	table.sort(categories)
 	for _, prototypes_of_type in pairs(data.raw) do
 		for name, entity in pairs(prototypes_of_type) do
-			if type(entity) == "table" and type(entity.module_slots) == "number" and entity.module_slots > 0 and name ~= "me-molecular-assembler" then
+			if type(entity) == "table" and type(entity.module_slots) == "number" and entity.module_slots > 0 and not ME.assemblers[name] then
 				if entity.allowed_module_categories == nil then
 					entity.allowed_module_categories = table.deepcopy(categories)
 				else
