@@ -1543,6 +1543,7 @@ SE_TESTS = [
     ("COPY", "a clone whose source stays is a copy"),
     ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
     ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
+    ("LOGISTICS", "a logistic interface and a logistic storage bus in the ship's logistic network (issue #707)"),
     ("SURFACE", "a deleted surface leaves nothing in storage"),
 ]
 
@@ -1551,6 +1552,13 @@ SE_TESTS = [
 # Spaceship.land_at_position, the fields of its spaceship table); they are no API, so the test is pinned to the version
 # it was written against and refuses another one
 SE_VERSION = "0.7.64"
+
+
+def se_no_flares():
+    """issue #707: Space Exploration starts a game with an energy beam that sweeps the start area of Nauvis (the "crash"
+    flare of its scripts/solar-flare.lua, from 13 s on for 45 s) and cut the cables of the ship the se test lands there;
+    its map setting "se-cmes-max-frequency" 0 ends it. (The setting stays 0 in .devcheck: no other run needs the beam.)"""
+    startup_setting("se-cmes-max-frequency", ("int", 6, 0), "runtime-global")
 
 
 class Server:
@@ -1653,6 +1661,7 @@ def launch(a):
         sys.exit(f"the launch test is pinned to Space Exploration {SE_VERSION} (it calls its internal functions); "
                  f"in {MODS}: {', '.join(zips) or 'none'}")
     prepare_mods(with_mods=names, with_se=True)
+    se_no_flares()
     startup_setting("zz-me-se-real-launch", True)
     print("mods: " + mods_label(a) + f" + the Space Exploration test mod (real launch, pinned to Space Exploration {SE_VERSION})")
     fails = []
@@ -1717,6 +1726,12 @@ def launch(a):
                     step("the ship moved to its own surface", helper("moved", "LAUNCH", surface, x - x0, y - y0))
                     sv.wait_ticks(180)
                     step("the network works on the ship's surface", helper("works", "TRAVEL"))
+                    # issue #707: robot attrition in flight (a robot with an item crashed as the mod Robot Attrition does it)
+                    deadline, got = time.time() + 20, helper("crash")
+                    while got == "none" and time.time() < deadline:
+                        time.sleep(0.05)
+                        got = helper("crash")
+                    step("robot attrition in flight", ("ok" if got.startswith("crashed") else "failed") + f" ({got})")
                     integrity("the integrity check in flight")
                     sv.wait_ticks(5)
                     x0, y0 = x, y
@@ -1736,6 +1751,15 @@ def launch(a):
                             got = helper("job")
                         step("the crafting job started before the launch (issue #704)",
                              "ok (ran over both moves and made its 32 iron sticks)" if got == "done" else "failed: " + got)
+                        # issue #707: the robots' deliveries end with every item exactly once
+                        deadline = time.time() + 120
+                        got = helper("logistics")
+                        while got == "running" and time.time() < deadline:
+                            time.sleep(0.5)
+                            got = helper("logistics")
+                        step("the logistic network on the ship (issue #707)",
+                             "ok (interface and logistic storage bus in the roboport's network after both moves, nothing lost or "
+                             "doubled, the deliveries ended)" if got == "done" else "failed: " + got)
                         # (Space Exploration clears the ship's surface after the landing and keeps it for the next launch)
                         left = sv.cmd(f"local s = game.get_surface({json.dumps(surface)}) if not s then rcon.print('0|true') return end "
                                       "local hook = remote.call('me-network-space-exploration', 'space_exploration_delete_surface', "
@@ -1763,6 +1787,7 @@ def se(a):
     fetch_mods(names, a.mods_from)
     a.with_mod = names
     prepare_mods(with_mods=names, with_se=True)
+    se_no_flares()
     print("mods: " + mods_label(a) + " + the Space Exploration test mod")
     mapfile = WORK / "se-map.zip"
     log, err = create_map(mapfile, *seed_args(a))
@@ -1780,7 +1805,7 @@ def se(a):
         if not m:
             fails.append(f"{label} did not run")
     if not re.search(r"DEVCHECK-SE-DONE", log):
-        fails.append("the test did not reach its end (needs --ticks >= 1000)")
+        fails.append("the test did not reach its end (needs --ticks >= 2100)")
     report("Space Exploration runtime problems", fails)
     if err or not ran or fails:
         if err:
@@ -2082,8 +2107,10 @@ def runtime_settings(values):
     f.write_bytes(_tree_write(version, root))
 
 
-def startup_setting(name, value):
-    """issue #503: a startup setting of a helper mod in mod-settings.dat (`value` None: removed, the default again)"""
+def startup_setting(name, value, section="startup"):
+    """issue #503: a startup setting of a helper mod in mod-settings.dat (`value` None: removed, the default again);
+    `section` "runtime-global": a map setting of another mod (issue #707: Space Exploration's flares; an integer as
+    ("int", 6, n), the form Factorio writes)"""
     f = MODS / "mod-settings.dat"
     version, root = _tree_read(f.read_bytes()) if f.exists() else ((2, 0, 0, 0), {})
     root = root or {}
@@ -2092,12 +2119,13 @@ def startup_setting(name, value):
         version = tuple(int(x) for x in full.split(".")[:3]) + (0,)
     except (OSError, ValueError, KeyError):
         pass
-    startup = root.get("startup") or {}
+    startup = root.get(section) or {}
     if value is None:
         startup.pop(name, None)
     else:
         startup[name] = {"value": value}
-    root["startup"] = startup
+    root[section] = startup
+    root.setdefault("startup", {})
     root.setdefault("runtime-global", {})
     root.setdefault("runtime-per-user", {})
     f.write_bytes(_tree_write(version, root))
@@ -2956,7 +2984,7 @@ def main():
     p = sub.add_parser("se")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
-    p.add_argument("--ticks", type=int, default=1000)
+    p.add_argument("--ticks", type=int, default=2100)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("launch")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)

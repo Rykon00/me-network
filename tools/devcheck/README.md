@@ -66,7 +66,14 @@ prerequisite or unlocked before the technology, no Space Exploration item missin
 `devcheck.py se` (the helper mod `semod/`) is its runtime test: every block on space platform scaffold, plating and
 spaceship floor, a network in Nauvis Orbit moved to a ship surface and onto Nauvis the way Space Exploration moves a
 spaceship (`clone_brush`, then every original destroyed with `raise_destroy`), a clone that stays a copy, storage buses on
-its landing pad, launch pad and delivery cannon chest, a deleted surface. `devcheck.py launch` (issue #706) is the real
+its landing pad, launch pad and delivery cannon chest, a deleted surface; a crafting job that runs over both moves (issue
+#704); and a logistic network on the ship (issue #707: a roboport with robots at work during both moves, an ME Logistic
+Interface in Automatic mode with an offer and a request row, an ME Logistic Storage Bus on a storage chest, a robot crashed
+between the moves as the mod Robot Attrition crashes one; after each move both blocks are in the roboport's logistic
+network of the new place, the interface has exactly its three hidden chests, no book of a logistic network that is gone is
+kept, and every item exists exactly once in cells, chests, robots and on the ground). The runs set Space Exploration's map
+setting `se-cmes-max-frequency` to 0 in `.devcheck/mods/mod-settings.dat`: its energy beam of the first minute of a game
+sweeps the start area of Nauvis and cut the cables of the landed test ship. `devcheck.py launch` (issue #706) is the real
 flight: a headless server, the same network inside a real spaceship in Nauvis Orbit (spaceship floor, walls, console, a
 rocket engine, a booster tank with liquid rocket fuel; the helper's startup setting `zz-me-se-real-launch`), Space
 Exploration's integrity check passed, then its own `Spaceship.launch` and `Spaceship.land_at_position` called through RCON

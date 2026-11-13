@@ -1124,6 +1124,9 @@ first, the Space Exploration file on top of it:
   carry go to the block at the new place; filters, rows, priorities, frequencies and the other settings are there as for
   any clone. What the game clones itself arrives with it: the chest of an ME Interface, the fluid in its sides and in an
   ME Chest, the chests of an ME Logistic Interface. A Wireless ME Terminal linked to the ship's controller stays linked.
+  An ME Logistic Interface and an ME Logistic Storage Bus on a ship work in the logistic network of the ship's roboport
+  wherever it is (issue #707): after a move they find the roboport's network of the new place at their next visit, what
+  the interface's three chests held arrives once, and robots that are in the air during the move finish their deliveries.
   A crafting job that runs while the ship launches or lands flies along (issue #704): it goes on running on the Crafting
   CPU at the new place in its mode, the pattern machines keep the work they were given, and the level maintainer, the
   Crafting Card or the ME Logistic Interface that asked for it still waits for that job. Nothing has to be finished or
