@@ -4563,16 +4563,166 @@ end
 --- The pattern provider `source` was moved to `destination` (scripts/fork-me-move.lua): its encoded patterns (and those a
 --- blueprint still waits for) go into the same slots, then its cards, so the source has nothing to spill. The patterns
 --- first: a provider that loses its Pattern Capacity Cards puts the patterns above its size on the ground.
+---
+--- Issue #704: a crafting job that runs while its blocks are moved goes with them. The blocks of a move leave and arrive one
+--- by one, so the job is carried in a book of the tick, `storage.fork_ae2.carry = { tick, jobs = { [job id] = a moved
+--- crafting block }, machines = { [old unit] = { source, clone, products_finished of the clone less the source's } } }`:
+---   * a crafting block that moves hands its group's mode to the clone's group and takes the group's job off the old group
+---     (so the group that is taken apart block by block pauses nothing); M.after_move puts the job on the clone's group;
+---   * the jobs started at the moved block (`job.anchor`, with `surface` and `pos`), the jobs it asked for (`job.owner`: a level
+---     maintainer, a Crafting Card's block, an ME Logistic Interface) and what its starts lacked (`s.wmissing`, keyed
+---     "m<unit>:<key>" / "c<unit>:<key>") follow it to the clone (M.carry_links; looked up through an index made once per
+---     tick, so a move of N blocks is not N walks over the jobs);
+---   * a pattern machine a job works with is no block of this mod and its removal raises no event here: M.on_machine_cloned
+---     notes its clone, and M.after_move hands the lease to the clone when the source is gone (a clone whose source stays
+---     is a copy: the lease stays with the source).
+--- M.after_move runs at the start of the next on_tick (control.lua), before any job is stepped or a CPU is given away, and
+--- costs one field read while nothing moved.
 function M.on_moved(source, destination)
 	local s = storage.fork_ae2
-	local a = s and s.providers[source.unit_number]
-	local b = s and s.providers[destination.unit_number]
+	if not s then return end
+	local unit, new = source.unit_number, destination.unit_number
+	local ca, cb = s.cblocks and s.cblocks[unit], s.cblocks and s.cblocks[new]
+	if ca and cb then
+		local g, ng = s.groups[ca.group], s.groups[cb.group]
+		if g and ng and g ~= ng then
+			if g.mode then ng.mode = g.mode end
+			local job = g.job and s.jobs[g.job]
+			if job and job.group == g.id then
+				g.job, job.group = nil, nil
+				M.carry_book(s).jobs[job.id] = destination
+			end
+		end
+	end
+	if #s.active > 0 or (s.wmissing and next(s.wmissing)) then M.carry_links(s, unit, destination) end
+	local a, b = s.providers[unit], s.providers[new]
 	if not (a and b) or a == b then return end
 	b.slots, a.slots = a.slots, {}
 	b.pending, a.pending = a.pending, nil
 	b.nslots = a.nslots
 	cards.move_cards(source, destination)
+	if s.locked and s.locked[unit] then                          -- (issue #346: a lock in effect stays in effect)
+		b.locked, a.locked = a.locked, nil
+		s.locked[unit], s.locked[new] = nil, true
+	end
 	changed(b)
+end
+
+--- the book of this tick's move (a book of an earlier tick is settled first)
+function M.carry_book(s)
+	local c = s.carry
+	if c and c.tick ~= game.tick then
+		M.after_move()
+		c = nil
+	end
+	if not c then
+		c = { tick = game.tick, jobs = {}, machines = {} }
+		s.carry = c
+	end
+	return c
+end
+
+--- the block `unit` moved to `destination`: the jobs started at it, the jobs it owns and its notes of missing ingredients
+function M.carry_links(s, unit, destination)
+	local c = M.carry_book(s)
+	if not c.anchors then
+		local anchors, owners, notes = {}, {}, {}
+		local function add(index, key, value)
+			local list = index[key]
+			if not list then
+				list = {}
+				index[key] = list
+			end
+			list[#list + 1] = value
+		end
+		for _, id in pairs(s.active) do
+			local job = s.jobs[id]
+			if job then
+				local e = job.anchor
+				if e and e.valid and e.unit_number then add(anchors, e.unit_number, job) end
+				if job.owner then add(owners, job.owner, job) end
+			end
+		end
+		for key, w in pairs(s.wmissing or {}) do
+			if w.unit then add(notes, w.unit, key) end
+		end
+		c.anchors, c.owners, c.notes = anchors, owners, notes
+	end
+	local new = destination.unit_number
+	for _, job in ipairs(c.anchors[unit] or {}) do
+		job.anchor = destination
+		job.surface = destination.surface.index
+		job.pos = { x = destination.position.x, y = destination.position.y }
+	end
+	for _, job in ipairs(c.owners[unit] or {}) do job.owner = new end
+	local keys = c.notes[unit]
+	if keys then
+		for _, key in ipairs(keys) do
+			local w = s.wmissing[key]
+			if w then
+				local kind, rest = key:match("^(%a)" .. unit .. "(:.*)$")
+				s.wmissing[key] = nil
+				w.unit = new
+				s.wmissing[kind and (kind .. new .. rest) or key] = w
+			end
+		end
+		M.wmiss.ver = M.wmiss.ver + 1
+	end
+end
+
+--- on_entity_cloned of any entity: a pattern machine that a job works with now is noted with its clone
+function M.on_machine_cloned(source, destination)
+	local s = storage.fork_ae2
+	if not (s and s.busy and source and source.valid and destination and destination.valid) then return end
+	local unit = source.unit_number
+	if not (unit and s.busy[unit] and destination.unit_number) then return end
+	local crafts = source.type == "assembling-machine" or source.type == "furnace"
+	M.carry_book(s).machines[unit] = { source, destination,
+		crafts and (destination.products_finished - source.products_finished) or 0 }
+end
+
+--- the start of a tick (control.lua): what a move of the tick before left open
+function M.after_move()
+	local s = storage.fork_ae2
+	local c = s and s.carry
+	if not c then return end
+	s.carry = nil
+	for old, m in pairs(c.machines) do
+		local source, destination = m[1], m[2]
+		local id = s.busy[old]
+		local job = id and s.jobs[id]
+		if job and not source.valid and destination.valid then
+			local new = destination.unit_number
+			for _, lease in pairs(job.leases) do
+				if lease.unit == old then
+					lease.machine, lease.unit = destination, new
+					if lease.finished0 then lease.finished0 = lease.finished0 + m[3] end
+				end
+			end
+			s.busy[old], s.busy[new] = nil, id
+		end
+	end
+	for id, block in pairs(c.jobs) do
+		local job = s.jobs[id]
+		if job and not job.group and (job.status == "running" or job.status == "queued") then
+			local b = block.valid and s.cblocks[block.unit_number]
+			local g = b and s.groups[b.group]
+			if g and g.status == "ok" and not g.job and g.bytes >= job_bytes(job) then
+				g.job, job.group = id, g.id
+				local e = g.anchor
+				if e and e.valid then
+					job.surface = e.surface.index
+					set_pos(job, e)
+					if not (job.anchor and job.anchor.valid) then job.anchor = e end
+				end
+				group_changed(g)
+			elseif job.status == "running" and not job.closing then
+				--- (the CPU did not arrive whole: the job pauses with what it holds and takes the next CPU that fits)
+				job.status, job.wait = "queued", nil
+			end
+		end
+	end
+	s.await = nil
 end
 
 remote.add_interface("gregtorio-me-autocraft", {
@@ -4610,6 +4760,12 @@ remote.add_interface("gregtorio-me-autocraft", {
 	--- issue #350: the mode of the CPU of a crafting block ("all", "player", "automation")
 	set_cpu_mode = function(block, mode) return M.set_cpu_mode(block, mode) end,
 	cancel = function(id) return M.cancel(id) end,
+	--- (tests, issue #704) the notes of what failed starts lacked: { [owner key] = the unit of the block that noted it }
+	missing_notes = function()
+		local out = {}
+		for key, w in pairs(storage.fork_ae2 and storage.fork_ae2.wmissing or {}) do out[key] = w.unit end
+		return out
+	end,
 	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,

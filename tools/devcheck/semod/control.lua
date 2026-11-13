@@ -17,6 +17,11 @@
 ---   LAND     the ship is moved onto Nauvis the same way, next to the partner network: everything as before the launch.
 ---   COPY     a clone whose source stays is still a copy: an empty drive with the source's priority, the source keeps its cells.
 ---   PAD      storage buses read a cargo rocket landing pad and a delivery cannon chest of Space Exploration.
+---   JOB      issue #704: a crafting job that runs over both moves. The level maintainer keeps 32 iron sticks, a second
+---            pattern provider next to an assembling machine 2 crafts them (16 crafts in one hand-over, about 640 ticks),
+---            the Crafting CPU is in the mode "automation". After each move the job is the same job, running on the CPU
+---            at the new place, the maintainer's row and the job's owner name each other, the machine's lease went along
+---            (no "machine-lost"), the mode stayed; at the end the job is done and the 32 sticks are in the network.
 ---   SURFACE  Space Exploration's question before it deletes a zone's surface is answered with "no" while ME blocks stand
 ---            on it; a surface with a network that is deleted leaves no member, drive or network in the mod's storage.
 ---
@@ -151,9 +156,10 @@ local function build(real)
 	t.bridge = at("me-quantum-bridge", 0.5, 2.5)
 	t.machine = at("assembling-machine-2", 4.5, 3.5)
 	if t.machine then t.machine.set_recipe("iron-gear-wheel") end
+	t.provider2 = at("me-pattern-provider", 2.5, 3.5)             -- (issue #704: next to the machine, the job's provider)
 	local members = {}
 	for _, k in ipairs({ "ctrl", "drive", "provider", "iface", "port", "pterm", "ap", "maint", "sbus", "xbus", "tunnel_in",
-			"tunnel_out", "cpu", "cpu2", "bridge" }) do
+			"tunnel_out", "cpu", "cpu2", "bridge", "provider2" }) do
 		if t[k] then members[#members + 1] = t[k] end
 	end
 	local _, unreached = remote.call(NET, "connect", members, 16)
@@ -203,7 +209,28 @@ local function build(real)
 		if inv[1].valid_for_read then problems[#problems + 1] = "the workbench did not take its cell" end
 		inv.destroy()
 	end
-	if t.maint then remote.call("gregtorio-me-circuit", "set_maintainer", t.maint, "iron-gear-wheel", 0) end
+	--- issue #704: the job that runs over the moves: the maintainer keeps 32 iron sticks, crafted by the second provider's
+	--- machine; the CPU takes requests of automation only (its mode must survive the moves)
+	if t.provider2 then
+		--- (iron sticks are behind a technology with AAI Industry; a wooden chest needs wood, which the network lacks: the
+		--- maintainer's first row notes what its start lacked, "m<unit>:wooden-chest")
+		for _, recipe in ipairs({ "iron-stick", "wooden-chest" }) do
+			game.forces.player.recipes[recipe].enabled = true
+			local inv = game.create_inventory(2)
+			inv.insert{ name = "me-blank-pattern", count = 1 }
+			local where, why = remote.call(PT, "encode_def", inv, nil, { kind = "crafting", recipe = recipe })
+			local stack = inv.find_item_stack("me-encoded-pattern")
+			if not (where and stack and remote.call(AC, "insert_pattern", t.provider2, stack)) then
+				problems[#problems + 1] = "no pattern " .. recipe .. " in the second provider: " .. tostring(why)
+			end
+			inv.destroy()
+		end
+	end
+	if t.cpu then remote.call(AC, "set_cpu_mode", t.cpu, "automation") end
+	if t.maint then
+		remote.call("gregtorio-me-circuit", "set_maintainer", t.maint, "wooden-chest", 1)
+		remote.call("gregtorio-me-circuit", "set_maintainer", t.maint, "iron-stick", 32, nil, 2)
+	end
 	if t.tunnel_in and t.tunnel_out then
 		remote.call(P2P, "set", t.tunnel_in, 11, false)
 		remote.call(P2P, "set", t.tunnel_out, 11, true)
@@ -309,7 +336,91 @@ end
 --------------------------------------------------------------------------------
 
 local KEYS = { "ctrl", "drive", "provider", "iface", "port", "bench", "pterm", "ap", "maint", "chest", "sbus", "xchest", "xbus",
-	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine" }
+	"tunnel_in", "tunnel_out", "cpu", "cpu2", "bridge", "machine", "provider2" }
+
+--------------------------------------------------------------------------------
+--- issue #704: the job that runs over the moves
+--------------------------------------------------------------------------------
+
+--- the maintainer's row of the iron sticks (its second row)
+local function stick_row(mt)
+	for _, row in ipairs(mt and mt.rows or {}) do
+		if row.key == "iron-stick" then return row end
+	end
+	return {}
+end
+
+--- the notes of what failed starts lacked name blocks that stand: the maintainer here, with its note of the wooden chest
+local function notes_follow(problems)
+	local t = storage.t
+	local notes = remote.call(AC, "missing_notes")
+	local want = "m" .. t.maint.unit_number .. ":wooden-chest"
+	if notes[want] ~= t.maint.unit_number then problems[#problems + 1] = "no note " .. want .. " of what the wooden chest lacked: " .. serpent.line(notes) end
+	for key, unit in pairs(notes) do
+		if key ~= want then problems[#problems + 1] = "a note of a block that is gone: " .. key .. " (unit " .. tostring(unit) .. ")" end
+	end
+end
+
+--- before the first move: the maintainer's job runs on the CPU with work in the machine; its id is kept
+local function job_kept(problems)
+	local t = storage.t
+	local mt = remote.call("gregtorio-me-circuit", "get_maintainer", t.maint)
+	notes_follow(problems)
+	local id = stick_row(mt).job
+	local job = id and remote.call(AC, "job", id)
+	local g = remote.call(AC, "group_info", t.cpu)
+	storage.job_id, storage.job_done = id, job and job.done or 0
+	if not job then problems[#problems + 1] = "the level maintainer started no job before the launch: " .. serpent.line(mt) return end
+	if not (job.status == "running" and job.leases > 0 and job.group == (g and g.id)) then
+		problems[#problems + 1] = "the job does not run on the CPU with work in a machine before the launch: status " .. tostring(job.status)
+			.. ", leases " .. tostring(job.leases) .. ", group " .. tostring(job.group) .. " of " .. tostring(g and g.id)
+	end
+	if not (g and g.mode == "automation") then problems[#problems + 1] = "the CPU's mode before the launch: " .. tostring(g and g.mode) end
+end
+
+--- a while after a move: the same job runs on the CPU at the new place, linked to the maintainer there
+local function job_carried(problems)
+	local t = storage.t
+	local id = storage.job_id
+	if not id then return end
+	local job = remote.call(AC, "job", id)
+	local mt = remote.call("gregtorio-me-circuit", "get_maintainer", t.maint)
+	local g = remote.call(AC, "group_info", t.cpu)
+	if not job then problems[#problems + 1] = "job " .. id .. " is gone" return end
+	if job.status == "done" then return end                 -- (it ended in the meantime: job_done checks the result)
+	if job.status ~= "running" or job.closing then
+		problems[#problems + 1] = "job " .. id .. " does not run after the move: " .. tostring(job.status) .. " closing " .. tostring(job.closing)
+			.. " wait " .. tostring(job.wait) .. " reason " .. serpent.line(job.reason)
+	end
+	if job.group ~= (g and g.id) then problems[#problems + 1] = "job " .. id .. " is on group " .. tostring(job.group) .. ", the CPU here is group " .. tostring(g and g.id) end
+	if job.owner ~= t.maint.unit_number then problems[#problems + 1] = "the job's owner is " .. tostring(job.owner) .. ", the maintainer here is " .. t.maint.unit_number end
+	if stick_row(mt).job ~= id then
+		problems[#problems + 1] = "the maintainer's row names job " .. tostring(stick_row(mt).job) .. ", not " .. id
+	end
+	notes_follow(problems)
+	if job.leases < 1 and job.done < job.total then problems[#problems + 1] = "the job has no work in a machine after the move" end
+	if job.done < storage.job_done then problems[#problems + 1] = "the job's finished runs went back from " .. storage.job_done .. " to " .. job.done end
+	storage.job_done = job.done
+	if not (g and g.mode == "automation") then problems[#problems + 1] = "the CPU's mode after the move: " .. tostring(g and g.mode) end
+	local jobs = remote.call(AC, "jobs", t.ctrl) or {}
+	local active = 0
+	for _, j in pairs(jobs) do if j.active then active = active + 1 end end
+	if active ~= 1 then problems[#problems + 1] = active .. " active jobs in the network, expected the one job" end
+end
+
+--- the end: "done", "running" or a problem text
+local function job_done()
+	local t = storage.t
+	local id = storage.job_id
+	local job = id and remote.call(AC, "job", id)
+	if not job then return "job " .. tostring(id) .. " is gone" end
+	if job.status == "running" or job.status == "queued" then return "running" end
+	if job.status ~= "done" then return "the job ended " .. tostring(job.status) .. ": " .. serpent.line(job.reason) end
+	local sticks = remote.call(NET, "count", t.ctrl, "iron-stick")
+	if sticks ~= 32 then return "the job is done, the network holds " .. tostring(sticks) .. " iron sticks, not 32" end
+	if t.machine.get_item_count("iron-stick") + t.machine.get_item_count("iron-plate") > 0 then return "the job is done, items are left in its machine" end
+	return "done"
+end
 
 --- the ship's tiles x1..y2 of `from` go to `to` at the offset dx, dy. Returns what lies on the ground at the old place.
 local function fly(from, to, x1, y1, x2, y2, dx, dy)
@@ -374,6 +485,7 @@ STEPS[200] = function()
 	if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface in orbit holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 	local hook = remote.call(MOVE, "space_exploration_delete_surface", { surface_index = t.ctrl.surface.index })
 	if not hook or hook.allow_delete ~= false then problems[#problems + 1] = "the surface with the network may be deleted" end
+	job_kept(problems)
 	report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. " on power of that surface, bridged to Nauvis: " .. table.concat(storage.before, "; "))
 	--- the launch
 	problems = {}
@@ -395,7 +507,8 @@ STEPS[330] = function()
 	for _, p in ipairs(compare(storage.before, snapshot())) do problems[#problems + 1] = p end
 	if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge ship - Nauvis is not linked" end
 	if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
-	report("TRAVEL", problems, "the network works on the ship's surface, bridged to Nauvis")
+	job_carried(problems)
+	report("TRAVEL", problems, "the network works on the ship's surface, bridged to Nauvis; the crafting job runs on")
 	problems = {}
 	local from = t.ctrl.surface
 	local spilled = fly(from, game.surfaces.nauvis, SHIP.x1, SHIP.y1, SHIP.x2, SHIP.y2, LAND.dx, LAND.dy)
@@ -415,7 +528,8 @@ STEPS[460] = function()
 	if t.n_iface.get_item_count("copper-plate") ~= 20 then
 		problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 	end
-	report("LANDED", problems, "the network works on Nauvis as before the launch")
+	job_carried(problems)
+	report("LANDED", problems, "the network works on Nauvis as before the launch; the crafting job runs on")
 	--- COPY: a clone whose source stays
 	problems = {}
 	local n = game.surfaces.nauvis
@@ -496,6 +610,12 @@ STEPS[700] = function()
 	for _, p2 in ipairs(problems) do fail("SURFACE: " .. p2) end
 end
 
+STEPS[950] = function()
+	local got = job_done()
+	report("JOB", got == "done" and {} or { got }, "the job started before the launch ran over both moves and made its 32 iron sticks")
+	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
+end
+
 STEPS[720] = function()
 	local problems = {}
 	local now, before = remote.call(MOVE, "counts"), storage.gone_before or {}
@@ -509,7 +629,6 @@ STEPS[720] = function()
 	local ok, why = remote.call(NET, "sweep_list_ok")
 	if not ok then problems[#problems + 1] = "the graph's sweep list: " .. tostring(why) end
 	report("SURFACE", problems, "a deleted surface leaves no member, drive or network (" .. serpent.line(now) .. ")")
-	log("DEVCHECK-SE-DONE " .. #fails .. " problems")
 end
 
 if not REAL_LAUNCH then
@@ -551,6 +670,7 @@ if REAL_LAUNCH then
 			if not remote.call(NET, "same_network", t.bridge, t.n_bridge) then problems[#problems + 1] = "the quantum bridge orbit - Nauvis is not linked" end
 			if t.iface.get_item_count("iron-plate") ~= 50 then problems[#problems + 1] = "the interface in orbit holds " .. t.iface.get_item_count("iron-plate") .. " iron plates, not 50" end
 			storage.old_ctrl = t.ctrl.unit_number
+			job_kept(problems)
 			remember()
 			return report("ORBIT", problems, "the network works in " .. t.ctrl.surface.name .. ", bridged to Nauvis: " .. table.concat(storage.before, "; "))
 		end,
@@ -590,8 +710,11 @@ if REAL_LAUNCH then
 			if t.n_iface.get_item_count("copper-plate") ~= 20 then
 				problems[#problems + 1] = "the interface of the partner network holds " .. t.n_iface.get_item_count("copper-plate") .. " copper plates through the bridge, not 20"
 			end
-			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " as before the launch")
+			job_carried(problems)
+			return report(key, problems, "the network works on " .. t.ctrl.surface.name .. " as before the launch; the crafting job runs on")
 		end,
+		--- issue #704: "done" when the job started before the launch made its sticks, "running", or what went wrong
+		job = function() return job_done() end,
 		failures = function() return #fails end,
 	})
 end

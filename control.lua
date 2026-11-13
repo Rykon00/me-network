@@ -134,6 +134,7 @@ end)
 --- providers, level maintainers and circuit interfaces are copied; an interface takes its cloned side tanks)
 script.on_event(defines.events.on_entity_cloned, function(event)
 	move.on_cloned(event.source, event.destination)          -- (a move when a script destroys the source in this tick)
+	fork_ae2.on_machine_cloned(event.source, event.destination)   -- (issue #704: a pattern machine a job works with)
 	fork_net.on_built(event.destination)
 	fork_net.on_cloned(event.source, event.destination)
 	fork_io.on_built(event.destination, nil, event.source)
@@ -293,7 +294,7 @@ script.on_event(defines.events.on_object_destroyed, function(event)
 end)
 --- a block a script destroys in the tick it was cloned was moved (scripts/fork-me-move.lua): what it holds goes to its clone
 --- first (the modules that hold items, the graph's cells last), then it leaves like any destroyed block, with nothing to spill
-move.hooks = { fork_ae2.on_moved, fork_io.on_moved, fork_sbus.on_moved, fork_wl.on_moved, fork_ioport.on_moved,
+move.hooks = { fork_ae2.on_moved, fork_circuit.on_moved, fork_io.on_moved, fork_sbus.on_moved, fork_wl.on_moved, fork_ioport.on_moved,
 	fork_lif.on_moved, fork_bench.on_moved, fork_pt.on_moved, fork_vc.on_moved, fork_p2p.on_moved, fork_net.on_moved }
 move.destroyed = on_destroyed
 script.on_event(defines.events.script_raised_destroy, function(event)
@@ -316,6 +317,7 @@ local function on_tick(tick)
 	--- a save of a development build of the same version (no on_configuration_changed): the underground cables' turn once
 	if not storage.fork_me_ug_vanilla then fork_net.migrate_underground_direction() end
 	sched.mark(tick)
+	fork_ae2.after_move()                                     -- (issue #704: a job carried over a move of the tick before)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ioport.on_tick(tick)

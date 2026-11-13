@@ -1124,8 +1124,11 @@ first, the Space Exploration file on top of it:
   carry go to the block at the new place; filters, rows, priorities, frequencies and the other settings are there as for
   any clone. What the game clones itself arrives with it: the chest of an ME Interface, the fluid in its sides and in an
   ME Chest, the chests of an ME Logistic Interface. A Wireless ME Terminal linked to the ship's controller stays linked.
-  A crafting job that runs while the ship launches is not carried over yet (it is paused without its CPU and has to be
-  cancelled and started again; issue #704): finish or cancel jobs before a launch.
+  A crafting job that runs while the ship launches or lands flies along (issue #704): it goes on running on the Crafting
+  CPU at the new place in its mode, the pattern machines keep the work they were given, and the level maintainer, the
+  Crafting Card or the ME Logistic Interface that asked for it still waits for that job. Nothing has to be finished or
+  cancelled before a launch. (A CPU that does not arrive whole, because only a part of it stood on the ship, pauses its
+  job, which then takes the next CPU that fits, as when a CPU is rebuilt.)
 - **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
   one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
   an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while

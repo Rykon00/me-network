@@ -1542,6 +1542,7 @@ SE_TESTS = [
     ("LANDED", "the network works on Nauvis as before the launch"),
     ("COPY", "a clone whose source stays is a copy"),
     ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
+    ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
     ("SURFACE", "a deleted surface leaves nothing in storage"),
 ]
 
@@ -1727,6 +1728,14 @@ def launch(a):
                         step("the ship moved back into Nauvis Orbit", helper("moved", "LAND", landed, x - x0, y - y0))
                         sv.wait_ticks(180)
                         step("the network works after the landing", helper("works", "LANDED"))
+                        # issue #704: the job started before the launch ends with its product in the network
+                        deadline = time.time() + 120
+                        got = helper("job")
+                        while got == "running" and time.time() < deadline:
+                            time.sleep(0.5)
+                            got = helper("job")
+                        step("the crafting job started before the launch (issue #704)",
+                             "ok (ran over both moves and made its 32 iron sticks)" if got == "done" else "failed: " + got)
                         # (Space Exploration clears the ship's surface after the landing and keeps it for the next launch)
                         left = sv.cmd(f"local s = game.get_surface({json.dumps(surface)}) if not s then rcon.print('0|true') return end "
                                       "local hook = remote.call('me-network-space-exploration', 'space_exploration_delete_surface', "
@@ -1771,7 +1780,7 @@ def se(a):
         if not m:
             fails.append(f"{label} did not run")
     if not re.search(r"DEVCHECK-SE-DONE", log):
-        fails.append("the test did not reach its end (needs --ticks >= 800)")
+        fails.append("the test did not reach its end (needs --ticks >= 1000)")
     report("Space Exploration runtime problems", fails)
     if err or not ran or fails:
         if err:
@@ -2947,7 +2956,7 @@ def main():
     p = sub.add_parser("se")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
-    p.add_argument("--ticks", type=int, default=900)
+    p.add_argument("--ticks", type=int, default=1000)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("launch")
     p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
