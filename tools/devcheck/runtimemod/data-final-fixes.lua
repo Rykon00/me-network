@@ -193,6 +193,23 @@ if ma and ma.crafting_categories and ma.crafting_categories[1] then
 	} })
 end
 
+--- me-network issue #752: two recipes of a tenth of a second for an assembling machine 3: a plate from water (a crafting
+--- pattern with a fluid) and a stick from a plate (a processing pattern), so a machine works off a hand-over in about a
+--- second (feeding.lua). Only where the vanilla categories and items are there.
+if data.raw["recipe-category"]["crafting-with-fluid"] and data.raw.fluid.water and data.raw.item["iron-plate"]
+	and data.raw.item["iron-stick"] and data.raw["assembling-machine"]["assembling-machine-3"] then
+	data:extend({
+		{ type = "recipe", name = "zz-devcheck-feed-plate", categories = { "crafting-with-fluid" }, energy_required = 0.1,
+			enabled = false, ingredients = { { type = "fluid", name = "water", amount = 10 } },
+			results = { { type = "item", name = "iron-plate", amount = 1 } },
+			icon = "__base__/graphics/icons/iron-plate.png", subgroup = "intermediate-product" },
+		{ type = "recipe", name = "zz-devcheck-feed-stick", categories = { "crafting" }, energy_required = 0.1,
+			enabled = false, ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+			results = { { type = "item", name = "iron-stick", amount = 1 } },
+			icon = "__base__/graphics/icons/iron-stick.png", subgroup = "intermediate-product" },
+	})
+end
+
 --- Issue #591: Krastorio 2 lets a logistic robot carry 7 items and a construction robot 2 (vanilla: 1 each). The tests of the
 --- ME Logistic Interface count the robots' deliveries item by item (a requester gets what it asks, no more), so they run
 --- with the vanilla payload.

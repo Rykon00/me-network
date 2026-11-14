@@ -1784,8 +1784,11 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
   its input slots (one stack per ingredient), its output slot and what the job holds allow. While it still works and has
   less than half of that left, the job's step tops it up (the products so far are taken out first and count as done), and
   a machine that would run out or fill its output slot before the job's next step has the job stepped earlier, so a fast
-  machine never waits for the job. Not for recipes with fluids or ingredients with data (they get their batch when the
-  machine is idle, as before).
+  machine never waits for the job. Since issue #752 this also holds for a crafting pattern with a fluid (its fluid boxes
+  are refilled while it works: a box holds only a few crafts' worth, so such a machine stood idle between two steps) and
+  for a processing pattern in a machine (more runs go in while it still works; a chest is filled by the blocking modes'
+  rules as before). A pattern provider with a lock mode hands over once per unlock, so its machines are not topped up.
+  Not for ingredients with data (they get their batch when the machine is idle, as before).
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
