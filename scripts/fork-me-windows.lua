@@ -3071,6 +3071,23 @@ remote.add_interface("gregtorio-me-gui", {
 	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
 	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
 	--- buttons (block_slot) by flow name
+	--- issue #753 (tests): the elements of the stand-in's window whose name starts with `prefix`, by name: { enabled, caption,
+	--- tags, tooltip }
+	stand_in_named = function(name, prefix)
+		local frame = G.window_of(stand_ins[name])
+		local out = {}
+		local queue, i = { frame }, 1
+		while queue[i] do
+			for _, c in pairs(queue[i].children) do
+				if type(c.name) == "string" and c.name:sub(1, #prefix) == prefix then
+					out[c.name] = { enabled = c.enabled ~= false, caption = c.caption, tags = c.tags, tooltip = c.tooltip }
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
 	--- issue #751 (tests): the largest height of the scroll pane around the element `element` of the stand-in's window
 	stand_in_scroll_height = function(name, element)
 		local frame = G.window_of(stand_ins[name])

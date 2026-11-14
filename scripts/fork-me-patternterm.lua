@@ -234,6 +234,59 @@ function M.set_editor_row(ed, which, index, key, amount)
 	return true
 end
 
+--- Issue #753 (AE2-Unofficial's pattern terminal has x2 and /2 for a processing pattern): the amounts of the processing
+--- editor times `factor`, or divided by it (`divide`); every row of the inputs and outputs together, as there, or the
+--- outputs alone (`outputs_only`: a machine with productivity gives more for the same inputs). Nothing changes unless every
+--- row can take it. Returns the new amounts { inputs = { [index] = amount }, outputs = ... }, or nil and the reason:
+---   "scale-crafting"       not a processing editor (a crafting pattern's amounts are its recipe's);
+---   "scale-empty"          no row with an amount;
+---   "scale-too-large"      a row would pass P.MAX_AMOUNT (what a pattern row holds);
+---   "scale-not-divisible"  an item row does not divide into whole items, or a fluid row not into an amount of at most six
+---                          digits (100 / 3): a pattern never gets a rounded amount.
+--- A row without an item or with the amount 0 is left as it is.
+function M.scaled(ed, factor, divide, outputs_only)
+	if ed.mode ~= "processing" then return nil, "scale-crafting" end
+	factor = math.floor(tonumber(factor) or 0)
+	if factor < 2 then return nil, "scale-empty" end
+	local out, any = { inputs = {}, outputs = {} }, false
+	local max_in, max_out = limits(ed)
+	for _, which in ipairs(outputs_only and { "outputs" } or { "inputs", "outputs" }) do
+		for i = 1, which == "inputs" and max_in or max_out do
+			local row = ed[which][i]
+			local amount = row and row.key and tonumber(row.amount) or 0
+			if amount > 0 then
+				any = true
+				local n
+				if divide then
+					n = amount / factor
+					if P.is_fluid(row.key) then
+						if tonumber(string.format("%.6g", n)) ~= n then return nil, "scale-not-divisible" end
+					elseif n ~= math.floor(n) or n < 1 then
+						return nil, "scale-not-divisible"
+					end
+				else
+					n = amount * factor
+					if n > P.MAX_AMOUNT then return nil, "scale-too-large" end
+					if P.is_fluid(row.key) then n = P.clean_amount(n) end
+				end
+				out[which][i] = n
+			end
+		end
+	end
+	if not any then return nil, "scale-empty" end
+	return out
+end
+
+--- M.scaled written into the editor. Returns true, or nil and the reason.
+function M.scale_editor(ed, factor, divide, outputs_only)
+	local new, why = M.scaled(ed, factor, divide, outputs_only)
+	if not new then return nil, why end
+	for which, rows in pairs(new) do
+		for i, n in pairs(rows) do ed[which][i].amount = n end
+	end
+	return true
+end
+
 --- the encoded pattern a player can load or clear: the one in the hand, else the one in the output slot
 local function source_stack(rec, cursor)
 	if P.is_encoded(cursor) then return cursor, "hand" end
@@ -504,6 +557,33 @@ local function editor_rows(parent, ed, which, max)
 	end
 end
 
+--- issue #753: the buttons that scale the amounts of the processing editor
+local SCALE_BUTTONS = {
+	{ id = "m2", factor = 2, caption = "×2" }, { id = "m3", factor = 3, caption = "×3" }, { id = "m4", factor = 4, caption = "×4" },
+	{ id = "d2", factor = 2, divide = true, caption = "÷2" }, { id = "d3", factor = 3, divide = true, caption = "÷3" },
+	{ id = "d4", factor = 4, divide = true, caption = "÷4" },
+}
+M.SCALE_BUTTONS = SCALE_BUTTONS
+
+--- Each scale button is on when the rows can take it (M.scaled, inputs and outputs together); its tooltip says what it does
+--- and, when it is off, why. Called at every refresh: typing an amount does not rebuild the box.
+local function refresh_scale(frame, ed)
+	local row = G.find(frame, "fork_me_pat_scale")
+	if not row then return end
+	for _, b in ipairs(SCALE_BUTTONS) do
+		local el = row["fork_me_pat_scale_" .. b.id]
+		if el then
+			local ok, why = M.scaled(ed, b.factor, b.divide, false)
+			--- (the outputs alone may still take it: the click decides; the button is off only when neither can)
+			local ok_out = ok or M.scaled(ed, b.factor, b.divide, true)
+			el.enabled = ok_out ~= nil
+			local tip = { b.divide and "fork-me-pattern-terminal.scale-divide-tooltip" or "fork-me-pattern-terminal.scale-multiply-tooltip", b.factor }
+			el.tooltip = ok and tip or { "", tip, "\n", { "fork-me-net.error-" .. why, G.fmt(P.MAX_AMOUNT) } }
+		end
+	end
+end
+M.refresh_scale = refresh_scale
+
 local function build_pattern_box(box, player, ed)
 	local mode = G.row(box)
 	if ed.ex then                                     -- (issue #416: the Ex's two layouts, processing patterns only)
@@ -536,6 +616,16 @@ local function build_pattern_box(box, player, ed)
 		return
 	end
 	local max_in, max_out = limits(ed)
+	--- issue #753: x2, x3, x4 and /2, /3, /4 for the amounts (M.refresh switches off what the rows cannot take)
+	local scale = G.row(box, "fork_me_pat_scale")
+	scale.add{ type = "label", caption = { "fork-me-pattern-terminal.scale" }, tooltip = { "fork-me-pattern-terminal.scale-tooltip" } }
+	for _, b in ipairs(SCALE_BUTTONS) do
+		local el = scale.add{ type = "button", name = "fork_me_pat_scale_" .. b.id, caption = b.caption,
+			tags = G.act("pat_scale", { factor = b.factor, divide = b.divide }) }
+		el.style.minimal_width = 40
+		el.style.maximal_width = 40
+		el.style.padding = 0
+	end
 	G.heading(box, { "fork-me-gui.patterns-inputs" })
 	editor_rows(box, ed, "inputs", max_in)
 	G.heading(box, { "fork-me-gui.patterns-outputs" })
@@ -627,6 +717,7 @@ function M.refresh(player, frame)
 		box.clear()
 		build_pattern_box(box, player, ed)
 	end
+	refresh_scale(frame, ed)                                                  -- (issue #753)
 	local out = rec and rec.inv[OUTPUT_SLOT]
 	if rec then
 		G.block_slots(frame, "fork_me_pt_slots", rec.inv, 1, #rec.inv, function() return { "fork-me-pattern-terminal.slots-tooltip" } end)
@@ -743,6 +834,20 @@ G.on("pat_amount", function(event, player, el)
 	M.set_editor_row(ed, el.tags.which, el.tags.index, nil, tonumber(el.text) or 0)
 end)
 
+--- issue #753: a scale button; shift + click scales the outputs alone
+G.on("pat_scale", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local ed, u = editor_of(player)
+	if not ed then return end
+	local ok, why = M.scale_editor(ed, el.tags.factor, el.tags.divide == true, event.shift == true)
+	if ok then
+		u.shown = nil                                   -- (the amount fields are rebuilt with the new numbers)
+	else
+		player.create_local_flying_text{ text = { "fork-me-net.error-" .. why, G.fmt(P.MAX_AMOUNT) }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
+end)
+
 G.on("pat_encode", function(event, player)
 	local ed, entity = editor_of(player), window_entity(player)
 	if not (ed and entity) then return end
@@ -831,6 +936,18 @@ end
 remote.add_interface("gregtorio-me-pattern-terminal", {
 	new_editor = function() return new_editor() end,
 	new_editor_ex = function() return new_editor_ex() end,                     -- (issue #416)
+	--- issue #753 (tests): the editor's amounts scaled (M.scale_editor; the editor comes back, a remote call copies it), and
+	--- the editor a player (or a stand-in, by its index) has for the plain terminal
+	scale_editor = function(ed, factor, divide, outputs_only)
+		local ok, why = M.scale_editor(ed, factor, divide, outputs_only)
+		return ok, why, ed
+	end,
+	set_player_editor = function(index, ed)
+		local all = ui()
+		all[index] = all[index] or {}
+		all[index].pat, all[index].shown = ed, nil
+	end,
+	player_editor = function(index) local u = ui()[index] return u and u.pat end,
 	pattern_of = function(force, ed) return M.pattern_of(force, ed) end,
 	set_editor_recipe = function(force, ed, recipe, quality)
 		local ok, why = M.set_editor_recipe(force, ed, recipe, quality)

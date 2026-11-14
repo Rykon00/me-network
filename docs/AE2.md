@@ -1720,6 +1720,10 @@ that scrolls when the window would not fit the screen (issue #469: the slots, En
 stay below it).
 Everything else (the two slots, Encode, Load, Clear, fill from a recipe) is the ME Pattern Terminal's.
 
+Both terminals have the buttons ×2, ×3, ×4 and ÷2, ÷3, ÷4 above the rows of a processing pattern (issue #753): they
+multiply or divide every input and output amount at once, shift + click the outputs only (a machine with productivity).
+A button is off when a row would pass 1 000 000 or an amount does not divide evenly.
+
 * Each player has an editor for each kind of terminal, so the plain terminal never cuts the rows of a big pattern. Rows that
   the other layout does not show stay in the editor but are not encoded.
 * "Fill from a recipe" switches to 32 outputs when the recipe has more than 8 products and at most 8 ingredients; a recipe

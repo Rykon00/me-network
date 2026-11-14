@@ -1295,6 +1295,7 @@ RUNTIME_TESTS = (
     ("PLATFORMHUB", "ME windows on a space platform (issue #749)"),
     ("CRAFTROWS", "rows of the craftable grid (issue #751)"),
     ("ORDERLIMIT", "the limit of a crafting order (issue #750)"),
+    ("PATTERNSCALE", "scaling a processing pattern's amounts (issue #753)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
