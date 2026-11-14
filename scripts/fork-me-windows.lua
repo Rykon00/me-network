@@ -890,7 +890,7 @@ function M.refresh_logistic_interface(player, frame)
 	local want = {}
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_lif_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
-	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	G.find(frame, "fork_me_lif_status").caption = { "fork-me-gui.logistic-interface-status-" .. d.status }
 	G.find(frame, "fork_me_lif_net").caption = { "", d.lid and { "fork-me-gui.logistic-interface-network", tostring(d.lid) }
 		or { "fork-me-gui.logistic-interface-no-network" }, d.ncollide > 0 and { "", "  ",
@@ -2118,7 +2118,7 @@ function M.refresh_interface(player, frame)
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_if_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_if_kept").caption = d.kept and { "fork-me-gui.interface-rows-kept" } or ""
-	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	refresh_side(frame, entity)                                -- (issue #639: the rows from the circuit too)
 	rebuild(frame, "fork_me_if_config", config_sig(d.config, d.slots), function(box)
 		local t = box.add{ type = "table", column_count = 6 }
@@ -2618,7 +2618,7 @@ function M.refresh_bus(player, frame)
 		end
 	end
 	G.find(frame, "fork_me_bus_mode").caption = mode
-	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	local pulse = G.find(frame, "fork_me_bus_pulse")
 	if pulse then pulse.state = d.pulse or false end
 	local conly = G.find(frame, "fork_me_bus_conly")              -- (issue #426)

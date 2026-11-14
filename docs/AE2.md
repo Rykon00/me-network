@@ -2600,7 +2600,7 @@ Other products of a recipe (by-products) are not credited to the plan (they may 
 they simply end in storage. If a resource has several patterns the first one in pattern order
 (provider priority, provider built first, slot) that needs nothing missing is used, else the first. Loops (a resource that needs itself) count as missing and
 are named in the message. Work is capped at 3000 plan nodes / depth 40 (reported as missing);
-amounts up to 100 000 items or 10 000 000 fluid units. Items with tags (cells, fluid drive items) are
+amounts up to 2 147 483 647 items or fluid units per order (issue #750; what a job can really hold is its Crafting CPU's bytes). Items with tags (cells, fluid drive items) are
 never counted as stock, so a job cannot strip their contents.
 
 The result is a list of steps (recipe, runs) in dependency order and the resources taken from

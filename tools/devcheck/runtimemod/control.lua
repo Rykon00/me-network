@@ -1151,6 +1151,8 @@ modulecharge748 = require("modulecharge")({ me_report = me_report })
 platformhub749 = require("platformhub")({ me_report = me_report, me_place = me_place })
 --- me-network issue #751: the rows of the craftable grid (craftrows.lua)
 craftrows751 = require("craftrows")({ me_report = me_report })
+--- me-network issue #750: the limit of a crafting order (orderlimit.lua)
+orderlimit750 = require("orderlimit")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #543: the block slots of the ME windows as inventory elements (blockinv.lua)
 blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report, power = power })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
@@ -1405,6 +1407,7 @@ local function tests_running()
 	modulecharge748.running(check)
 	platformhub749.running(check)
 	craftrows751.running(check)
+	orderlimit750.running(check)
 	blockinv543.running(check)
 	sticky193.running(check)
 	chest229.running(check)
@@ -2420,6 +2423,7 @@ script.on_nth_tick(10, function()
 	modulecharge748.tick()
 	platformhub749.tick()
 	craftrows751.tick()
+	orderlimit750.tick()
 	blockinv543.tick()
 	sticky193.tick()
 	chest229.tick()
@@ -5356,6 +5360,7 @@ script.on_init(function()
 	for _, f in pairs(cursorslot677.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(orderlimit750.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
