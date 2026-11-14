@@ -421,12 +421,15 @@ end
 --- the inventory element bound to the player's inventory (issue #542: the game draws and updates its slots)
 local function build_pane(parent, hint, player)
 	local box = parent.add{ type = "frame", name = "fork_me_pane", style = "inside_shallow_frame_with_padding", direction = "vertical" }
-	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label", tooltip = hint }
+	local hub = M.platform_hub(player) ~= nil          -- (issue #749: on a space platform the pane is the hub's inventory)
+	box.add{ type = "label", name = "fork_me_pane_title", caption = { hub and "fork-me-gui.platform-hub" or "fork-me-gui.character" },
+		style = "caption_label", tooltip = hint }
 	if hint then M.label(box, hint, PANE_COLUMNS * 40) end
 	local remote = M.in_remote_view(player)
 	local inv = M.player_inventory(player)
 	if remote then                                     -- issues #176, #177: what remote view does
-		M.label(box, { inv and "fork-me-gui.remote-help" or "fork-me-gui.remote-no-inventory" }, PANE_COLUMNS * 40, nil, "fork_me_remote_help")
+		M.label(box, { hub and "fork-me-gui.hub-help" or inv and "fork-me-gui.remote-help" or "fork-me-gui.remote-no-inventory" },
+			PANE_COLUMNS * 40, nil, "fork_me_remote_help")
 	end
 	if not inv then return end                         -- (no element: there is nothing to show)
 	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
@@ -850,14 +853,35 @@ function M.in_remote_view(player)
 	return player.controller_type == defines.controllers.remote
 end
 
---- The player's inventory for the windows: their main inventory, else (remote view) their character's, else nil (no
---- character: editor, spectator). Issue #176.
-function M.player_inventory(player)
+--- Issue #749: the inventory of the hub of the space platform the player looks at in remote view, or nil. A player on a
+--- platform is in the remote controller (their character sits in the hub: `player.hub`), and a rocket takes nobody with
+--- items, so the character's inventory is empty there; what a platform has lies in its hub.
+function M.platform_hub(player)
+	if not (player and player.valid and M.in_remote_view(player)) then return nil end
+	local s = player.surface
+	local platform = s and s.valid and s.platform
+	local hub = platform and platform.valid and platform.hub
+	return hub and hub.valid and hub.get_inventory(defines.inventory.hub_main) or nil
+end
+
+--- The player's own inventory: their main inventory, else (remote view) their character's, else nil (no character: editor,
+--- spectator). Issue #176.
+function M.own_inventory(player)
 	if not (player and player.valid) then return nil end
 	local inv = player.get_main_inventory()
 	if inv then return inv end
 	local c = player.character
 	return c and c.valid and c.get_inventory(defines.inventory.character_main) or nil
+end
+
+--- The inventory the windows work with for the player: their main inventory; in remote view of a space platform the
+--- platform hub's (issue #749: the window's block stands there, and so does everything the platform has); else in remote
+--- view their character's; else nil.
+function M.player_inventory(player)
+	if not (player and player.valid) then return nil end
+	local inv = player.get_main_inventory()
+	if inv then return inv end
+	return M.platform_hub(player) or M.own_inventory(player)
 end
 
 --- What a click in a window works with: the cursor stack, the player's inventory (nil when there is none) and whether
@@ -870,7 +894,8 @@ end
 
 --- the line that tells a player in remote view where a taken item went (issue #177)
 function M.moved_text(player)
-	player.create_local_flying_text{ text = { "fork-me-gui.moved-to-inventory" }, create_at_cursor = true }
+	player.create_local_flying_text{ text = { M.platform_hub(player) and "fork-me-gui.moved-to-hub" or "fork-me-gui.moved-to-inventory" },
+		create_at_cursor = true }
 end
 
 function M.cursor_flags(player, entity)
