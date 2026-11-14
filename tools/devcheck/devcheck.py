@@ -1298,6 +1298,7 @@ RUNTIME_TESTS = (
     ("CRAFTROWS", "rows of the craftable grid (issue #751)"),
     ("ORDERLIMIT", "the limit of a crafting order (issue #750)"),
     ("FEEDING", "machines fed while they work (issue #752)"),
+    ("HELDFLUID", "the pipette key for fluids (issue #754)"),
     ("PATTERNSCALE", "scaling a processing pattern's amounts (issue #753)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),

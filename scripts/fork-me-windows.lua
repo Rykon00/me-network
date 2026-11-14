@@ -148,32 +148,10 @@ local function key_picker(player, act, data, key, with_quality)
 		quality = with_quality and true or false })
 end
 
-do
-	--- the items of the cursor a slot never takes from it (tools: the picker opens instead)
-	local TOOLS = { ["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
-		["selection-tool"] = true, ["copy-paste-tool"] = true, ["spidertron-remote"] = true }
-	local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }   -- (the wire tools of the shortcut bar)
-
-	--- Issue #677 (AE2's ghost slots, a vanilla filter slot): the picker's choice a slot of `spec` (as picker.open takes it)
-	--- gets from what `player` holds in the cursor: { kind = "item", name, quality (nil where the slot takes none), cursor = true }, or nil
-	--- (an empty hand, a tool, a blueprint or a ghost in the cursor, a wire being dragged, a slot that takes no item) for the
-	--- picker. The cursor stays as it is.
-	function M.cursor_choice(player, spec)
-		if not (spec.kinds and spec.kinds.item) then return nil end
-		local stack = player.cursor_stack           -- (a ghost or a library blueprint in the cursor: an empty stack)
-		if not (stack and stack.valid_for_read) or TOOLS[stack.type] or WIRES[stack.name] or player.drag_target then return nil end
-		if not prototypes.item[stack.name] then return nil end
-		return { kind = "item", name = stack.name, quality = spec.quality ~= false and stack.quality.name or nil, cursor = true }
-	end
-end
-
---- Issue #677: a key slot's left click: with an item in the cursor the slot takes it (the picker's callback, as if it was
---- chosen there: what the slot refuses is refused as a choice of the picker), else the picker opens as before
-function M.pick(player, spec)
-	local choice = M.cursor_choice(player, spec)
-	if choice and picker.choose(player, spec, choice) then return end
-	picker.open(player, spec)
-end
+--- Issue #677: a key slot's choice from the cursor and its left click; issue #754: they live in the picker's module (the
+--- pattern terminals use them too), with a ghost in the cursor and the held fluid
+M.cursor_choice = picker.cursor_choice
+M.pick = picker.pick
 
 local function right_click(event) return event.button == defines.mouse_button_type.right end
 
@@ -3031,7 +3009,8 @@ remote.add_interface("gregtorio-me-gui", {
 			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
 			can_reach_entity = function() return true end, force = game.forces.player, surface = spec.surface or game.surfaces[1],
-			position = { x = 0, y = 0 }, cursor_stack = spec.cursor }          -- (issue #677: `cursor`, a LuaItemStack)
+			position = { x = 0, y = 0 }, cursor_stack = spec.cursor,           -- (issue #677: `cursor`, a LuaItemStack)
+			cursor_ghost = spec.ghost }                                         -- (issue #754: `ghost` = { name, quality })
 		--- (issue #751: a screen, `screen` = { height, scale }; without one the parts that fit themselves take their largest size)
 		if spec.screen then
 			sp.display_resolution = { width = 1920, height = spec.screen.height }
@@ -3205,6 +3184,22 @@ remote.add_interface("gregtorio-me-gui", {
 		return G.run_action({ name = defines.events.on_gui_click, element = el, button = b }, sp, el)
 	end,
 	stand_in_cursor_choice = function(name, spec) return M.cursor_choice(stand_ins[name], spec) end,
+	--- Issue #754 (tests): what G.slot (or, `config`, G.key_button) makes for `key` with `tags`: its hover flag and tags; the
+	--- fluid slot under the mouse of player `index`; the pipette key, the held fluid and whether the title bar of the
+	--- stand-in's window shows it
+	slot_view = function(key, tags, config)
+		local box = stand_in_element{ type = "flow" }
+		local b = config and G.key_button(box, key, tags, "hint") or G.slot(box, key, 1, tags)
+		return { raise_hover_events = b.raise_hover_events, tags = b.tags, sprite = b.sprite }
+	end,
+	held_hover = function(index, key) G.hover_fluid(index, key) end,
+	stand_in_pipette = function(name) return G.pipette(stand_ins[name]) end,
+	stand_in_held = function(name) return G.held_fluid(stand_ins[name]) end,
+	stand_in_held_shown = function(name)
+		local frame = G.window_of(stand_ins[name])
+		local label = frame and G.find(frame, "fork_me_held")
+		return label ~= nil and type(label.caption) == "table" and label.caption[1] == "fork-me-gui.held-title"
+	end,
 	--- Issue #639: the circuit and logistic network panel of the stand-in's open window after a refresh: { visible, circuit,
 	--- logistic (its sections are there), names = { [element name] = true }, captions = { [label name] = caption }, states =
 	--- { [checkbox name] = state } }; `act` (optional): first a check box of the panel with that action is set to `state` through

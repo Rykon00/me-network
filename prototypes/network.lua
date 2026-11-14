@@ -951,6 +951,16 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- Issue #754: the pipette key (linked to the game's "pipette", Q by default): over a fluid shown in an ME window it holds
+--- that fluid for the next click on a slot (scripts/fork-me-gui.lua, the held fluid); the game's own pipette goes on
+data:extend({ {
+	type = "custom-input",
+	name = "fork-me-pipette",
+	key_sequence = "",
+	linked_game_control = "pipette",
+	consuming = "none",
+} })
+
 --- Issues #673, #674: the rotate and flip keys (linked to the game's own; R, Shift + R, H, V by default): while a blueprint with ME
 --- Cable or another ME block whose direction does not show is held, scripts/fork-me-cableturn.lua turns those blocks around the
 --- player to the direction they will land with, so the game does not refuse the paste
