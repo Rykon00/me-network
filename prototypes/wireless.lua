@@ -135,8 +135,11 @@ data:extend({ {
 	name = "me-wireless-module",
 	sprite = { filename = ME.hd_icons .. "me-wireless-module.png", width = 64, height = 64, priority = "medium" },   -- (2 x 2 cells)
 	shape = { width = 2, height = 2, type = "full" },
+	--- (issue #748: a consumer of the grid, "secondary-input", like a personal roboport. As "tertiary" it was a buffer next
+	--- to the personal batteries, and the grid moves energy from generators into buffers and from buffers to consumers,
+	--- never from one buffer into another: only a generator charged it. Nothing draws from it either way.)
 	energy_source = { type = "electric", buffer_capacity = (NUMBERS.module_buffer / 1000000) .. "MJ", input_flow_limit = "2MW",
-		output_flow_limit = "0W", usage_priority = "tertiary" },
+		output_flow_limit = "0W", usage_priority = "secondary-input" },
 	categories = { "armor" },
 	localised_description = { "item-description.me-wireless-module" },
 } })
