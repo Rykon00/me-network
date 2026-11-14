@@ -105,16 +105,20 @@ local function resolve(bp, player)
 	if bp.object_name == "LuaItemStack" then
 		if not bp.valid_for_read then return nil end
 		if bp.is_blueprint_book then
+			--- (issue #747: a book's inventory has as many slots as it has contents, and an empty book still says active
+			--- index 1; a LuaInventory raises "Index out of inventory bounds" for an index past its size)
 			local inv = bp.get_inventory(defines.inventory.item_main)
-			local inner = inv and bp.active_index and inv[bp.active_index]
-			if inner then return resolve(inner, player) end
+			local i = inv and bp.active_index
+			local inner = i and i >= 1 and i <= #inv and inv[i] or nil
+			if inner and inner.valid_for_read then return resolve(inner, player) end
 			return nil
 		end
 		if not (bp.is_blueprint and bp.is_blueprint_setup()) then return nil end
 	elseif bp.object_name == "LuaRecord" then
 		if bp.type == "blueprint-book" then
-			local i = player and bp.get_active_index(player)
-			local inner = i and bp.contents and bp.contents[i]
+			--- (`contents` is a Lua table: an index past its end is nil; a library book without a player has no active index)
+			local ok, i = pcall(function() return player and bp.get_active_index(player) end)
+			local inner = ok and i and bp.contents and bp.contents[i]
 			if inner then return resolve(inner, player) end
 			return nil
 		end
@@ -237,6 +241,8 @@ remote.add_interface("gregtorio-me-pasteover", {
 		return out
 	end,
 	paste = function(bp, surface, force, at, direction, fh, fv) return M.paste(bp, surface, force, at, direction, fh, fv) end,
+	--- tests (issue #747): does `bp` (an item stack: a blueprint or a book) stand for a set-up blueprint?
+	resolves = function(bp) return resolve(bp) ~= nil end,
 })
 
 return M
