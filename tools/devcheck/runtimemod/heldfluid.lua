@@ -39,7 +39,8 @@ return function(H)
 		--- the slots
 		local fluid_slot, item_slot = g("slot_view", "fluid/water"), g("slot_view", "iron-plate")
 		expect(fluid_slot.raise_hover_events == true and fluid_slot.tags.fork_me_fluid == "fluid/water", "a fluid slot: " .. line(fluid_slot))
-		expect(not item_slot.raise_hover_events and item_slot.tags.fork_me_fluid == nil, "an item slot: " .. line(item_slot))
+		--- (issue #768: an item slot raises hover events too, for the pipette key; it names no fluid)
+		expect(item_slot.raise_hover_events == true and item_slot.tags.fork_me_fluid == nil, "an item slot: " .. line(item_slot))
 		local acting = g("slot_view", "fluid/water", { fork_me_act = "x", index = 3 })
 		expect(acting.tags.fork_me_act == "x" and acting.tags.index == 3 and acting.tags.fork_me_fluid == "fluid/water",
 			"a fluid slot with an action keeps its tags: " .. line(acting.tags))
@@ -71,6 +72,43 @@ return function(H)
 		g("stand_in_pipette", WHO)
 		c = choice(both)
 		expect(c and c.kind == "fluid" and c.name == "steam" and c.temperature == 165, "a fluid of one temperature: " .. line(c))
+
+		--- issue #768: the pipette key over an item slot puts the item into the cursor as the game's pipette does (the
+		--- stand-in records the call and gets a ghost); a held fluid is let go; with something in the cursor nothing happens
+		if remote.interfaces[GUI].stand_in_pipetted then
+			g("held_hover", INDEX, "iron-gear-wheel")
+			expect(g("stand_in_pipette", WHO) == "iron-gear-wheel" and g("stand_in_held", WHO) == nil, "Q over an item slot lets the fluid go")
+			local calls = g("stand_in_pipetted", WHO)
+			expect(#calls == 1 and calls[1].name == "iron-gear-wheel" and calls[1].quality == "normal" and calls[1].allow_ghost == true,
+				"Q over an item slot uses the game's pipette: " .. line(calls))
+			c = choice(both)
+			expect(c and c.kind == "item" and c.name == "iron-gear-wheel", "the ghost it left is a slot's choice: " .. line(c))
+			g("stand_in_pipette", WHO)
+			expect(#g("stand_in_pipetted", WHO) == 1, "with a ghost in the cursor the key does nothing here")
+			stand_in()
+			local q2 = script.feature_flags.quality and prototypes.quality["uncommon"] and "uncommon" or nil
+			if q2 then
+				g("held_hover", INDEX, "iron-gear-wheel@" .. q2)
+				g("stand_in_pipette", WHO)
+				calls = g("stand_in_pipetted", WHO)
+				expect(#calls == 1 and calls[1].quality == q2, "an item of a quality: " .. line(calls))
+				stand_in()
+			end
+			cursor.set_stack{ name = "iron-plate", count = 5 }
+			g("held_hover", INDEX, "iron-gear-wheel")
+			g("stand_in_pipette", WHO)
+			expect(#g("stand_in_pipetted", WHO) == 0, "with an item in the hand the key does nothing here")
+			cursor.clear()
+			g("held_hover", INDEX, nil)
+		else
+			expect(false, "no stand_in_pipetted: the pipette key does nothing over an item slot (issue #768)")
+		end
+		--- issue #772: a surface's name for a list without Space Exploration: the planet's name for a planet's surface
+		if remote.interfaces["me-network-place"].label and not script.active_mods["space-exploration"] then
+			local nauvis = game.surfaces.nauvis
+			local label = remote.call("me-network-place", "label", nauvis.index)
+			expect(label ~= nil and (nauvis.planet == nil or type(label) == "table"), "the label of nauvis: " .. line(label))
+		end
 
 		--- an item in the cursor comes first
 		cursor.set_stack{ name = "iron-plate", count = 5 }

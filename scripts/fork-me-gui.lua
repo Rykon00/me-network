@@ -561,7 +561,8 @@ function M.set_held(player, key)
 	M.show_held(player)
 end
 
---- on_gui_hover / on_gui_leave of a fluid slot: the fluid under the player's mouse (`key` nil: none)
+--- on_gui_hover / on_gui_leave of a slot M.slot made: what is under the player's mouse, a fluid's key ("fluid/...") or
+--- (issue #768) an item's ("name", "name@quality"); `key` nil: none
 function M.hover_fluid(index, key, el)
 	local h = held_of(index, key ~= nil)
 	if not h then return end
@@ -572,15 +573,31 @@ end
 --- The pipette key: the fluid of the slot under the mouse is held; over anything else (another element, the world) what was
 --- held is let go. A slot that is gone (its window was closed under the mouse: no leave event) counts as nothing. Returns
 --- the held key.
+--- Issue #768: over an item slot the item goes into the cursor as the game's own pipette puts one there (the stack when
+--- the player carries it, a ghost of it else: LuaPlayer.pipette). The game's pipette does nothing over a slot of a mod's
+--- window (measured with a real key in Task-Ingame #765), so until then only fluids could be picked. With something in the
+--- cursor already the key does nothing here (the game clears the cursor with it). Returns the item's key then.
 function M.pipette(player)
 	local h = held_of(player.index)
 	local key = h and h.hover
 	if key and h.el ~= nil and not h.el.valid then key, h.hover, h.el = nil, nil, nil end
+	local item
+	if key and key:sub(1, 6) ~= "fluid/" then item, key = key, nil end
 	if key then
 		local name = key:match("^fluid/([^@]+)")
 		if not (name and prototypes.fluid[name]) then key = nil end
 	end
 	if key or (h and h.key) then M.set_held(player, key) end
+	if item then
+		local name, q = item:match("^([^@#]+)@?([^#]*)")
+		q = (q and q ~= "") and q or "normal"
+		local stack = player.cursor_stack
+		if prototypes.item[name] and prototypes.quality[q] and not (stack and stack.valid_for_read) and not player.cursor_ghost then
+			local ok, done = pcall(player.pipette, prototypes.item[name], q, true)
+			if not (ok and done) then pcall(function() player.cursor_ghost = { name = name, quality = q } end) end
+		end
+		return item
+	end
 	return key
 end
 
@@ -824,6 +841,7 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 				def.sprite = "item/" .. name
 				if q ~= "normal" then def.quality = q end    -- (issue #352: the quality's badge)
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
+				def.raise_hover_events = true           -- (issue #768: the pipette key over the slot picks its item)
 				local desc = M.key_description(key)
 				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }
 				else def.tooltip = desc or extra_tooltip end
