@@ -1145,6 +1145,8 @@ nativeinv542 = require("nativeinv")({ me_place = me_place, power = power, me_rep
 windowsound545 = require("windowsound")({ me_report = me_report })
 --- me-network issue #747: a blueprint book in the cursor (bookcursor.lua)
 bookcursor747 = require("bookcursor")({ me_report = me_report })
+--- me-network issue #748: what charges the ME Wireless Module in a grid (modulecharge.lua)
+modulecharge748 = require("modulecharge")({ me_report = me_report })
 --- me-network issue #543: the block slots of the ME windows as inventory elements (blockinv.lua)
 blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report, power = power })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
@@ -1396,6 +1398,7 @@ local function tests_running()
 	nativeinv542.running(check)
 	windowsound545.running(check)
 	bookcursor747.running(check)
+	modulecharge748.running(check)
 	blockinv543.running(check)
 	sticky193.running(check)
 	chest229.running(check)
@@ -2408,6 +2411,7 @@ script.on_nth_tick(10, function()
 	nativeinv542.tick()
 	windowsound545.tick()
 	bookcursor747.tick()
+	modulecharge748.tick()
 	blockinv543.tick()
 	sticky193.tick()
 	chest229.tick()
@@ -5408,6 +5412,7 @@ script.on_init(function()
 	for _, f in pairs(ghostbuild661.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(cableshape670.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(highlight699.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(modulecharge748.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(turnblocks674.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
