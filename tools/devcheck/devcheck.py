@@ -23,6 +23,8 @@
                                                             # a run of 30 minutes, reported per 5 minutes
     python tools/devcheck/devcheck.py bench --planner [--with-gregtorio ../Gregtorio]
                                                             # the planner on every recipe of the game as deep trees
+    python tools/devcheck/devcheck.py bench --feed-only          # issue #752: a chain of three pattern steps, the machines'
+                                                            # utilisation per step
     python tools/devcheck/devcheck.py bench --tunnels-only [--idle]
                                                             # issue #629: one provider reaching 64 machines through
                                                             # ME P2P tunnels against 16 providers with 4 neighbours
@@ -1295,6 +1297,7 @@ RUNTIME_TESTS = (
     ("PLATFORMHUB", "ME windows on a space platform (issue #749)"),
     ("CRAFTROWS", "rows of the craftable grid (issue #751)"),
     ("ORDERLIMIT", "the limit of a crafting order (issue #750)"),
+    ("FEEDING", "machines fed while they work (issue #752)"),
     ("PATTERNSCALE", "scaling a processing pattern's amounts (issue #753)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
@@ -1361,6 +1364,7 @@ RUNTIME_TESTS = (
 )
 
 
+FEED_MACHINES = 27              # issue #752: the machines of the feed scene (benchmod: nine per step of the chain)
 TUNNEL_MACHINES = 64            # issue #629: the machines of the tunnel scene (benchmod: one provider, or 16 with 4 each)
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
 
@@ -2350,6 +2354,8 @@ def variant_name(v):
     parts = []
     if v.get("tunnel") is not None:                 # (issue #629: the tunnel scene's two layouts)
         parts.append("tunnel" if v["tunnel"] else "neighbours")
+    if v.get("feed"):                               # (issue #752: the chain, or one of its steps on its own)
+        parts.append(v["feed"])
     if v.get("carry"):                              # (issue #633: the carry scene's two ways)
         parts.append(v["carry"])
     if v.get("base"):
@@ -2380,6 +2386,8 @@ def bench_config(a, scene, size, variant, profile):
            "tunnel": bool(variant.get("tunnel")) if scene == "tunnels" else None,
            # issue #633: the carry scene's way: "tunnels" (ME P2P tunnels on their own) or "buses" (import and export buses)
            "carry": variant.get("carry") if scene == "carry" else None,
+           # issue #752: the feed scene's chain of three steps, or one step on its own ("fluid", "items", "processing")
+           "feed": variant.get("feed") if scene == "feed" else None,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
@@ -2412,7 +2420,7 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
     out = {"scene": cfg["scene"], "size": cfg["size"],
-           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry") if cfg.get(k) is not None},
+           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry", "feed") if cfg.get(k) is not None},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -2618,7 +2626,7 @@ def bench(a):
     print(results["factorio"])
     problems = []
     plan = []                                              # (scene, size, variant)
-    if not (a.planner_only or a.tunnels_only or a.carry_only):
+    if not (a.planner_only or a.tunnels_only or a.carry_only or a.feed_only):
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
             for entry in sizes:
                 size, base = size_variant(entry)
@@ -2640,6 +2648,9 @@ def bench(a):
         for idle in ([False, True] if a.idle else [False]):
             for tunnel in (True, False):
                 plan.append(("tunnels", TUNNEL_MACHINES, {"tunnel": tunnel, **({"idle": True} if idle else {})}))
+    if a.feed or a.feed_only:                         # (issue #752: the chain of three kinds of pattern steps)
+        for way in ("chain", "fluid", "items", "processing"):
+            plan.append(("feed", FEED_MACHINES, {"feed": way}))
     if a.carry or a.carry_only:                       # (issue #633)
         for way in ("tunnels", "buses"):
             plan.append(("carry", 60, {"carry": way}))
@@ -2767,6 +2778,13 @@ def print_bench(results):
             continue
         if s["scene"] == "planner":
             print(f"  planner: jobs {tp.get('jobs')}; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
+            continue
+        if s["scene"] == "feed":                       # (issue #752)
+            stages = ", ".join(f"{st.get('id')} {fmt(100 * (st.get('utilisation') or 0), 1)} % ({fmt(st.get('crafts_per_s'), 1)}/s, "
+                               f"{st.get('working')} of {st.get('machines')} machines)" for st in tp.get("stages") or [] if st.get("crafts"))
+            job = tp.get("job1") or {}
+            print(f"  {scene_label(s)} {s['size']}: utilisation {stages}; products {fmt(tp.get('products_per_s'), 1)}/s; "
+                  f"job {job.get('status')}, top-ups {job.get('fed')}")
             continue
         if s["scene"] == "carry":                      # (issue #633)
             print(f"  {scene_label(s)}: {tp.get('item_lines')} item and {tp.get('fluid_lines')} fluid lines, items into the sinks "
@@ -3099,6 +3117,11 @@ def main():
     p.add_argument("--carry", action="store_true", help="issue #633: also the carry scene, 40 item and 20 fluid lines (a source, "
                    "four sinks) carried by ME P2P tunnels on their own and by an import bus and four export buses")
     p.add_argument("--carry-only", action="store_true", help="only the carry scene")
+    p.add_argument("--feed", action="store_true", help="issue #752: also the feed scene, a chain of a fluid crafting step, an item "
+                   "crafting step and a processing step with %d fast machines, and each step on its own; reports how busy the machines "
+                   "of each step are"
+                   % FEED_MACHINES)
+    p.add_argument("--feed-only", action="store_true", help="only the feed scene")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
                    "sample must be the same (issue #50)")

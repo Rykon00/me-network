@@ -2808,30 +2808,72 @@ local function set_pos(job, entity)
 	if not (old and old.x == p.x and old.y == p.y) then job.pos = { x = p.x, y = p.y } end
 end
 
---- Issue #557: top up a crafting lease whose machine still works: when less than half a hand-over (M.machine_batch) is left of
---- it, more runs go in (the products made so far are collected first, so the output slot has room), as far as the pool, the
---- input slots and the output slot allow, and what it made so far counts as done. A fast machine then never waits for the
---- job's next step. Not for recipes with
---- fluids or ingredients with data (their hand-over has more to it). Returns true when it topped up.
-function M.top_up(job, net, lease, step)
-	if lease.kind ~= "crafting" or not lease.finished0 or step.issued >= step.runs then return false end
-	if lease.fluid and lease.fluid.inputs and #lease.fluid.inputs > 0 then return false end
+--- Issue #557: top up a lease whose machine still works: when less than half a hand-over (M.machine_batch) is left of it, more
+--- runs go in (the products made so far are collected first, so the output slot has room), as far as the pool, the input
+--- slots and the output slot allow, and what it made so far counts as done. A fast machine then never waits for the job's
+--- next step. Issue #752: also for a crafting pattern with fluid ingredients (the fluid boxes are refilled by their index,
+--- as the hand-over fills them: a box holds a few crafts' worth, so such a machine ran dry between two steps) and for a
+--- processing pattern in a machine (more runs into one that still works; what it made so far is collected and credited
+--- to the step as at the end of the lease, and the lease remembers all it gave). Those two keep to the provider's lock
+--- (issue #429: a provider with a lock mode hands over once per unlock) and need the provider the lease came from
+--- (`lease.prov`, set at the hand-over). Not for ingredients with data (their hand-over has more to it), and never into a
+--- chest (the blocking modes of issue #335 are its rule). Costs no operation of its own: it is the visit of the lease that
+--- the job's step makes anyway. Returns true when it topped up.
+function M.top_up(job, net, lease, step, s)
+	if step.issued >= step.runs then return false end
 	local m = lease.machine
+	local map = lease.fluid
+	local fluid_in = map ~= nil and map.inputs ~= nil and #map.inputs > 0
+	local processing = lease.kind ~= "crafting"
+	if not processing and not lease.finished0 then return false end
+	if fluid_in or processing then
+		local p = lease.prov and s and s.providers[lease.prov]
+		if not p or p.lock then return false end
+	end
+	local inp = input_inventory(m)
+	if not inp then return false end
+	local ingredients = step_ingredients(step)
+	local fb = fluid_in and M.T.boxes(m) or nil
 	local want = M.machine_batch(m, step)
-	local left = lease.runs - (m.products_finished - lease.finished0)
+	if fluid_in then want = fluid_batch_limit(map, want) end
+	--- the runs the machine still has: a crafting lease counts its crafts, a processing lease what lies in the machine
+	local left
+	if processing then
+		left = math.huge
+		for _, ing in pairs(ingredients) do
+			if ing.type == "item" then
+				if with_data(ing.name) or not N.item_exists(ing.name) then return false end
+				left = math.min(left, math.floor(inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" } / ing.amount))
+			end
+		end
+		for _, i in pairs(fluid_in and map.inputs or EMPTY_MAP.inputs) do
+			local f = i.index <= #fb and fb[i.index] or nil
+			left = math.min(left, math.floor((f and f.name == i.name and f.amount or 0) / i.amount + 1e-9))
+		end
+		if left == math.huge then return false end
+	else
+		left = lease.runs - (m.products_finished - lease.finished0)
+	end
 	if left * 2 > want then
 		M.note_early(job, m, step, left)
 		return false
 	end
-	local inp = input_inventory(m)
-	if not inp then return false end
 	local add = math.min(want - left, step.runs - step.issued)
-	local ingredients = step_ingredients(step)
 	for _, ing in pairs(ingredients) do
-		if ing.type ~= "item" or with_data(ing.name) or not N.item_exists(ing.name) then return false end
-		local size = stack_size_of(ing.name)
-		local have = inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" }
-		add = math.min(add, math.floor(ing_pool(job, ing) / ing.amount + 1e-9), size and math.floor((size - have) / ing.amount) or 0)
+		if ing.type == "item" then
+			if with_data(ing.name) or not N.item_exists(ing.name) then return false end
+			local size = stack_size_of(ing.name)
+			local have = inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" }
+			add = math.min(add, math.floor(ing_pool(job, ing) / ing.amount + 1e-9), size and math.floor((size - have) / ing.amount) or 0)
+		elseif not fluid_in then
+			return false                                   -- (a fluid ingredient without a box of the machine)
+		end
+	end
+	for _, i in pairs(fluid_in and map.inputs or EMPTY_MAP.inputs) do
+		local f = i.index <= #fb and fb[i.index] or nil
+		if f and f.amount > 0 and f.name ~= i.name then return false end
+		local _, have = pool_keys(job, i.key, i.name, i.flex, i.lo, i.hi)
+		add = math.min(add, math.floor((i.capacity - (f and f.amount or 0)) / i.amount + 1e-9), math.floor(have / i.amount + 1e-9))
 	end
 	for _, pr in pairs(step_products(step)) do
 		if pr.type == "item" then
@@ -2840,32 +2882,95 @@ function M.top_up(job, net, lease, step)
 			if size and per and per > 0 then add = math.min(add, math.floor(size / per) - math.max(0, left)) end
 		end
 	end
-	if add <= 0 then return false end
-	collect_output(job, net, m, lease.fluid)
-	local crafted = m.products_finished - lease.finished0          -- (what it made so far counts now: the job's progress)
-	if crafted > 0 then
-		step.done = step.done + crafted
-		lease.runs = lease.runs - crafted
-		lease.finished0 = lease.finished0 + crafted
-		update_done(job)
-	end
-	local given = {}
-	for _, ing in pairs(ingredients) do
-		local key, q = key_of(ing), ing.quality or "normal"
-		local n = ing.amount * add
-		local got = inp.insert{ name = ing.name, count = n, quality = q }
-		pool_add(job, key, -got)
-		given[#given + 1] = { key, ing.name, q, got }
-		if got < n then
-			for _, g in pairs(given) do
-				if g[4] > 0 then inp.remove{ name = g[2], count = g[4], quality = g[3] } pool_add(job, g[1], g[4]) end
-			end
-			return false
+	if map and map.max_out and map.max_out > 0 then          -- (the fluid products of what it holds then must fit their boxes)
+		for _, o in pairs(map.outputs) do
+			add = math.min(add, math.floor(o.capacity / map.max_out + 1e-9) - math.max(0, left))
 		end
+	end
+	if add <= 0 then return false end
+	collect_output(job, net, m, map, processing and lease.step or nil)
+	if not processing then
+		local crafted = m.products_finished - lease.finished0      -- (what it made so far counts now: the job's progress)
+		if crafted > 0 then
+			step.done = step.done + crafted
+			lease.runs = lease.runs - crafted
+			lease.finished0 = lease.finished0 + crafted
+			update_done(job)
+		end
+	end
+	--- the hand-over; `given`: { key, got, name, quality } of an item, { key, got, index, lkey } of a fluid
+	local given = {}
+	local function undo()
+		for _, g in ipairs(given) do
+			if g.index then
+				local f = fb[g.index]
+				local rest = f and f.amount - g.got or 0
+				fb[g.index] = rest > FLUID_EPS and { name = f.name, amount = rest, temperature = f.temperature } or nil
+			elseif g.got > 0 then
+				inp.remove{ name = g.name, count = g.got, quality = g.quality }
+			end
+			pool_add(job, g.key, g.got)
+			if processing then
+				local k = g.lkey or g.key
+				lease.given[k] = (lease.given[k] or 0) - g.got
+			end
+		end
+	end
+	local function note(g)
+		given[#given + 1] = g
+		if processing then
+			lease.given = lease.given or {}
+			local k = g.lkey or g.key
+			lease.given[k] = (lease.given[k] or 0) + g.got
+		end
+	end
+	for _, ing in pairs(ingredients) do
+		if ing.type == "item" then
+			local key, q = key_of(ing), ing.quality or "normal"
+			local n = ing.amount * add
+			local got = inp.insert{ name = ing.name, count = n, quality = q }
+			pool_add(job, key, -got)
+			note({ key = key, got = got, name = ing.name, quality = q })
+			if got < n then undo() return false end
+		end
+	end
+	for _, i in pairs(fluid_in and map.inputs or EMPTY_MAP.inputs) do
+		local f = i.index <= #fb and fb[i.index] or nil
+		local cur = f and f.amount or 0
+		local need_amount = i.amount * add
+		--- issue #159: from the input's own key first, then the other temperatures it takes; the box gets the mean
+		--- temperature of what it holds and what comes
+		local keys = pool_keys(job, i.key, i.name, i.flex, i.lo, i.hi)
+		local parts, rest, heat = {}, need_amount, cur * (f and f.temperature or 0)
+		for _, k in ipairs(keys) do
+			local n = math.min(rest, job.pool[k] or 0)
+			if n > 0 then
+				parts[#parts + 1] = { k, n }
+				heat = heat + n * N.fluid_temperature(k)
+				rest = rest - n
+			end
+			if rest <= FLUID_EPS then break end
+		end
+		local amount = need_amount - math.max(0, rest)
+		if amount > 0 then fb[i.index] = { name = i.name, amount = cur + amount, temperature = heat / (cur + amount) } end
+		local now = fb[i.index]
+		local got = math.max(0, ((now and now.name == i.name) and now.amount or 0) - cur)
+		local share = got
+		for _, part in ipairs(parts) do
+			local n = math.min(share, part[2])
+			if n > 0 then
+				pool_add(job, part[1], -n)
+				note({ key = part[1], got = n, index = i.index, lkey = i.key })
+				share = share - n
+			end
+		end
+		if got + FLUID_EPS < need_amount then undo() return false end
 	end
 	lease.runs = lease.runs + add
 	step.issued = step.issued + add
-	M.note_early(job, m, step, lease.runs)
+	job.fed = (job.fed or 0) + 1                         -- (the top-ups of this job: its window and the tests)
+	if processing and s then s.await = nil end
+	M.note_early(job, m, step, processing and left + add or lease.runs)
 	return true
 end
 
@@ -2913,7 +3018,7 @@ local function job_step(s, job, work)
 				elseif recipe_changed or machine_idle(m, step_ingredients(step), real.fluid) then
 					close_lease(s, job, net, real)
 					progress = true
-				elseif not job.closing and M.top_up(job, net, real, step) then   -- (issue #557: still working, nearly done)
+				elseif not job.closing and M.top_up(job, net, real, step, s) then   -- (issues #557, #752: still working, nearly done)
 					progress = true
 				end
 				work.ops = work.ops - 1
@@ -2989,7 +3094,10 @@ local function job_step(s, job, work)
 			else
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
-				if ok and step.kind == "crafting" then M.note_early(job, machine, step, batch) end   -- (issue #557)
+				--- (issue #752: the lease names the provider it came from, for the top-up's look at its lock; every kind of step
+				--- is stepped early when its machine runs out before the next step)
+				if ok then job.leases[#job.leases].prov = chest and chest.prov or nil end
+				if ok then M.note_early(job, machine, step, batch) end                              -- (issue #557)
 				if not ok and step.kind == "processing" then reject(job, machine.unit_number, step.pid) end
 				if ok then EXT.handed(s, chest) end              -- (issue #429: a pulse lock after a hand-over into a machine)
 			end
@@ -3663,7 +3771,7 @@ function M.job(id)
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool, sent = job.sent or 0,
 		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
-		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0 }
+		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0, fed = job.fed or 0 }
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)
