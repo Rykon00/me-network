@@ -12,8 +12,9 @@
 --- * a book with a blueprint that is not set up: not a blueprint;
 --- * a book in a book, the inner one with the blueprint: the blueprint, held; the inner one empty: not a blueprint;
 --- * a plain item and an empty slot: not a blueprint.
---- A book of the blueprint library (a LuaRecord) cannot be made without a player; its branch reads `contents[i]`, a Lua
---- table, where an index past the end is nil.
+--- * a book or a blueprint of the blueprint library (a LuaRecord; the harness has none, so tables stand for them): one
+---   that is a preview (not transferred yet, every read raises), a book that is one, a book whose active blueprint is
+---   one, and one whose read raises without the flag: no blueprint, no error; a set-up one and a book of one: held.
 --- Loaded by control.lua: require("bookcursor")(H) returns { setup, tick, running }.
 
 local PO, CT = "gregtorio-me-pasteover", "gregtorio-me-cableturn"
@@ -114,6 +115,21 @@ return function(H)
 			end
 		else
 			expect(false, "the outer book took no book")
+		end
+
+		--- A blueprint of the library that is a preview (multiplayer: a library blueprint just picked is one for the server
+		--- and the other players; found with a real client, Task-Ingame #765): its reads raise, and it is no blueprint yet.
+		--- The harness has no library, so tables stand for the records.
+		if po.resolves_record and ct.held_record then
+			for _, c in ipairs({ { "preview", false }, { "preview-book", false }, { "book-preview-inside", false }, { "raises", false },
+				{ "blueprint", true }, { "book", true } }) do
+				local ok, got = pcall(remote.call, PO, "resolves_record", c[1])
+				expect(ok and got == c[2], "a library record, " .. c[1] .. ": resolve gives " .. tostring(got) .. ", expected " .. tostring(c[2]))
+				local ok2, held = pcall(remote.call, CT, "held_record", c[1])
+				expect(ok2 and held == c[2], "a library record, " .. c[1] .. ": held gives " .. tostring(held) .. ", expected " .. tostring(c[2]))
+			end
+		else
+			expect(false, "no resolves_record: a library record that is a preview is not handled")
 		end
 
 		inv[5].set_stack{ name = "iron-plate", count = 5 }

@@ -100,7 +100,9 @@ end
 local function held_source(src, k, player)
 	local bp = P.resolve(src, player)
 	if not bp then return nil end
-	if holds(bp) then return k, true end
+	--- (the blueprint's cost is a read of it too: a record that became a preview is no held blueprint)
+	local ok, has = pcall(holds, bp)
+	if ok and has then return k, true end
 	return nil
 end
 
@@ -228,6 +230,11 @@ remote.add_interface("gregtorio-me-cableturn", {
 	held_stack = function(stack)
 		if not (stack and stack.valid_for_read and (stack.is_blueprint or stack.is_blueprint_book)) then return false end
 		local _, has = held_source(stack, stack.item_number, nil)
+		return has == true
+	end,
+	--- tests: `held` for a player whose cursor holds a library record (a stand-in of P.record_stand_in's kinds)
+	held_record = function(kind)
+		local _, has = held({ index = 1, cursor_record = P.record_stand_in(kind) })
 		return has == true
 	end,
 	--- tests: the names of the blocks whose direction nothing uses
