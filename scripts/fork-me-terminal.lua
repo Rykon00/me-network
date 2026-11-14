@@ -555,9 +555,18 @@ function M.sort_captions(frame, p)
 	G.find(frame, "fork_me_kind").caption = { "fork-me-gui.kind-" .. p.kind }
 end
 
-local function build_crafting(tab)
+--- Issue #751: the rows of the Crafting tab's grid of craftable items, by the player's screen: CRAFT_ROWS_MAX where the
+--- window fits with them (a 1080p screen at 100 % and 125 % UI scale), fewer on a smaller screen (720 GUI pixels: 6), never
+--- fewer than the 4 it had. CRAFT_RESERVE is what the window has besides the grid: its title bar, the network line, the
+--- search row, the tab headers, the tab's info line, the pick row, the plan's lines and three rows of the plan's grid.
+local CRAFT_ROWS_MIN, CRAFT_ROWS_MAX, CRAFT_RESERVE = 4, 8, 460
+function M.craft_rows(player)
+	return math.floor(G.fit_height(player, CRAFT_RESERVE, CRAFT_ROWS_MAX * 40, CRAFT_ROWS_MIN * 40) / 40)
+end
+
+local function build_crafting(tab, player)
 	G.label(tab, "", WIDTH, nil, "fork_me_craft_info")
-	scroll_table(tab, "fork_me_craft_grid", COLUMNS, 4 * 40 + 8)
+	scroll_table(tab, "fork_me_craft_grid", COLUMNS, M.craft_rows(player) * 40 + 8)
 	tab.add{ type = "line" }
 	local pick = G.row(tab, "fork_me_pick_row")
 	pick.add{ type = "sprite-button", name = "fork_me_pick", style = "slot_button" }
@@ -706,7 +715,7 @@ local function open(player, entity)
 	end
 	build_storage(tabs.fork_me_tab_storage)
 	if not chest then
-		build_crafting(tabs.fork_me_tab_crafting)
+		build_crafting(tabs.fork_me_tab_crafting, player)
 		build_jobs(tabs.fork_me_tab_jobs)
 		build_cells(tabs.fork_me_tab_cells)
 	end
@@ -1372,6 +1381,10 @@ G.on("term_cell", function(event, player, el)
 end)
 
 remote.add_interface("gregtorio-me-terminal", {
+	--- issue #751 (tests): the rows of the Crafting tab's grid on a screen of `height` pixels at UI scale `scale`
+	craft_rows = function(height, scale)
+		return M.craft_rows({ display_resolution = { width = 1920, height = height }, display_scale = scale })
+	end,
 	--- the lookup of the ME windows (their entity by unit number)
 	entity_by_unit = function(unit) return G.entity_by_unit(unit) end,
 	withdraw = function(terminal, target, name, quality, count) return M.withdraw(terminal, target, name, quality or "normal", count) end,

@@ -3032,6 +3032,11 @@ remote.add_interface("gregtorio-me-gui", {
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
 			can_reach_entity = function() return true end, force = game.forces.player, surface = spec.surface or game.surfaces[1],
 			position = { x = 0, y = 0 }, cursor_stack = spec.cursor }          -- (issue #677: `cursor`, a LuaItemStack)
+		--- (issue #751: a screen, `screen` = { height, scale }; without one the parts that fit themselves take their largest size)
+		if spec.screen then
+			sp.display_resolution = { width = 1920, height = spec.screen.height }
+			sp.display_scale = spec.screen.scale or 1
+		end
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
@@ -3066,6 +3071,12 @@ remote.add_interface("gregtorio-me-gui", {
 	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
 	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
 	--- buttons (block_slot) by flow name
+	--- issue #751 (tests): the largest height of the scroll pane around the element `element` of the stand-in's window
+	stand_in_scroll_height = function(name, element)
+		local frame = G.window_of(stand_ins[name])
+		local el = frame and G.find(frame, element)
+		return el and el.parent and el.parent.style.maximal_height or nil
+	end,
 	stand_in_open_entity = function(name, entity)
 		local sp = stand_ins[name]
 		G.open_entity(sp, entity)
