@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.7.1
+  Bugfixes:
+    - Picking up an empty blueprint book, or a book whose blueprints were taken out, stopped the game with "Index out of inventory bounds" (issue #747, reported by Dekei). The same happened with such a book inside another book.
+---------------------------------------------------------------------------------------------------
 Version: 0.7.0
 Date: 2026-11-14
   Features:
