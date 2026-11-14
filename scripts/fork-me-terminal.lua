@@ -564,7 +564,9 @@ end
 --- window fits with them (a 1080p screen at 100 % and 125 % UI scale), fewer on a smaller screen (720 GUI pixels: 6), never
 --- fewer than the 4 it had. CRAFT_RESERVE is what the window has besides the grid: its title bar, the network line, the
 --- search row, the tab headers, the tab's info line, the pick row, the plan's lines and three rows of the plan's grid.
-local CRAFT_ROWS_MIN, CRAFT_ROWS_MAX, CRAFT_RESERVE = 4, 8, 460
+--- (issue #770, measured in a client at 150 % UI scale: the window is 461 pixels high besides the grid with a plan of one
+--- row of slots and its CPU line, so 500 leaves room for a second row)
+local CRAFT_ROWS_MIN, CRAFT_ROWS_MAX, CRAFT_RESERVE = 4, 8, 500
 function M.craft_rows(player)
 	return math.floor(G.fit_height(player, CRAFT_RESERVE, CRAFT_ROWS_MAX * 40, CRAFT_ROWS_MIN * 40) / 40)
 end
@@ -580,8 +582,11 @@ local function build_crafting(tab, player)
 	pick.add{ type = "label", caption = { "fork-me-gui.amount" } }
 	G.number_field(pick, 1, G.act("term_amount"), 110, false, "fork_me_amount")    -- (issue #771: ten digits, the limit of #750)
 	--- issue #350 (AE2-Unofficial's CPU choice in the confirm screen): automatic, or one of the CPUs that can take it now
-	pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
+	local cpu_pick = pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
 		tooltip = { "fork-me-craft.cpu-pick-tooltip" }, tags = G.act("term_cpu", { ids = {} }) }
+	--- (issue #770: the drop-down grew to its longest entry, a CPU's name with its size and co-processors, and at 150 % UI
+	--- scale pushed the Craft button off a 1080p screen; the list that opens still shows the entries in full)
+	cpu_pick.style.maximal_width = 200
 	pick.add{ type = "button", name = "fork_me_craft", caption = { "fork-me-craft.craft" }, style = "confirm_button",
 		tags = G.act("term_craft") }
 	G.label(tab, "", WIDTH, nil, "fork_me_plan")
