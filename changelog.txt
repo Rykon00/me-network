@@ -3,6 +3,7 @@ Version: 0.7.1
   Bugfixes:
     - Picking up an empty blueprint book, or a book whose blueprints were taken out, stopped the game with "Index out of inventory bounds" (issue #747, reported by Dekei). The same happened with such a book inside another book.
     - The ME Wireless Terminal Module in an armour's grid is now charged by the personal batteries too (issue #748, reported by Dekei). Until now only a generator in the grid (solar panel, reactor) charged it, and with the generators' power used up elsewhere it stayed empty next to full batteries. It takes up to 2 MW as before, and nothing draws energy back out of it.
+    - ME Interface Terminal: the row of a pattern provider shows each kind of machine once with its number (issue #746, reported by Dekei and duruoqingyun) instead of one icon per machine. A provider with dozens of machines behind ME P2P tunnels made the row wider than the screen, and the rename, locate and open buttons could not be reached. At most six kinds are drawn; a "+3" after them lists the rest in its tooltip.
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.0
 Date: 2026-11-14

@@ -40,6 +40,9 @@ local PROVIDER = "me-pattern-provider"
 local PAGE = 6                  -- blocks per page
 local COLUMNS = 12              -- slot buttons per row of a block
 local WIDTH = 40 * COLUMNS + 40
+local MAX_KINDS = 6             -- kinds of machines drawn in a provider's head row (issue #746); the rest is a "+k" label
+local PLACE_WIDTH = 200         -- widest "(x, y) · place" label of a head row
+local MAX_LISTED = 8           -- kinds the tooltip of that label lists (a localised string takes 20 parameters)
 local INTERFACES = "@interfaces"   -- the filter value of "ME Interfaces only"
 local LOCATE_TICKS = 600        -- how long the highlight box of Locate stays
 
@@ -265,6 +268,31 @@ local function tool_button(parent, sprite, tooltip, tags)
 	return b
 end
 
+--- The machines of a provider by kind: `near` (one entity name per machine next to it or behind its tunnels) as
+--- { { name, count } } in the order of first appearance; a name the game no longer has is left out (issue #746).
+function M.near_groups(near)
+	local groups, at = {}, {}
+	for _, name in ipairs(near or {}) do
+		if prototypes.entity[name] then
+			local g = at[name]
+			if not g then
+				g = { name = name, count = 0 }
+				at[name] = g
+				groups[#groups + 1] = g
+			end
+			g.count = g.count + 1
+		end
+	end
+	return groups
+end
+
+--- the tooltip line of a kind of machine: its name, with its number when there are several
+local function machine_line(g)
+	local name = prototypes.entity[g.name].localised_name
+	if g.count > 1 then return { "fork-me-iface-terminal.machine-count", name, g.count } end
+	return name
+end
+
 --- one entry's part of the page (into `box`, a vertical flow)
 function M.build_entry(box, v, editing)
 	local head = G.row(box)
@@ -277,12 +305,31 @@ function M.build_entry(box, v, editing)
 		local l = head.add{ type = "label", caption = v.title, style = "caption_label" }
 		l.style.maximal_width = 220
 	end
-	head.add{ type = "label", caption = v.place and { "fork-me-iface-terminal.position-on", v.position.x, v.position.y, v.place }
-		or { "fork-me-iface-terminal.position", v.position.x, v.position.y } }
-	for _, name in ipairs(v.near) do
-		if prototypes.entity[name] then
-			head.add{ type = "sprite", sprite = "entity/" .. name, tooltip = prototypes.entity[name].localised_name }
+	local where = v.place and { "fork-me-iface-terminal.position-on", v.position.x, v.position.y, v.place }
+		or { "fork-me-iface-terminal.position", v.position.x, v.position.y }
+	--- (issue #746: every part of the row has a largest width, so the row and the window have one; a long place name is cut
+	--- and shown in full by the tooltip)
+	head.add{ type = "label", caption = where, tooltip = where }.style.maximal_width = PLACE_WIDTH
+	--- (issue #746: one icon per kind of machine with its number, at most MAX_KINDS of them and a "+k" for the rest: a
+	--- provider with dozens of machines behind ME P2P tunnels had one icon per machine and pushed the buttons off the screen)
+	local groups = M.near_groups(v.near)
+	for i = 1, math.min(#groups, MAX_KINDS) do
+		local g = groups[i]
+		head.add{ type = "sprite-button", sprite = "entity/" .. g.name, number = g.count > 1 and g.count or nil,
+			style = "transparent_slot", tooltip = machine_line(g) }
+	end
+	if #groups > MAX_KINDS then
+		local tip = { "" }
+		local last = math.min(#groups, MAX_KINDS + MAX_LISTED)
+		for i = MAX_KINDS + 1, last do
+			if i > MAX_KINDS + 1 then tip[#tip + 1] = "\n" end
+			tip[#tip + 1] = machine_line(groups[i])
 		end
+		if #groups > last then
+			tip[#tip + 1] = "\n"
+			tip[#tip + 1] = { "fork-me-iface-terminal.machines-more", #groups - last }
+		end
+		head.add{ type = "label", caption = { "fork-me-iface-terminal.machines-rest", #groups - MAX_KINDS }, tooltip = tip }
 	end
 	if v.kind == "provider" and #v.near == 0 then head.add{ type = "label", caption = { "fork-me-iface-terminal.no-machine" } } end
 	head.add{ type = "empty-widget" }.style.horizontally_stretchable = true
@@ -578,6 +625,28 @@ remote.add_interface("gregtorio-me-interface-terminal", {
 				out[#out].note = c.caption                   -- (an interface without config rows)
 			elseif c.type == "label" then
 				out[#out + 1] = { label = c.caption }        -- (nothing matches)
+			end
+		end
+		return out
+	end,
+	--- issue #746 (tests): the machines `near` by kind, and the head row of a provider with them built into a stand-in: the
+	--- machine icons { sprite, number }, the caption and tooltip of the "+k" label, the number of buttons right of them
+	near_groups = function(near) return M.near_groups(near) end,
+	build_head = function(near)
+		local box = W.stand_in_element{ type = "flow" }
+		M.build_entry(box, { kind = "provider", unit = 0, title = "test", position = { x = 0, y = 0 }, near = near, slots = {} }, false)
+		local head = box.children[1]
+		local out = { icons = {}, buttons = 0, children = #head.children }
+		local past = false
+		for i, c in ipairs(head.children) do
+			if c.type == "sprite-button" and c.style_name == "transparent_slot" then
+				out.icons[#out.icons + 1] = { sprite = c.sprite, number = c.number, tooltip = c.tooltip }
+			elseif c.type == "empty-widget" then
+				past = true
+			elseif past then
+				out.buttons = out.buttons + 1
+			elseif c.type == "label" and i > 3 then
+				out.more, out.more_tooltip = c.caption, c.tooltip
 			end
 		end
 		return out

@@ -153,6 +153,59 @@ return function(H)
 		local none = remote.call(IT, "build_page", it, { search = "nothing-makes-this" }, 1) or {}
 		expect(#none == 1 and none[1].label ~= nil, "an empty list says so")
 
+		--- issue #746: the machines in a provider's head row, one icon per kind with its number. A provider with 64 assemblers
+		--- behind ME P2P tunnels has 64 names in its `near` (EXT.note_near: one per machine): one icon, number 64, the three
+		--- buttons right of it; six kinds: six icons and no "+"; 20 kinds: six icons and "+14", whose tooltip lists eight and
+		--- says "6 more"; a single machine has no number; a name the game does not have is left out; none: no icon.
+		if remote.interfaces[IT].build_head then
+			local function head(near) return remote.call(IT, "build_head", near) end
+			local many = {}
+			for i = 1, 64 do many[i] = "assembling-machine-2" end
+			local h = head(many)
+			expect(#h.icons == 1 and h.icons[1].sprite == "entity/assembling-machine-2" and h.icons[1].number == 64 and h.more == nil
+				and h.buttons == 3, "64 assemblers: " .. serpent.line(h))
+			local alone = head{}
+			expect(#h.icons == 1 and h.children == alone.children, "64 assemblers take one element more than no machine takes for "
+				.. "its note: " .. h.children .. " and " .. alone.children)
+			expect(#alone.icons == 0 and alone.buttons == 3, "no machine: " .. serpent.line(alone))
+			local g = remote.call(IT, "near_groups", { "iron-chest", "assembling-machine-2", "iron-chest", "no-such-machine", "iron-chest" })
+			expect(serpent.line(g) == serpent.line({ { count = 3, name = "iron-chest" }, { count = 1, name = "assembling-machine-2" } }),
+				"grouped in the order of first appearance: " .. serpent.line(g))
+			local one = head{ "iron-chest" }
+			expect(#one.icons == 1 and one.icons[1].number == nil, "a single machine has no number: " .. serpent.line(one.icons))
+			local kinds = {}
+			for name, proto in pairs(prototypes.entity) do
+				if proto.type == "assembling-machine" or proto.type == "furnace" or proto.type == "container" then
+					kinds[#kinds + 1] = name
+					if #kinds == 20 then break end
+				end
+			end
+			if #kinds == 20 then
+				local six = {}
+				for i = 1, 6 do six[i] = kinds[i] end
+				six[7] = kinds[1]
+				local h6 = head(six)
+				expect(#h6.icons == 6 and h6.icons[1].number == 2 and h6.more == nil, "six kinds: " .. serpent.line(h6))
+				local wide = {}
+				for i = 1, 20 do for _ = 1, 3 do wide[#wide + 1] = kinds[i] end end
+				local hw = head(wide)
+				expect(#hw.icons == 6 and hw.more and hw.more[2] == 14 and hw.buttons == 3 and hw.children == h6.children + 1,
+					"20 kinds: " .. #hw.icons .. " icons, " .. serpent.line(hw.more) .. ", " .. hw.children .. " elements")
+				local tip = hw.more_tooltip or {}
+				local lines, more = 0, nil
+				for _, part in ipairs(tip) do
+					if type(part) == "table" and part[1] == "fork-me-iface-terminal.machine-count" then lines = lines + 1 end
+					if type(part) == "table" and part[1] == "fork-me-iface-terminal.machines-more" then more = part[2] end
+				end
+				expect(lines == 8 and more == 6 and #tip <= 20, "the tooltip of the rest: " .. lines .. " kinds, " .. tostring(more)
+					.. " more, " .. #tip .. " parts")
+			else
+				expect(false, "the game has only " .. #kinds .. " kinds of machines and chests")
+			end
+		else
+			expect(false, "no build_head: the head row is not grouped (issue #746)")
+		end
+
 		--- the window's click: a pattern into the hand and back; a provider of no network is refused
 		local inv = game.create_inventory(4)
 		local hand, back = inv[1], game.create_inventory(10)
