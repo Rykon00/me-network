@@ -1,5 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.1
+  Features:
+    - ME Pattern Terminal and ME Pattern Terminal Ex: buttons ×2, ×3, ×4 and ÷2, ÷3, ÷4 above the rows of a processing pattern multiply or divide every input and output amount at once (issue #753, asked for by duruoqingyun; AE2-Unofficial's pattern terminal has them). Shift + click changes the outputs only, for a machine whose productivity gives more for the same inputs. A button is off when a row would pass 1,000,000 or when an amount does not divide evenly; its tooltip says which. Crafting patterns keep their recipe's amounts and have no such buttons.
   Changes:
     - ME Terminal and Wireless ME Terminal, Crafting tab: the grid of craftable items shows up to 8 rows instead of 4 (issue #751, asked for by Dekei), so finding a pattern takes less scrolling. On a small screen or a large UI scale it shows fewer (6 rows at 720 pixels of height, never fewer than 4) so the window still fits with the plan below it.
     - Autocrafting: one order may ask for up to 2,147,483,647 items or fluid units (issue #750, reported by Dekei); it was 100,000 items and 10,000,000 fluid units. What limits a job is the size of its Crafting CPU, as in AE2. An amount above the limit is refused in the plan line of the Crafting tab before you press Craft, and the message names the limit; so do the status lines of the ME Level Maintainer and the Crafting Card.
