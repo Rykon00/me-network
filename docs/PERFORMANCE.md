@@ -4906,3 +4906,49 @@ scene is the one that shows the change.
 of 80 at once: 55 % busy for the fluid machine before, 100 % for both now (14 and 6 top-ups), every count exact at the end
 (plates, sticks, 10 water per plate, nothing left in a machine or its fluid box), and a job on a provider with the lock
 "until the result is back" ends without a top-up.
+
+## Steps of a job share their machines (issue #769)
+
+`job_step` handed a job's work out in plan order: for each step, hand-overs until the step had no ingredient or no machine
+left. A step that shares machines with a later one took all of them, and since issue #557 it keeps them (a lease is topped up
+as long as its step has runs). Found in a real game (Task-Ingame #765): eight Space Age foundries with the patterns casting-iron
+and casting-copper, four ME Molecular Assemblers with copper-cable and electronic-circuit, one job of 9000 circuits: every
+foundry cast iron until all 3000 iron runs were handed out (casting-copper at 0 of 4504 the whole time), and every assembler
+made cable (electronic-circuit at 0 of 9000).
+
+Now:
+
+- a visit hands out in **passes**, one hand-over per step and pass, as long as a pass handed something out and operations
+  are left; a step that could not hand out once is not asked again in that visit (the search for a machine is the cost);
+- the step that found no machine and holds the fewest (`job.starve`) comes first in the next visit, and when another step
+  holds two or more machines more than it, among them one it could use, one such lease is not topped up any more
+  (`lease.release`), runs out and ends: the waiting step takes the machine and keeps it by its own top-ups. The shares end up
+  one apart at most, and every machine stays topped up.
+
+No closure and no table per visit (two scratch tables outside `storage`, marked with a stamp of the visit); the counting of
+leases per step runs only in a visit after a step found no machine.
+
+The same game scene after the change: four foundries cast iron and four copper from the first second, the assemblers split
+between cable and circuits (2 and 2, 3 and 1 while cable is short), and circuits are handed out from the start (65 of 9000
+after ten seconds, 630 after a minute; before: 0 until the 13 500 cable runs were handed out).
+
+`bench --check <the commit before> --sizes 1000 --runs 4` (four rounds in turns):
+
+| | before | #769 |
+|---|---|---|
+| script average / p99 ms | 0.3822 / 2.032 | 0.3787 / 2.022 |
+| provider crafts per second | 15.78 | 15.78 |
+| Lua alloc KB per tick | 32.03 | 32.03 |
+| throughput per kind of endpoint | | identical |
+
+`regressions beyond the noise: 0`. A first version built a closure per visit: 32.47 KB per tick, and it was taken out.
+
+The feed scene (`bench --feed-only`, three runs): the chain 100.0 / 100.0 / 99.9 % and 112.4 products per second, each step
+on its own 100.0 %, 4261 / 2502 / 873 / 873 top-ups, all as before (its three steps have machines of their own, so nothing is
+shared there); script average 0.122 ms for the chain (0.116 to 0.133 before). The planner scene and the tunnel scene
+(`--tunnels-only --planner`): no conservation problem, 120.0 crafts per second in both tunnel layouts, as before.
+
+**The test** (`fairsteps.lua`): two ME Molecular Assemblers with five Acceleration Cards, the patterns iron stick and gear
+(the gear takes two sticks), a job of 96 gears: while stick runs are left, gear runs are handed out (16 at tick 50 of the job,
+32 by the time the sticks are all handed out: more than one hand-over, so the gear step holds a machine of its own); the job
+ends with 96 gears and nothing left. On the code before, the gear step got no machine before every stick run was handed out.
