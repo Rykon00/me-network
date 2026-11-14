@@ -170,14 +170,19 @@ end
 
 --- the data of one entry as its part of the window shows it: { kind, unit, title (a LocalisedString), label, position,
 --- near, slots = { [slot] = record_slot or false } (a provider: size slots) or rows = { { key, amount } } (an interface) }
-function M.entry_view(e)
+function M.entry_view(e, home)
 	local pos = e.entity.position
 	local v = { kind = e.kind, unit = e.unit, label = e.label, near = e.near or {},
 		position = { x = math.floor(pos.x), y = math.floor(pos.y) } }
-	--- issue #713: with Space Exploration the list says where a block stands (a network spans its zones)
+	--- issue #713: with Space Exploration the list says where a block stands (a network spans its zones); issue #772: without
+	--- it too when the block stands on another surface than the terminal (`home`, its surface's index: an ME Quantum Bridge
+	--- joins planets and platforms)
 	if script.active_mods["space-exploration"] then
 		v.surface = e.entity.surface.index
 		v.place = N.place.name(e.entity.surface)
+	elseif home and e.entity.surface.index ~= home then
+		v.surface = e.entity.surface.index
+		v.place = N.place.label(e.entity.surface)
 	end
 	if e.kind == "provider" then
 		v.title = e.label or { "entity-name." .. PROVIDER }
@@ -198,7 +203,7 @@ end
 --- the signature of what an entry's part shows (rebuilt only when it changed)
 local function entry_sig(v, editing)
 	local sig = { v.kind, v.unit, tostring(v.label), v.position.x, v.position.y, table.concat(v.near, "+"), tostring(editing),
-		tostring(v.surface), type(v.place) == "string" and v.place or "" }
+		tostring(v.surface), type(v.place) == "string" and v.place or (v.place and "named" or "") }
 	if v.slots then
 		for slot, d in ipairs(v.slots) do
 			sig[#sig + 1] = d and (tostring(d.id or d.recipe) .. ":" .. tostring(d.ok) .. ":" .. tostring(d.reason) .. ":"
@@ -359,7 +364,7 @@ function M.build_entry(box, v, editing)
 end
 
 --- the page of a list into `box` (cleared first): the parts of entries `first` .. `last`
-function M.build_page(box, list, first, last, editing)
+function M.build_page(box, list, first, last, editing, home)
 	box.clear()
 	if #list.entries == 0 then
 		G.label(box, { "fork-me-iface-terminal.none" }, WIDTH)
@@ -367,7 +372,7 @@ function M.build_page(box, list, first, last, editing)
 	end
 	for i = first, last do
 		if i > first then box.add{ type = "line" } end
-		local v = M.entry_view(list.entries[i])
+		local v = M.entry_view(list.entries[i], home)
 		M.build_entry(box, v, editing == v.unit)
 	end
 end
@@ -450,10 +455,11 @@ function M.refresh(player, frame)
 	G.find(frame, "fork_me_it_count").caption = { "fork-me-iface-terminal.count", shown_p, list.providers, shown_i, list.interfaces,
 		page, pages }
 	local sig = { tostring(first), tostring(last), tostring(#list.entries) }
-	for i = first, last do sig[#sig + 1] = entry_sig(M.entry_view(list.entries[i]), u.edit) end
+	local home = entity.surface.index                       -- (issue #772: a block on another surface names it)
+	for i = first, last do sig[#sig + 1] = entry_sig(M.entry_view(list.entries[i], home), u.edit) end
 	sig = table.concat(sig, "|")
 	if box.tags.sig ~= sig then
-		M.build_page(box, list, first, last, u.edit)
+		M.build_page(box, list, first, last, u.edit, home)
 		box.tags = { sig = sig }
 	end
 	return true
@@ -599,7 +605,7 @@ remote.add_interface("gregtorio-me-interface-terminal", {
 		local net = network(entity)
 		local e = net and M.list(net, opts).entries[index]
 		if not e then return nil end
-		local v = M.entry_view(e)
+		local v = M.entry_view(e, entity.surface.index)
 		v.entity = nil
 		return v
 	end,

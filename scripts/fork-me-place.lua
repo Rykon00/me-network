@@ -59,6 +59,17 @@ function M.name(surface)
 	return surface.localised_name or surface.name
 end
 
+--- Issue #772: what a surface is called in a list, also without Space Exploration: its zone's name with it (M.name), else
+--- the space platform's name, the planet's name, else the surface's own. A LocalisedString or a string.
+function M.label(surface)
+	if script.active_mods[SE] then return M.name(surface) end
+	local platform = surface.platform
+	if platform and platform.valid then return platform.name end
+	local planet = surface.planet
+	if planet and planet.valid then return planet.prototype.localised_name end
+	return surface.localised_name or surface.name
+end
+
 --- issue #729: is `surface` the ground of a planet or a moon of Space Exploration (not an orbit, a belt, deep space or a
 --- spaceship in flight)? Without Space Exploration: false. From the same kept answer as the name.
 function M.ground(surface)
@@ -90,6 +101,10 @@ remote.add_interface("me-network-place", {
 		return surface and M.gps({ x = x, y = y }, surface) or nil
 	end,
 	calls = function() return storage.fork_me_place and storage.fork_me_place.calls or 0 end,
+	label = function(surface_index)                                                     -- (issue #772)
+		local surface = game.get_surface(surface_index)
+		return surface and M.label(surface) or nil
+	end,
 	ground = function(surface_index)
 		local surface = game.get_surface(surface_index)
 		return surface ~= nil and M.ground(surface)

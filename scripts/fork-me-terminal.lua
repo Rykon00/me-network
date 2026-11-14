@@ -578,7 +578,7 @@ local function build_crafting(tab, player)
 	pick.add{ type = "label", name = "fork_me_pick_name", caption = { "fork-me-gui.craft-pick" } }
 	pick.add{ type = "empty-widget" }.style.horizontally_stretchable = true
 	pick.add{ type = "label", caption = { "fork-me-gui.amount" } }
-	G.number_field(pick, 1, G.act("term_amount"), 80, false, "fork_me_amount")
+	G.number_field(pick, 1, G.act("term_amount"), 110, false, "fork_me_amount")    -- (issue #771: ten digits, the limit of #750)
 	--- issue #350 (AE2-Unofficial's CPU choice in the confirm screen): automatic, or one of the CPUs that can take it now
 	pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
 		tooltip = { "fork-me-craft.cpu-pick-tooltip" }, tags = G.act("term_cpu", { ids = {} }) }
@@ -1529,10 +1529,19 @@ script.on_event(defines.events.on_gui_inventory_action, function(event)
 	G.on_inventory_action(event)
 end)
 
---- issue #754: the fluid slot under the mouse (the slots G.slot makes for a fluid raise these), and the pipette key
+--- issue #754: the fluid slot under the mouse (the slots G.slot makes for a fluid raise these), and the pipette key;
+--- issue #768: an item slot the same way (its item and quality are its elem_tooltip's)
 script.on_event({ defines.events.on_gui_hover, defines.events.on_gui_leave }, function(event)
 	local el = event.element
-	local key = el and el.valid and el.tags and el.tags.fork_me_fluid
+	if not (el and el.valid) then return end
+	local key = el.tags and el.tags.fork_me_fluid
+	if not key then
+		local tip = el.type == "sprite-button" and el.elem_tooltip or nil
+		if tip and (tip.type == "item" or tip.type == "item-with-quality") and tip.name then
+			local q = tip.quality
+			key = (q and q ~= "normal") and (tip.name .. "@" .. q) or tip.name
+		end
+	end
 	if not key then return end
 	G.hover_fluid(event.player_index, event.name == defines.events.on_gui_hover and key or nil, el)
 end)

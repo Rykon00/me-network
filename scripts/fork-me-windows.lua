@@ -3017,6 +3017,14 @@ remote.add_interface("gregtorio-me-gui", {
 			sp.display_scale = spec.screen.scale or 1
 		end
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
+		--- (issue #768: the game's pipette, recorded: { name, quality, allow_ghost }; it leaves a ghost in the cursor)
+		sp.pipetted = {}
+		sp.pipette = function(id, quality, allow_ghost)
+			local name = type(id) == "string" and id or id.name
+			sp.pipetted[#sp.pipetted + 1] = { name = name, quality = quality, allow_ghost = allow_ghost }
+			sp.cursor_ghost = { name = name, quality = quality }
+			return true
+		end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -3195,6 +3203,7 @@ remote.add_interface("gregtorio-me-gui", {
 	held_hover = function(index, key) G.hover_fluid(index, key) end,
 	stand_in_pipette = function(name) return G.pipette(stand_ins[name]) end,
 	stand_in_held = function(name) return G.held_fluid(stand_ins[name]) end,
+	stand_in_pipetted = function(name) return stand_ins[name].pipetted end,               -- (issue #768)
 	stand_in_held_shown = function(name)
 		local frame = G.window_of(stand_ins[name])
 		local label = frame and G.find(frame, "fork_me_held")
