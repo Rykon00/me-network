@@ -812,7 +812,8 @@ G.on("pat_row", function(event, player, el)
 		if row then M.set_editor_row(ed, which, index, false) M.refresh(player) end
 		return
 	end
-	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
+	--- (issue #754: an item in the cursor, its ghost or the held fluid sets the row, as in every config slot; else the picker)
+	picker.pick(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
 		preset = picker.preset_of(row and row.key), quality = true })
 end)
 

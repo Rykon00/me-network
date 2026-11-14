@@ -1529,6 +1529,19 @@ script.on_event(defines.events.on_gui_inventory_action, function(event)
 	G.on_inventory_action(event)
 end)
 
+--- issue #754: the fluid slot under the mouse (the slots G.slot makes for a fluid raise these), and the pipette key
+script.on_event({ defines.events.on_gui_hover, defines.events.on_gui_leave }, function(event)
+	local el = event.element
+	local key = el and el.valid and el.tags and el.tags.fork_me_fluid
+	if not key then return end
+	G.hover_fluid(event.player_index, event.name == defines.events.on_gui_hover and key or nil, el)
+end)
+
+script.on_event("fork-me-pipette", function(event)
+	local player = game.get_player(event.player_index)
+	if player then G.pipette(player) end
+end)
+
 script.on_event(defines.events.on_player_left_game, function(event)
 	local player = game.get_player(event.player_index)
 	G.on_left(player)
@@ -1557,6 +1570,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
 	if storage.fork_me_iterm_ui then storage.fork_me_iterm_ui[event.player_index] = nil end      -- (issue #336: the Interface Terminal's)
 	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
+	G.forget_held(event.player_index)                                                            -- (issue #754: the held fluid)
 	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
 	if w and w.players then w.players[event.player_index] = nil end
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)

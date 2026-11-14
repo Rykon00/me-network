@@ -1720,6 +1720,13 @@ that scrolls when the window would not fit the screen (issue #469: the slots, En
 stay below it).
 Everything else (the two slots, Encode, Load, Clear, fill from a recipe) is the ME Pattern Terminal's.
 
+**The pipette key for fluids** (issue #754): the game's pipette key (Q) over an item shown in a window puts that item into
+your cursor (a ghost of it when you do not carry it), and a config slot takes the item or its ghost from the cursor. A
+fluid cannot be in the cursor, so the pipette key over a fluid in an ME window (the terminal's grid, a plan, a pattern or
+config slot) makes it your **held fluid**: the title bar of every ME window names it, and a click on a slot that takes
+fluids sets it. It stays held from window to window until the pipette key is pressed over anything else or an item comes
+into your hand. The rows of both pattern terminals take an item, a ghost or the held fluid the same way.
+
 Both terminals have the buttons ×2, ×3, ×4 and ÷2, ÷3, ÷4 above the rows of a processing pattern (issue #753): they
 multiply or divide every input and output amount at once, shift + click the outputs only (a machine with productivity).
 A button is off when a row would pass 1 000 000 or an amount does not divide evenly.
