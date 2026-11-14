@@ -1155,6 +1155,8 @@ craftrows751 = require("craftrows")({ me_report = me_report })
 heldfluid754 = require("heldfluid")({ me_report = me_report })
 --- me-network issue #752: machines fed while they work (feeding.lua)
 feeding752 = require("feeding")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #769: the steps of a job share their machines (fairsteps.lua)
+fairsteps769 = require("fairsteps")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #753: x2 .. /4 for a processing pattern's amounts (patternscale.lua)
 patternscale753 = require("patternscale")({ me_report = me_report })
 --- me-network issue #750: the limit of a crafting order (orderlimit.lua)
@@ -1415,6 +1417,7 @@ local function tests_running()
 	craftrows751.running(check)
 	heldfluid754.running(check)
 	feeding752.running(check)
+	fairsteps769.running(check)
 	patternscale753.running(check)
 	orderlimit750.running(check)
 	blockinv543.running(check)
@@ -2434,6 +2437,7 @@ script.on_nth_tick(10, function()
 	craftrows751.tick()
 	heldfluid754.tick()
 	feeding752.tick()
+	fairsteps769.tick()
 	patternscale753.tick()
 	orderlimit750.tick()
 	blockinv543.tick()
@@ -5374,6 +5378,7 @@ script.on_init(function()
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(orderlimit750.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(feeding752.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(fairsteps769.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end

@@ -2821,6 +2821,7 @@ end
 --- the job's step makes anyway. Returns true when it topped up.
 function M.top_up(job, net, lease, step, s)
 	if step.issued >= step.runs then return false end
+	if lease.release then return false end              -- (issue #769: its machine goes to a step that waits for one)
 	local m = lease.machine
 	local map = lease.fluid
 	local fluid_in = map ~= nil and map.inputs ~= nil and #map.inputs > 0
@@ -2997,6 +2998,41 @@ local function job_step(s, job, work)
 
 	local progress = false
 
+	--- Issue #769: a step that found no machine at the last visit (`job.starve`, its index) while another step holds two
+	--- or more machines more than it, among them one it could use: one such lease is not topped up any more
+	--- (`lease.release`), runs out and ends, and the passes below start at the waiting step, which takes the machine and
+	--- keeps it by its own top-ups. So steps that share machines end up with shares that differ by one at most, and every
+	--- machine stays topped up. (M.SHARE: scratch tables outside `storage`, read only within this call.)
+	local first_step = 1
+	local starve = not job.closing and job.starve and job.steps[job.starve]
+	if starve and starve.issued < starve.runs then
+		first_step = job.starve
+		M.SHARE = M.SHARE or { stamp = 0, n = {}, at = {}, unit = {} }
+		local sh = M.SHARE
+		sh.stamp = sh.stamp + 1
+		local stamp = sh.stamp
+		for _, l in ipairs(job.leases) do
+			if sh.at[l.step] ~= stamp then sh.at[l.step], sh.n[l.step] = stamp, 0 end
+			sh.n[l.step] = sh.n[l.step] + 1
+		end
+		local mine = sh.at[job.starve] == stamp and sh.n[job.starve] or 0
+		local list = (ensure_patterns(s)[net.id] or NO_PATTERNS).targets[starve.pid]
+		for _, tg in pairs(list or {}) do sh.unit[tg.unit] = stamp end
+		local best, best_n
+		for _, l in ipairs(job.leases) do
+			if l.release then
+				best = nil                                -- (one is ending already: wait for it)
+				break
+			end
+			local n = sh.n[l.step]
+			if l.step ~= job.starve and n >= mine + 2 and sh.unit[l.unit] == stamp and (not best_n or n > best_n) then
+				best, best_n = l, n
+			end
+		end
+		if best then best.release = true end
+	end
+	job.starve = nil
+
 	--- 1) collect finished machines
 	for _, real in pairs(shallow(job.leases)) do
 		if work.ops > 0 then
@@ -3045,67 +3081,107 @@ local function job_step(s, job, work)
 		return
 	end
 
-	--- 3) hand out work in plan order
+	--- 3) hand out work. Issue #769: in passes over the plan's steps, one hand-over per step and pass, as long as a pass
+	--- handed something out and operations are left. Before, each step took every machine it could before the next step
+	--- was looked at: steps that share machines (iron and copper cast in the same foundries, cable and circuits made by the
+	--- same assemblers) then ran one after the other, and the end product came only when everything before it was handed
+	--- out. A step that could not hand out once is not asked again in this visit (the search for a machine is the cost).
 	local waiting
 	local targets_of = (ensure_patterns(s)[net.id] or NO_PATTERNS).targets
-	for i, step in ipairs(job.steps) do
-		local ingredients, products = step_ingredients(step), step_products(step)
-		local targets = targets_of[step.pid] or {}
-		while work.ops > 0 and step.issued < step.runs do
-			local batch = step.runs - step.issued                     -- (issue #557: the machine's share follows below)
-			for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
-				local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
-				batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
-				if ing.type == "item" then
-					local size = stack_size_of(ing.name)
-					batch = math.min(batch, size and math.floor(size / per) or 0)
-				end
-			end
-			if batch <= 0 then waiting = waiting or "ingredients" break end
-			local machine, mode, map, chest
-			if step.kind == "crafting" then
-				machine, map, chest = find_crafter(s, net, job, step, targets)   -- (issue #429: its target entry, or "locked")
-				mode = "craft"
-			else
-				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
-			end
-			if not machine then waiting = waiting or chest or "machine" break end
-			batch = math.min(batch, mode == "chest" and MAX_BATCH or M.machine_batch(machine, step))   -- (issue #557)
-			if mode ~= "chest" then
-				for _, p in pairs(products) do        -- the products must fit into the output slot
-					if p.type == "item" then
-						local per = p.amount or p.amount_max
-						local size = stack_size_of(p.name)
-						if size and per > 0 then batch = math.min(batch, math.max(1, math.floor(size / per))) end
+	--- (no closure and no table per visit: a job is stepped every 20 ticks. M.CLOSED notes the steps that could not hand
+	--- out in this visit by a stamp of the visit, kept outside `storage`: it is only compared within one call.)
+	M.CLOSED = M.CLOSED or { stamp = 0 }
+	local closed = M.CLOSED
+	closed.stamp = closed.stamp + 1
+	local stamp, any = closed.stamp, true
+	local steps_n = #job.steps
+	local starve_held
+	while any and work.ops > 0 do
+		any = false
+		for k = 0, steps_n - 1 do
+			local i = (first_step - 1 + k) % steps_n + 1       -- (issue #769: the step that waited for a machine first)
+			local step = job.steps[i]
+			if work.ops <= 0 then break end
+			if step.issued < step.runs and closed[i] ~= stamp then
+				--- one hand-over of step `i`; it leaves the block early when it has nothing to hand out or no machine (the
+				--- reason into `waiting`)
+				local handed = false
+				repeat
+					local ingredients, products = step_ingredients(step), step_products(step)
+					local targets = targets_of[step.pid] or {}
+					local batch = step.runs - step.issued                     -- (issue #557: the machine's share follows below)
+					for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
+						local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
+						batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
+						if ing.type == "item" then
+							local size = stack_size_of(ing.name)
+							batch = math.min(batch, size and math.floor(size / per) or 0)
+						end
 					end
-				end
-				batch = fluid_batch_limit(map, batch)
-				if batch <= 0 then waiting = waiting or "machine" break end
+					if batch <= 0 then waiting = waiting or "ingredients" break end
+					local machine, mode, map, chest
+					if step.kind == "crafting" then
+						machine, map, chest = find_crafter(s, net, job, step, targets)   -- (issue #429: its target entry, or "locked")
+						mode = "craft"
+					else
+						machine, mode, map, chest = find_pusher(s, net, job, step, targets)
+					end
+					if not machine then
+						--- (no machine at all, not a lock or a blocking chest: the step may get one of another step's. Of the
+						--- steps that wait, the one with the fewest machines is noted: the first one in plan order usually
+						--- has its share already and only wants more.)
+						if not chest then
+							local held = 0
+							for _, l in ipairs(job.leases) do if l.step == i then held = held + 1 end end
+							if not starve_held or held < starve_held then job.starve, starve_held = i, held end
+						end
+						waiting = waiting or chest or "machine"
+						break
+					end
+					batch = math.min(batch, mode == "chest" and MAX_BATCH or M.machine_batch(machine, step))   -- (issue #557)
+					if mode ~= "chest" then
+						for _, pr in pairs(products) do        -- the products must fit into the output slot
+							if pr.type == "item" then
+								local per = pr.amount or pr.amount_max
+								local size = stack_size_of(pr.name)
+								if size and per > 0 then batch = math.min(batch, math.max(1, math.floor(size / per))) end
+							end
+						end
+						batch = fluid_batch_limit(map, batch)
+						if batch <= 0 then waiting = waiting or "machine" break end
+					end
+					local ok
+					if mode == "chest" then                        -- a full chest (the line is backed up): one run, else wait
+						local runs = batch
+						ok = push_chest(s, job, i, machine, batch)
+						if not ok and batch > 1 then
+							runs = 1
+							ok = push_chest(s, job, i, machine, 1)
+						end
+						if ok then EXT.pushed(s, chest, step.pid, step.def, runs) end   -- (issues #335, #346: smart blocking, the lock)
+					else
+						collect_output(job, net, machine, map)
+						ok = start_lease(s, job, i, machine, batch, map)
+						--- (issue #752: the lease names the provider it came from, for the top-up's look at its lock; every kind of step
+						--- is stepped early when its machine runs out before the next step)
+						if ok then job.leases[#job.leases].prov = chest and chest.prov or nil end
+						if ok then M.note_early(job, machine, step, batch) end                              -- (issue #557)
+						if not ok and step.kind == "processing" then reject(job, machine.unit_number, step.pid) end
+						if ok then EXT.handed(s, chest) end              -- (issue #429: a pulse lock after a hand-over into a machine)
+					end
+					if not ok then waiting = waiting or "machine" break end
+					work.ops = work.ops - 1
+					progress = true
+					handed = true
+				until true
+				if handed then any = true else closed[i] = stamp end
 			end
-			local ok
-			if mode == "chest" then                        -- a full chest (the line is backed up): one run, else wait
-				local runs = batch
-				ok = push_chest(s, job, i, machine, batch)
-				if not ok and batch > 1 then
-					runs = 1
-					ok = push_chest(s, job, i, machine, 1)
-				end
-				if ok then EXT.pushed(s, chest, step.pid, step.def, runs) end   -- (issues #335, #346: smart blocking, the lock)
-			else
-				collect_output(job, net, machine, map)
-				ok = start_lease(s, job, i, machine, batch, map)
-				--- (issue #752: the lease names the provider it came from, for the top-up's look at its lock; every kind of step
-				--- is stepped early when its machine runs out before the next step)
-				if ok then job.leases[#job.leases].prov = chest and chest.prov or nil end
-				if ok then M.note_early(job, machine, step, batch) end                              -- (issue #557)
-				if not ok and step.kind == "processing" then reject(job, machine.unit_number, step.pid) end
-				if ok then EXT.handed(s, chest) end              -- (issue #429: a pulse lock after a hand-over into a machine)
-			end
-			if not ok then waiting = waiting or "machine" break end
-			work.ops = work.ops - 1
-			progress = true
 		end
-		if step.issued < step.runs and not waiting then waiting = "machine" end
+	end
+	if not waiting then
+		for _, step in ipairs(job.steps) do
+			if step.issued < step.runs then waiting = "machine" break end
+		end
 	end
 
 	--- 4) done?
