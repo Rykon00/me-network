@@ -1292,6 +1292,7 @@ RUNTIME_TESTS = (
     ("WINSOUND", "ME window sounds (issue #545)"),
     ("BOOKCURSOR", "a blueprint book in the cursor (issue #747)"),
     ("MODULECHARGE", "ME Wireless Module charged in the grid (issue #748)"),
+    ("PLATFORMHUB", "ME windows on a space platform (issue #749)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),

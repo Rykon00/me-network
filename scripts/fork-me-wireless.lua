@@ -179,7 +179,7 @@ end
 
 --- the player's first Wireless ME Terminal stack in their inventory (a linked one first), or nil
 local function item_of(player)
-	local inv = G.player_inventory(player)
+	local inv = G.own_inventory(player)               -- (the player's own, never a platform hub's: issue #749)
 	if not inv then return nil end
 	local first
 	for i = 1, #inv do

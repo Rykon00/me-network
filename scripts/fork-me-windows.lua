@@ -3030,7 +3030,7 @@ remote.add_interface("gregtorio-me-gui", {
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
 			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
-			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
+			can_reach_entity = function() return true end, force = game.forces.player, surface = spec.surface or game.surfaces[1],
 			position = { x = 0, y = 0 }, cursor_stack = spec.cursor }          -- (issue #677: `cursor`, a LuaItemStack)
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
@@ -3042,6 +3042,7 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	stand_in_inventory = function(name) return G.player_inventory(stand_ins[name]) end,
 	stand_in_hand = function(name) return G.hand(stand_ins[name]) end,
+	stand_in_hub = function(name) return G.platform_hub(stand_ins[name]) end,           -- (issue #749)
 	stand_in_drop_buffer = function(name) return G.drop_buffer(stand_ins[name]) end,    -- (issue #542)
 	parked_count = function(player) return G.parked_count(player) end,                  -- (a real player's, issue #542)
 	stand_in_give_back = function(name, stack, entity) G.give_back(stand_ins[name], stack, entity) end,
@@ -3055,7 +3056,9 @@ remote.add_interface("gregtorio-me-gui", {
 		local sp = stand_ins[name]
 		local frame = G.open_window(sp, window, "devcheck", { unit = unit })
 		local el = G.find(frame, "fork_me_inv")
+		local title, help = G.find(frame, "fork_me_pane_title"), G.find(frame, "fork_me_remote_help")
 		return { open = sp.gui.screen.fork_me_window == frame, opened = sp.opened == frame,
+			pane_title = title and title.caption and title.caption[1], pane_help = help and help.caption and help.caption[1],   -- (issue #749)
 			inventory_bound = el ~= nil and el.inventory == G.player_inventory(sp),
 			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
 	end,
