@@ -2,10 +2,11 @@
 --- rows on every screen; it has up to 8 now, by the player's screen (remote gregtorio-me-terminal craft_rows, the height in
 --- GUI pixels = screen height over UI scale):
 --- * 1080p at 100 % and at 125 %: 8 rows; 1440p: 8 (never more);
---- * 720 GUI pixels (1280 x 720 at 100 %, 1080p at 150 %): 6 rows;
+--- * 720 GUI pixels (1280 x 720 at 100 %, 1080p at 150 %): 5 rows (issue #770: 6 before, with too little kept for the
+---   rest of the window);
 --- * a very small screen (600 pixels, 1080p at 200 %): the 4 rows it had, never fewer.
 --- And the window itself: an ME Terminal opened for a stand-in player with a 1080p screen has the grid's scroll pane at
---- 8 * 40 + 8 pixels, with a 720p screen at 6 * 40 + 8; the storage tab's grid keeps its 9 rows.
+--- 8 * 40 + 8 pixels, with a 720p screen at 5 * 40 + 8; the storage tab's grid keeps its 9 rows.
 --- Loaded by control.lua: require("craftrows")(H) returns { setup, tick, running }.
 
 local GUI, TERM = "gregtorio-me-gui", "gregtorio-me-terminal"
@@ -25,7 +26,7 @@ return function(H)
 		local function finish(note) me_report("CRAFTROWS", "rows of the craftable grid (issue #751)", problems, note) end
 		if not remote.interfaces[TERM].craft_rows then return finish("nothing to check: a version before #751") end
 		local function rows(height, scale) return remote.call(TERM, "craft_rows", height, scale) end
-		local cases = { { 1080, 1, 8 }, { 1080, 1.25, 8 }, { 1440, 1, 8 }, { 720, 1, 6 }, { 1080, 1.5, 6 }, { 600, 1, 4 }, { 1080, 2, 4 } }
+		local cases = { { 1080, 1, 8 }, { 1080, 1.25, 8 }, { 1440, 1, 8 }, { 720, 1, 5 }, { 1080, 1.5, 5 }, { 600, 1, 4 }, { 1080, 2, 4 } }
 		local got = {}
 		for _, c in ipairs(cases) do
 			local r = rows(c[1], c[2])
@@ -42,7 +43,7 @@ return function(H)
 		if term then
 			local g = function(fn, ...) return remote.call(GUI, fn, ...) end
 			local inv = game.create_inventory(10)
-			for _, c in ipairs({ { "hd", 1080, 8 }, { "small", 720, 6 } }) do
+			for _, c in ipairs({ { "hd", 1080, 8 }, { "small", 720, 5 } }) do
 				local name = "craftrows-" .. c[1]
 				g("stand_in", name, { main = inv, index = c[2] == 1080 and 9421 or 9422, gui = true, screen = { height = c[2], scale = 1 } })
 				local ok, err = pcall(g, "stand_in_open_entity", name, term)
