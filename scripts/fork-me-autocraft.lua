@@ -67,9 +67,16 @@ local KEEP_FINISHED_TICKS = 5 * 60 * 60
 local MAX_FINISHED = 12
 local MAX_PLAN_NODES = 3000
 local MAX_DEPTH = 40
-local MAX_AMOUNT = 100000       -- items per job
-local MAX_FLUID_AMOUNT = 10000000 -- fluid units per job
+--- The most one order may ask for (issue #750; 100 000 items and 10 000 000 fluid units before). Nothing in the planner
+--- or in a job depends on the amount: the plan is arithmetic over the patterns (its cost follows their number, not the
+--- runs), a batch for a machine is at most a stack, and a merged job (issue #418) could pass the old limit already. What
+--- limits a job is its Crafting CPU's bytes ("cpu-too-small"), as in AE2. The cap that remains is the largest 32 bit
+--- number: a circuit signal carries no more (the circuit interface's orders), and the bytes of a job of that size with
+--- any real ingredient ratio stay below 2^53, where a Lua number still counts exactly (the Singularity CPU's size).
+local MAX_AMOUNT = 2147483647       -- items per order
+local MAX_FLUID_AMOUNT = 2147483647 -- fluid units per order
 M.MAX_AMOUNT, M.MAX_FLUID_AMOUNT = MAX_AMOUNT, MAX_FLUID_AMOUNT
+M.MAX_TEXT = "2,147,483,647"        -- the limit as the messages name it
 --- (issue #352: every quality is planned and crafted; an item key carries its quality, "name@rare", normal the plain name)
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6

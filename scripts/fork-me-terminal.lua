@@ -339,6 +339,11 @@ function M.craft_preview(terminal, key, amount)
 	local total, free = autocraft.cpu_summary(net)
 	local out = { ok = false, cpus = total, free = free, reserve = {}, missing = {}, loops = {}, runs = 0, steps = 0 }
 	amount = math.floor(tonumber(amount) or 0)
+	--- (issue #750: the limit of an order shows in the plan line with its number, before the Craft button is pressed)
+	if amount > (autocraft.is_fluid(key) and autocraft.MAX_FLUID_AMOUNT or autocraft.MAX_AMOUNT) then
+		out.reason = "too-many"
+		return out
+	end
 	local plan = amount >= 1 and autocraft.plan(net, key, amount) or nil
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
@@ -924,6 +929,7 @@ local function refresh_crafting(st, frame, net, index)
 	if st.plan_shown == psig then return end
 	st.plan_shown = psig
 	if p.reason == "bad-amount" then plan_label.caption = { "fork-me-craft.bad-amount" }
+	elseif p.reason == "too-many" then plan_label.caption = { "fork-me-craft.error-too-many", autocraft.MAX_TEXT }
 	elseif p.reason == "no-cpu" then plan_label.caption = { "fork-me-craft.no-cpu" }
 	elseif p.reason == "no-pattern" then plan_label.caption = { "fork-me-craft.error-no-pattern" }
 	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" or p.reason == "cpu-not-allowed" then
@@ -1346,7 +1352,7 @@ G.on("term_craft", function(event, player)
 	elseif why == "cpu-too-small" or why == "no-free-cpu" or why == "cpu-not-allowed" then
 		player.print({ "fork-me-craft.error-" .. why, G.fmt(plan.bytes), G.fmt(plan.biggest or 0) })
 	else
-		player.print({ "fork-me-craft.error-" .. why })
+		player.print({ "fork-me-craft.error-" .. why, autocraft.MAX_TEXT })     -- (issue #750: "too-many" names the limit)
 	end
 	M.refresh(player)
 end)

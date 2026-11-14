@@ -1294,6 +1294,7 @@ RUNTIME_TESTS = (
     ("MODULECHARGE", "ME Wireless Module charged in the grid (issue #748)"),
     ("PLATFORMHUB", "ME windows on a space platform (issue #749)"),
     ("CRAFTROWS", "rows of the craftable grid (issue #751)"),
+    ("ORDERLIMIT", "the limit of a crafting order (issue #750)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),

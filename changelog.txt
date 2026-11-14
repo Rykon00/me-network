@@ -2,6 +2,7 @@
 Version: 0.7.1
   Changes:
     - ME Terminal and Wireless ME Terminal, Crafting tab: the grid of craftable items shows up to 8 rows instead of 4 (issue #751, asked for by Dekei), so finding a pattern takes less scrolling. On a small screen or a large UI scale it shows fewer (6 rows at 720 pixels of height, never fewer than 4) so the window still fits with the plan below it.
+    - Autocrafting: one order may ask for up to 2,147,483,647 items or fluid units (issue #750, reported by Dekei); it was 100,000 items and 10,000,000 fluid units. What limits a job is the size of its Crafting CPU, as in AE2. An amount above the limit is refused in the plan line of the Crafting tab before you press Craft, and the message names the limit; so do the status lines of the ME Level Maintainer and the Crafting Card.
   Bugfixes:
     - Picking up an empty blueprint book, or a book whose blueprints were taken out, stopped the game with "Index out of inventory bounds" (issue #747, reported by Dekei). The same happened with such a book inside another book.
     - The ME Wireless Terminal Module in an armour's grid is now charged by the personal batteries too (issue #748, reported by Dekei). Until now only a generator in the grid (solar panel, reactor) charged it, and with the generators' power used up elsewhere it stayed empty next to full batteries. It takes up to 2 MW as before, and nothing draws energy back out of it.
