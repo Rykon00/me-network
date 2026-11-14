@@ -1512,6 +1512,25 @@ function M.queue()
 	return s and s.q, s and #s.list or 0
 end
 
+--- The logistic interface `source` was moved to `destination` (scripts/fork-me-move.lua): its cards go with it. What its
+--- three chests hold was cloned with them and the destination took the cloned chests over (M.on_built), so the source's
+--- chests are emptied here: spilled at the old place, their contents would be there twice.
+function M.on_moved(source, destination)
+	local a, b = rec_of(source), rec_of(destination)
+	if not (a and b) or a == b then return end
+	cards.move_cards(source, destination)
+	if a.cjobs or a.cretry then                                -- (issue #704: the jobs its Crafting Card started, as the ME Interface's)
+		b.cjobs, b.cretry, b.cstat = a.cjobs, a.cretry, a.cstat
+		a.cjobs, a.cretry = nil, nil
+	end
+	for field in pairs(CHESTS) do
+		local c = a[field]
+		if c and c.valid then
+			for _, inv in ipairs({ c.get_inventory(CHEST), c.get_inventory(TRASH) }) do inv.clear() end
+		end
+	end
+end
+
 remote.add_interface("gregtorio-me-logistic-interface", {
 	info = function(entity) return M.info(entity) end,
 	set_row = function(entity, tab, i, key, amount) return M.set_row(entity, tab, i, key, amount) end,

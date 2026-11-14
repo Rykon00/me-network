@@ -161,8 +161,8 @@ function M.set_item_data(stack, d)
 	t[TAG] = { link = d.link, energy = math.max(0, math.min(numbers().item_buffer, d.energy or 0)) }
 	stack.tags = t
 	local ctrl = controller_of(d.link)
-	stack.custom_description = { "", ctrl and { "fork-me-wireless.item-linked", string.format("[gps=%d,%d,%s]",
-		math.floor(ctrl.position.x), math.floor(ctrl.position.y), ctrl.surface.name) } or { "fork-me-wireless.item-unlinked" },
+	stack.custom_description = { "", ctrl and { "fork-me-wireless.item-linked", N.place.gps(ctrl.position, ctrl.surface) }
+		or { "fork-me-wireless.item-unlinked" },
 		"\n", { "fork-me-wireless.item-charge", math.floor(100 * t[TAG].energy / numbers().item_buffer) } }
 end
 
@@ -686,6 +686,21 @@ G.window("charger", { open = open_charger, refresh = function(player, frame) ret
 --------------------------------------------------------------------------------
 --- the remote interface (the runtime test: the functions the hotkey, the clicks and the steps call)
 --------------------------------------------------------------------------------
+
+--- The access point or charger `source` was moved to `destination` (scripts/fork-me-move.lua): the boosters, or the
+--- terminal in the charger, go with it
+function M.on_moved(source, destination)
+	cards.move_cards(source, destination)
+	if source.name == CHARGER and destination.name == CHARGER then
+		local s = state()
+		local a = s.chargers[source.unit_number]
+		if a and a.inv and a.inv.valid then
+			local b = charger_rec(destination)
+			a.inv, b.inv = b.inv, a.inv
+			b.charging, b.last = a.charging, a.last
+		end
+	end
+end
 
 remote.add_interface("gregtorio-me-wireless", {
 	--- issue #603, the refill (scripts/fork-me-wireless-refill.lua): a character without a player as a record of its queue,

@@ -25,19 +25,17 @@ local ICON_FORK = ME.icons .. "fork/"
 
 local UNITS_PER_BYTE = 8
 local FLUID_TYPES = 18
-local OLD_CELLS_PER_DRIVE = 4
-
---- cell tier -> "k" (the extra item of an old 256k fluid drive item is given back if that item exists)
+--- cell tier -> "k"
 local CELLS = {
 	{ tier = "1k",   k = 1 },
 	{ tier = "4k",   k = 4 },
 	{ tier = "16k",  k = 16 },
 	{ tier = "64k",  k = 64 },
-	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
-	--- issue #414: the tiers above 256k (GT New Horizons' AE2 Fluid Crafting has them too), no old fluid drive item
-	{ tier = "1024k", k = 1024, new = true },
-	{ tier = "4096k", k = 4096, new = true },
-	{ tier = "16384k", k = 16384, new = true },
+	{ tier = "256k", k = 256 },
+	--- issue #414: the tiers above 256k (GT New Horizons' AE2 Fluid Crafting has them too)
+	{ tier = "1024k", k = 1024 },
+	{ tier = "4096k", k = 4096 },
+	{ tier = "16384k", k = 16384 },
 }
 
 local INTERFACE_VOLUME = 5000                   -- each fluid side of the ME Interface (the old fluid interface's tank)
@@ -58,14 +56,13 @@ local UNIFIED_ITEM = { ["me-fluid-interface"] = "me-interface", ["me-fluid-impor
 
 
 --------------------------------------------------------------------------------
---- FLUID STORAGE CELLS (items with tags) AND THE OLD FLUID DRIVE ITEMS (hidden)
+--- FLUID STORAGE CELLS (items with tags)
 --------------------------------------------------------------------------------
 
 local net_data = data.raw["mod-data"]["fork-me-network"].data
 
 for i, c in ipairs(CELLS) do
 	local cell = "me-" .. c.tier .. "-fluid-storage-cell"
-	local drive = "me-fluid-drive-" .. c.tier
 	local order = string.format("%02d", i)
 
 	--- cell = storage housing + storage component + pump; an item with tags (a recycler would void the fluid)
@@ -92,25 +89,6 @@ for i, c in ipairs(CELLS) do
 		per_byte = UNITS_PER_BYTE }
 	item.localised_description = { "item-description.fork-me-fluid-storage-cell", c.tier, tostring(bytes),
 		tostring(FLUID_TYPES), tostring((bytes - per_type) * UNITS_PER_BYTE) }
-	if not c.new then                                 -- (issue #414: no old fluid drive item of the new tiers)
-		--- the old fluid drive item (chassis + four cells, fluid in its tags): no recipe any more, hidden; placing
-		--- one builds an ME Drive with its four fluid cells holding its fluid (issue #146: kept, 0.5.0 left them as they were)
-		ME.add_item{
-			type = "item-with-tags",
-			name = drive,
-			icon = ICON_FORK .. drive .. ".png",
-			icon_size = 32,
-			subgroup = "fork-me-fluid-drives",
-			order = "z" .. order,
-			stack_size = 10,
-			place_result = "me-drive",
-			hidden = true,
-			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-			recipe = false,
-		}
-		net_data.legacy_drives[drive] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra, fluid = true,
-			fluid_tag = "fork_me_fluids" }
-	end
 end
 
 

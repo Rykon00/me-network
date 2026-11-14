@@ -235,13 +235,21 @@ M.ACCELERATION_SLOTS = 5          -- AE2: a Molecular Assembler takes up to 5 ac
 --- the ME Molecular Assembler: a copy of `base` for item recipes only (no fluid boxes) with its own graphics. Since issue
 --- #131 it is one tile (AE2's is one block), whatever size `base` has: the boxes, the picture and everything the copy would
 --- inherit that is laid out for a bigger machine are set here, so every caller gets the same block.
+--- Issue #711: `def.name` makes a second assembler of the same kind (default "me-molecular-assembler"; the ME Space Molecular
+--- Assembler of prototypes/compat/space-exploration-early.lua): the same block under another name, with `def.tint` over its
+--- pictures and icon and `def.collision_mask` where it may stand. Every name made here is in M.assemblers (data-final-fixes.lua
+--- keeps the Acceleration Cards to them); the runtime takes it as the kind "assembler" by its name (scripts/fork-me-network.lua).
+M.assemblers = M.assemblers or {}
 function M.make_molecular_assembler(def)
+	local name = def.name or "me-molecular-assembler"
 	local assembler = table.deepcopy(data.raw["assembling-machine"][def.base])
-	assembler.name = "me-molecular-assembler"
+	assembler.name = name
 	assembler.icon = M.hd_icons .. "me-molecular-assembler.png"
 	assembler.icon_size = 64
-	assembler.icons = nil
-	assembler.minable = { mining_time = 0.5, result = "me-molecular-assembler" }
+	assembler.icons = def.tint and { { icon = assembler.icon, icon_size = 64, tint = def.tint } } or nil
+	if def.tint then assembler.icon = nil end
+	assembler.minable = { mining_time = 0.5, result = name }
+	M.assemblers[name] = true
 	assembler.fast_replaceable_group = nil
 	assembler.next_upgrade = nil
 	assembler.crafting_categories = def.crafting_categories
@@ -266,11 +274,11 @@ function M.make_molecular_assembler(def)
 	--- (Space Age) is not kept: it is a picture of the base's 3x3 body.
 	assembler.graphics_set = {
 		idle_animation = { layers = { {
-			filename = M.hd_entity_path .. "me-molecular-assembler-idle.png",
+			filename = M.hd_entity_path .. "me-molecular-assembler-idle.png", tint = def.tint,
 			width = 64, height = 64, scale = 0.5, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
 		} } },
 		animation = { layers = { {
-			filename = M.hd_entity_path .. "me-molecular-assembler-working.png",
+			filename = M.hd_entity_path .. "me-molecular-assembler-working.png", tint = def.tint,
 			width = 64, height = 64, scale = 0.5, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
 		} } },
 	}
@@ -291,8 +299,13 @@ function M.make_molecular_assembler(def)
 	assembler.corpse = "small-remnants"
 	assembler.dying_explosion = "medium-explosion"
 	assembler.water_reflection = nil
-	assembler.localised_description = { "entity-description.me-molecular-assembler" }
-	data.raw["assembling-machine"]["me-molecular-assembler"] = nil
+	assembler.localised_description = { "entity-description." .. name }
+	if def.collision_mask then assembler.collision_mask = def.collision_mask end
+	--- (what was said of the assembler before stays when a mod makes it again: Space Exploration's flag that it may stand in
+	--- space, prototypes/compat/space-exploration-early.lua)
+	local before = data.raw["assembling-machine"][name]
+	assembler.se_allow_in_space = before and before.se_allow_in_space or nil
+	data.raw["assembling-machine"][name] = nil
 	data:extend({ assembler })
 end
 

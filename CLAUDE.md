@@ -58,6 +58,23 @@
 - The hand-over (`scripts/fork-me-handover.lua`): the table list and the fingerprint function must stay equal to
   Gregtorio's `scripts/fork-me-handover.lua`. A new storage table that a Gregtorio save could hold cannot appear any
   more (Gregtorio no longer has ME code), so the list is fixed.
+- **Space Exploration** (issue #703, `docs/API.md` "Space Exploration"): `prototypes/compat/space-exploration-early.lua`
+  (always with it: the technologies out of its procedural pass, every entity allowed in space; a new technology is covered
+  through `ME_NETWORK.technologies`, a new entity through its name `me-...` or its item; issue #711: the ME Space Molecular
+  Assembler is made there too, a second name of `ME_NETWORK.make_molecular_assembler` and the same runtime kind "assembler") and
+  `prototypes/compat/space-exploration.lua` (recipes and tiers, the startup setting). A block that holds items in script
+  storage (cells, patterns, cards, slot inventories) needs a `M.on_moved(source, destination)` in its module and its place
+  in `move.hooks` of `control.lua` (`scripts/fork-me-move.lua`: a clone whose source a script destroys in the same tick is a
+  move, Space Exploration's spaceships), or a flight spills what it holds; a table that names a block by its unit number and must survive a move (a job's
+  owner, a link to a job) is carried in that `on_moved` too (issue #704: `M.carry_links` of `fork-me-autocraft.lua` for the
+  jobs' side); `devcheck.py se` tests it (and `devcheck.py launch`, issue #706, with a real launch and landing through Space
+  Exploration's own functions on a headless server, pinned to its version 0.7.64) and
+  `check --base-only --with-mod space-exploration` the data stage (also with `--with-mod Krastorio2`); the general suite
+  runs with it as well (`all --with-mod space-exploration`, issue #705).
+- A surface is named for the player through `N.place.name(surface)` and a map marker of a message through
+  `N.place.gps(position, surface)` (`scripts/fork-me-place.lua`, issue #713: Space Exploration's zone names), never through
+  `surface.name` in a caption or a message. A call of another mod's remote interface is always guarded: the mod active, the
+  interface and the function there, `pcall`, the answer checked.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:
@@ -66,9 +83,9 @@
   `check --base-only --with-mod Krastorio2` as well, and `all --with-mod Krastorio2-spaced-out` (issue #596, with Space Age). `runtime` also saves the test map at tick 500 through a headless
   server (RCON on a free port of 127.0.0.1 per run, issue #612) and checks that the schedule after the load is the unbroken run's: anything that
   decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
-  without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
-  unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
-  older version with the working copy (for changes to saved state or to prototypes that saves hold). Since issue #487
+  without Space Age; `migrate --from-ref v0.6.0` (every kind of block, loaded without `on_configuration_changed` while
+  the version number is the same; `--bump` with it) loads a save of an older version with the working copy (since issue
+  #690 a save from before 0.6.0 is refused: `--from-ref v0.5.11` checks the refusal) (for changes to saved state or to prototypes that saves hold). Since issue #487
   the mod is for Factorio 2.1 (`FACTORIO_VERSION` in `devcheck.py`): a version up to 0.5.5 is for 2.0, so its save is made
   in an unpacked Factorio 2.0 (`migrate --from-ref v0.5.5 --old-factorio DIR`) and `bench --check <2.0 ref>` takes
   `--ref-factorio DIR`; the helper mods run in both (`benchmod/compat.lua`). `check` fails for a prototype key Factorio

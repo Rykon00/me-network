@@ -671,12 +671,12 @@ function M.refresh_qbridge(player, frame, first)
 	local prefix = d.kind == "link" and "fork-me-gui.wlink-status-" or "fork-me-gui.qbridge-status-"   -- (issue #559: a group)
 	local caption = { prefix .. d.status }
 	if d.status == "linked" and p then
-		caption = { prefix .. "linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
+		caption = { prefix .. "linked", p.place or p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
 	elseif d.status == "other-surface" and p then
-		caption = { prefix .. "other-surface", p.surface }
+		caption = { prefix .. "other-surface", p.place or p.surface }
 	end
 	G.find(frame, "fork_me_qb_status").caption = caption
-	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
+	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt_power(d.watts),
 		string.format("%.0f", 100 * (d.buffer > 0 and d.energy / d.buffer or 0)) }
 	local r = G.find(frame, "fork_me_qb_range")
 	if r then
@@ -745,7 +745,7 @@ function M.refresh_p2p(player, frame, first)
 	end
 	local role = G.find(frame, "fork_me_p2p_role")
 	if role then role.switch_state = d.output and "right" or "left" end
-	local at = d.input and { "", d.input.surface, " ", string.format("%.0f", d.input.x), ", ", string.format("%.0f", d.input.y) }
+	local at = d.input and { "", d.input.place or d.input.surface, " ", string.format("%.0f", d.input.x), ", ", string.format("%.0f", d.input.y) }
 	local caption = { "fork-me-gui.p2p-status-" .. d.status }
 	if d.status == "input" then caption = { "fork-me-gui.p2p-status-input", d.outputs or 0, d.bound or 0 }
 	elseif at then caption = { "fork-me-gui.p2p-status-" .. d.status, at } end
@@ -2208,7 +2208,9 @@ end
 G.player_hooks[#G.player_hooks + 1] = hover
 script.on_event(defines.events.on_selected_entity_changed, function(event)
 	local player = game.get_player(event.player_index)
-	if player then hover(player) end
+	if not player then return end
+	hover(player)
+	if N.highlight then N.highlight.on_selected(player) end      -- (issue #699: the network highlighted)
 end)
 
 G.on("if_item", function(event, player, el)

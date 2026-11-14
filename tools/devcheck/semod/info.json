@@ -1,0 +1,12 @@
+{
+  "name": "zz-me-network-devcheck-se",
+  "version": "1.0.0",
+  "title": "ME Network devcheck Space Exploration",
+  "author": "rykon_",
+  "factorio_version": "2.1",
+  "description": "Test helper for tools/devcheck: an ME network on Space Exploration's space tiles, moved between surfaces the way a spaceship is. Not meant for normal play.",
+  "dependencies": [
+    "me-network",
+    "space-exploration"
+  ]
+}

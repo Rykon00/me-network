@@ -5,6 +5,13 @@
 --- still loads with ME Network's own graphics; devcheck fails on such a line.
 
 local OVERRIDES = require("overrides")
+--- ME Network issue #731: prototypes that ME Network makes only with another mod (Space Exploration). Their entries are
+--- left out without the word SKIPPED when the prototype is not there.
+local OPTIONAL = {
+	["assembling-machine/me-space-molecular-assembler"] = true,
+	["item/me-space-molecular-assembler"] = true,
+	["technology/me-space-autocrafting"] = true,
+}
 local OWN = "__me-network__/"
 local MOD = "__me-network-ae2-textures__/"
 
@@ -64,7 +71,9 @@ end
 for key, value in pairs(OVERRIDES) do
 	local kind, name = key:match("^([^/]+)/(.+)$")
 	local proto = kind and data.raw[kind] and data.raw[kind][name]
-	if not proto then
+	if not proto and OPTIONAL[key] then
+		say(key, "ABSENT: a prototype ME Network makes only with another mod, which is not loaded")
+	elseif not proto then
 		say(key, "SKIPPED: no prototype of that type and name")
 	else
 		-- a copy of its own, so a table that ME Network shares between prototypes keeps its files elsewhere

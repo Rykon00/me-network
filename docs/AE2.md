@@ -57,7 +57,8 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network; so do pattern providers
    and ME Molecular Assemblers, issue #560). Corners do not
-   connect. Everything connected is one network. The cable picture shows its connections.
+   connect. Everything connected is one network. The cable picture shows its connections. Hover a cable or a block to
+   see its network around it in purple, as the game shows a pipe system.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (it takes its power from the network).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
@@ -951,6 +952,302 @@ upper tiers come in another order, and the technologies follow it:
 The others are as with Krastorio 2. The ME Quantum Bridge links networks on different planets without a limit; the runtime
 test links a network on one surface with an ME Interface on Vulcanus.
 
+### With Space Exploration
+
+With Space Exploration (issue #703; 0.7.64 for Factorio 2.1; `prototypes/compat/space-exploration.lua`, the startup setting "Space
+Exploration recipes and technologies", not with Gregtorio Continued) every AE2 material whose stand-in has a fitting Space
+Exploration item takes that, with AE2's counts, and the technologies follow its science tiers. The rule is the one of the
+Krastorio 2 compatibility: the processors (electronic circuit, advanced circuit, processing unit), the lamp, the
+combinators and the machines stay, Space Exploration makes them dearer itself (its processing unit comes with the rocket
+science pack). Space Exploration has no quartz and no core item, so certus quartz stays stone and the annihilation and
+formation core the electronic circuit.
+
+| AE2 | Stand-in | With Space Exploration |
+|---|---|---|
+| certus quartz | stone | stone (no quartz in Space Exploration) |
+| glass, quartz glass, quartz fiber | plastic bar | glass (AAI Industry's; also the 3 glass of the ME IO Port and the 4 quartz glass of the ME Quantum Bridge's chamber, which had no stand-in) |
+| fluix crystal, fluix dust | copper cable | copper cable |
+| annihilation core, formation core | electronic circuit | electronic circuit |
+| piston | fast inserter | electric motor (AAI Industry's) |
+| sky stone dust of the 256k component | stone brick | data storage substrate (issue #712; Data cards, space science) |
+| ... of the 1024k, 4096k, 16384k component | stone brick | blank data card (issue #712; the tiers are Space Exploration's Supercomputer 1, 2, 3) |
+| glowstone (64k component, blank pattern) | copper cable | copper cable (before the rocket) |
+| diamond (Advanced Card) | processing unit | processing unit (rocket science in Space Exploration) |
+| dense energy cell (wireless terminal and module) | batteries | batteries |
+| dense energy cell of the Singularity cells | accumulator | space accumulator |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | quantum processor (energy science 3); the bridge also takes a naquium cube (issue #714; deep space science 1) |
+| matter condenser (Singularity cells) | (the bridges) | a naquium tessaract more (issue #709; deep space science 2) |
+| the crafting accelerators | - | 4 holmium cable more in the 4x accelerator; a quantum processor more in the 256x, 1024x and 4096x accelerator |
+
+The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
+AE2, the cards):
+
+| Item | Recipe with Space Exploration |
+|---|---|
+| Fluix Cable | 1 glass, 2 copper cable |
+| ME Interface | 4 iron plate, 2 glass, 2 electronic circuit |
+| ME Chest | 2 glass, 1 ME Terminal, 2 Fluix Cable, 2 iron plate, 1 copper plate |
+| Basic Storage Housing | 2 glass, 3 copper cable, 2 iron plate, 1 copper plate |
+| ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 data storage substrate |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 blank data card |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 naquium tessaract |
+| ME Import Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
+| ME Export Bus | 1 electronic circuit, 2 iron plate, 1 electric motor |
+| ME Storage Bus | 1 ME Interface, 2 electric motor |
+| Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
+| Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
+| ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 quantum processor, 32 Fluix Cable, 4 glass, 1 naquium cube |
+| ME Blank Pattern | 2 glass, 3 copper cable, 1 stone, 2 iron plate, 1 copper plate |
+| ME Molecular Assembler | 4 iron plate, 2 glass, 2 electronic circuit, 1 assembling machine 1 |
+| ME 4x Crafting Accelerator | 4 ME Crafting Co-Processing Unit, 4 holmium cable |
+| ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 quantum processor |
+| ME 1024x Crafting Accelerator | 4 ME 256x Crafting Accelerator, 1 quantum processor |
+| ME 4096x Crafting Accelerator | 4 ME 1024x Crafting Accelerator, 1 quantum processor |
+| ME 1k Fluid Storage Cell | 1 ME 1K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4k Fluid Storage Cell | 1 ME 4K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16k Fluid Storage Cell | 1 ME 16K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 64k Fluid Storage Cell | 1 ME 64K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 256k Fluid Storage Cell | 1 ME 256k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 space accumulator, 1 Basic Storage Housing, 1 pump, 1 naquium tessaract |
+
+The ME Molecular Assembler is made again after Space Exploration's and AAI Industry's changes, from the assembling machine
+2's item categories at that point. It never gets a `space-...` category (the space assembling machine's recipes): Space
+Exploration makes a second, "grounded" prototype of a machine that has one and can stand on land and swaps the two when it
+is built, and the assembler is one entity everywhere.
+
+**The ME Space Molecular Assembler** (issue #711; with Space Exploration, also with the recipes setting off, not with
+Gregtorio Continued) is the assembler for those recipes: the same block (one tile, item recipes only, five Acceleration
+Cards, power through the ME Controller, a member of the network that carries it, served by the ME Pattern Providers next to
+it) with the ME Molecular Assembler's categories, `space-crafting`, the category of Space Exploration's space assembling
+machine (space transport belts and pipes, parts of the first space science packs), and `space-manufacturing`, the space
+manufactory's (issue #729: its recipes without a fluid, 12 of them that fit a pattern in 0.7.64, blank data cards among
+them; a recipe with a fluid needs the real manufactory next to an ME Pattern Provider, the assembler has no fluid
+boxes). Its picture is the assembler's in a
+blue tint. It is made from an ME Molecular Assembler, 2 heat shielding and 4 low density structure, and unlocked by **ME
+Space Autocrafting** (after ME Autocrafting and Space Exploration's Space Assembling, at that technology's cost: 100 × 60 s
+with red, green, blue and rocket science).
+
+Where it stands (issue #729): on **space platform scaffold, space platform plating and spaceship floor**. Like Space
+Exploration's own space machines it cannot be built on a planet. Space Exploration swaps every machine with a `space-...`
+category on a ship for its "grounded" twin when the ship lands on a planet, by making a new entity and removing the old
+one without an event; an ME block is known to its network by its entity, so that swap would take the assembler out of
+the network and leave its Acceleration Cards to chance. The assembler therefore has no twin (its mask has the spaceship
+layer while Space Exploration makes the twins and loses it in ME Network's last data stage), and the rule the twin
+stands for is kept by the network: while the assembler stands **on the ground of a planet or moon** (its ship landed
+there) it is switched off with the status "Works in space only", and on again within a second of the next launch. Its
+cards, its place in the network and a job waiting for it stay as they are. An orbit, an asteroid belt, deep space and a
+ship in flight are space.
+
+#### Technologies with Space Exploration
+
+Space Exploration's order of science is: red, green, blue; the **rocket science pack** (made on Nauvis, before the first
+launch); the **space science pack** (the first one made in orbit); utility and production science (in orbit); the four
+specialist lines 1 to 4 (astronomic and energy science on utility, material and biological science on production); deep
+space science 1 to 4. An ME technology names the packs below its tier and the highest pack of a line, as Space
+Exploration's own technologies do, and gets the Space Exploration technology whose item its recipes take as a
+prerequisite. Counts and times are those of Space Exploration's technologies of the tier (100 × 60 s from rocket science
+on, more for the upper tiers; its packs are dear, its counts small).
+
+Where the tiers come from:
+
+- **ME Network, the cells up to 16k, the level emitter:** untouched. A network is a logistics backbone and starts on
+  Nauvis with red and green science.
+- **64k and fluid storage: blue**, before the rocket. Without Space Exploration ME 64k Storage follows the processing unit;
+  Space Exploration moved that behind rocket science, and no recipe of these two takes one, so the prerequisite is dropped.
+- **Autocrafting, the cards, automation, wireless: rocket science.** Their recipes take processing units (the pattern
+  terminals, the P2P tunnels, the Advanced Card, the advanced level emitter, the wireless module), which stay, so they
+  follow the processing unit. That is still Nauvis: the rocket science pack needs no launch. ME Upgrade Cards, which
+  without Space Exploration costs what ME 64k Storage costs, is its count and time with the rocket science pack.
+- **The storage ladder from 256k: the data line** (issue #712; an ME storage component is data storage). Space
+  Exploration's data line has two materials, the data storage substrate and the blank data card (both from its technology
+  Data cards, space science; the card is made in the space manufactory), and four tiers of the machine that works on data
+  cards, the space supercomputer. The components take those two instead of the cryonite rod and the heavy girder, bearing
+  and composite of the material line (replaced, not a second recipe), and the tiers are the line's own:
+  **256k** after Data cards (space science, the substrate); **1024k** after Supercomputer 1 (space science, blank data
+  cards); **4096k** after Supercomputer 2 (energy science 3); **16384k** after Supercomputer 3 (energy, material and
+  biological science 3). Supercomputer 4 (deep space 3) lies past the Singularity cells and gates nothing. The step from
+  1024k to 4096k is the long one: Supercomputer 2 needs the quantum processor. ME Co-Processing stays at space science.
+- **Quantum crafting and the crafting accelerators: energy science 1; the second accelerators: energy science 3.** The
+  crafting storages take the storage component of their tier, so they need its packs and the energy pack of quantum
+  crafting.
+- **ME Quantum Bridge: deep space science 1** (issue #714; astronomic and energy science 3 before). It joins networks on
+  any two surfaces at once and without a limit, items and fluids, which in Space Exploration is the work of:
+
+  | Space Exploration's way between surfaces | Technology | Tier |
+  |---|---|---|
+  | cargo rocket (launch pad, landing pad), delivery cannon | 500 / 200 × 60 s | rocket science |
+  | space elevator (a planet and its orbit) | 2000 × 60 s | energy 1, astronomic 1, material 2 |
+  | spaceship | 200 × 60 s | astronomic 3 |
+  | arcolink storage (instant, a few slots) | 5000 × 60 s behind Teleportation (10 000 × 60 s) | deep space 4 |
+
+  At astronomic and energy science 3 the bridge came in the same tier as the spaceship, and with it a base needed no
+  freighter from the moment it was researched: one bridge on a planet and one in its orbit replace the elevator, a pair
+  per outpost replaces the ships and the rockets. Space Exploration prices an instant link at deep space 4. **Deep space
+  science 1** is the tier after all four specialist lines are done: rockets, the elevator and ships have carried the base
+  through four science tiers by then, the bridge is still three tiers below the arcolink (and is the stronger link), and it
+  stays one tier below the Singularity cells (deep space 2), which take four bridges. Until then a network is one per
+  surface, and what crosses surfaces crosses them Space Exploration's way, into an ME Storage Bus on a landing pad or an
+  ME Interface. The recipe takes a **naquium cube** (the one the Singularity cells gave up for the tessaract, issue #709),
+  so the technology follows Naquium cube and Quantum processor, 500 × 60 s as the naquium technologies.
+  Its name has none of the words (`teleport`, `dimension`, `stargate`, `portal`) for which Space Exploration puts a
+  technology behind its Teleportation technology and deep space science 4.
+- **Singularity cells and the Singularity crafting storage: deep space science 2** (issue #709). The cells take a **naquium
+  tessaract** (the naquium cube of deep space 1 before) and follow Space Exploration's technology Naquium tessaract, at
+  its cost (500 × 60 s). Deep space 2 rather than 3: the tessaract is a deep space 2 item, and deep space 3 is the naquium
+  processor and Supercomputer 4, which nothing of ME Network takes. The tessaract is folded with arcospheres in Space
+  Exploration's own recipe; the cell's recipe is a plain one that takes the finished tessaract, so there is no arcosphere
+  puzzle in a storage recipe. The ladder stays in step with the data line of the components (issue #712): 16384k at
+  Supercomputer 3 (science 3 of three lines), then the ME Quantum Bridge and the tessaract for the cell that ends it.
+  Space Exploration adds deep space science 1 to every technology with `singularity` in its name; the ME technologies
+  are left out of that pass and set here.
+
+ME Space Autocrafting (the ME Space Molecular Assembler, issue #711) exists only with Space Exploration: 100 × 60 s, red,
+green, blue and rocket science, after ME Autocrafting and Space Assembling.
+
+| Technology | Without Space Exploration | With Space Exploration | Space Exploration prerequisite added |
+|---|---|---|---|
+| ME Network | 300 × 30 s, red, green | the same |  |
+| ME Level Emitter | 200 × 30 s, red, green | the same |  |
+| ME 64k Storage | 400 × 30 s, red to blue | 400 × 30 s, red to blue | Chemical science pack (instead of Processing unit) |
+| ME Fluid Storage | 400 × 30 s, red to blue | 400 × 30 s, red to blue |  |
+| ME Upgrade Cards | ME 64k Storage's | 400 × 30 s, red to blue, rocket | Processing unit |
+| ME Autocrafting | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket | Processing unit |
+| ME Automation, ME Wireless | 500 × 30 s, red to blue | 200 × 60 s, red to blue, rocket |  |
+| ME Wireless Link | 400 × 30 s, red to blue | 100 × 60 s, red to blue, rocket |  |
+| ME 256k Storage | 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space | Space science pack, Data cards (instead of Production science pack) |
+| ME Co-Processing, ME Fluid 256k Storage | 800 / 600 × 30 s, red to production | 100 × 60 s, red to blue, rocket, space |  |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 100 × 60 s, red to blue, rocket, space | Supercomputer 1 (1024k; instead of Utility science pack) |
+| ME 4096k Storage, ME Fluid 4096k Storage | 1200 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 | Supercomputer 2 (4096k) |
+| ME 16384k Storage, ME Fluid 16384k Storage | 1600 × 30 s, red to utility | 300 × 60 s, to space, utility, production, energy 3, material 3, biological 3 | Supercomputer 3 (16384k) |
+| ME Quantum Crafting | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Energy science pack 1 |
+| ME Crafting Accelerators | 1000 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 | Holmium cable |
+| ME Crafting Accelerators 2 | 2500 × 30 s, red to utility | 300 × 60 s, to space, utility, energy 3 | Quantum processor |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 100 × 60 s, to space, utility, energy 1 |  |
+| ME 4096k Crafting Storage | 1600 × 30 s, red to utility | 200 × 60 s, to space, utility, energy 3 |  |
+| ME 16384k Crafting Storage | 2000 × 30 s, red to utility | 300 × 60 s, ME 16384k Storage's packs |  |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 500 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 1 | Quantum processor, Naquium cube |
+| ME Singularity Storage | 2500 × 30 s, red to utility | 500 × 60 s, to space, utility, production, astronomic 4, energy 4, material 4, deep space 2 | Naquium tessaract, Space accumulator (instead of Electric energy accumulators) |
+| ME Singularity Crafting Storage | 3000 × 30 s, red to utility | 500 × 60 s, the same |  |
+
+("to space": red, green, blue, rocket and space science. Space Exploration's postprocess mod drops a prerequisite that
+another one implies, so the technology screen shows fewer arrows than this table has entries.)
+
+#### Space Exploration with Krastorio 2
+
+Space Exploration supports Krastorio 2 with a compatibility of its own, and so does ME Network. The Krastorio 2 file runs
+first, the Space Exploration file on top of it:
+
+- **Recipes:** Krastorio 2's early materials stay (quartz for certus quartz and in the fluix crystal, its glass, the
+  automation core, inserter parts, rare metals for glowstone and the diamond of the Advanced Card, the lithium-sulfur
+  battery of the wireless terminal and module). Where both files name a stand-in of the same recipe, Space Exploration's
+  wins: the components from 256k (data storage substrate and blank data cards instead of imersite powder, imersium
+  plate and the energy control unit), the ME Quantum Bridge (quantum processors instead of AI cores), the Singularity
+  cells (space accumulators and a naquium tessaract instead of lithium-sulfur batteries and a charged matter stabilizer), the
+  second accelerators (a quantum processor instead of an energy control unit).
+- **Technologies:** ME Network keeps Krastorio 2's (250 × 30 s, after silicon processing); every technology from ME 64k
+  Storage on is Space Exploration's of the table above, with the Krastorio 2 prerequisite whose item a recipe still takes
+  (Rare metal processing for ME 64k Storage, Lithium-sulfur battery for ME Wireless). Space Exploration reorders
+  Krastorio 2's upper tiers itself (its matter, advanced and singularity cards come with its own packs), and its tiers are
+  the ones a player of both mods follows.
+
+`devcheck.py check --base-only` is run with Space Exploration, with Krastorio 2 and with both.
+
+#### In space, on spaceships, across surfaces
+
+- **Building in space.** Every ME block can be built on Space Exploration's space platform scaffold, space platform
+  plating and spaceship floor, and nothing is forbidden on land. Space Exploration keeps assembling machines, underground
+  pipes, storage tanks and most chests out of space unless their prototype says `se_allow_in_space`; every entity of this
+  mod says so (`prototypes/compat/space-exploration-early.lua`, also with the recipes setting off).
+- **Power.** An ME network takes its power where its ME Controller stands, from the electric network of that surface: in
+  space from space solar panels or whatever feeds the poles there, like any other machine. The ME Quantum Bridge and the ME
+  Wireless Link draw at their own place.
+- **Spaceships.** Space Exploration flies a spaceship by cloning everything on its floor onto another surface and removing
+  the originals in the same tick, at the launch and again at the landing. For ME Network a clone is a copy with the
+  settings of its source and nothing in it, and a block removed by a script drops what it holds; a block that is cloned
+  and removed in the same tick is therefore taken as moved (`scripts/fork-me-move.lua`): the cells of its drives, ME
+  Chests and ME IO Ports with their contents, the patterns of its providers, every card, the slots of the ME Cell
+  Workbench and the pattern terminals, the view cells of its terminals, a terminal in a charger and what its P2P tunnels
+  carry go to the block at the new place; filters, rows, priorities, frequencies and the other settings are there as for
+  any clone. What the game clones itself arrives with it: the chest of an ME Interface, the fluid in its sides and in an
+  ME Chest, the chests of an ME Logistic Interface. A Wireless ME Terminal linked to the ship's controller stays linked.
+  An ME Logistic Interface and an ME Logistic Storage Bus on a ship work in the logistic network of the ship's roboport
+  wherever it is (issue #707): after a move they find the roboport's network of the new place at their next visit, what
+  the interface's three chests held arrives once, and robots that are in the air during the move finish their deliveries.
+  A crafting job that runs while the ship launches or lands flies along (issue #704): it goes on running on the Crafting
+  CPU at the new place in its mode, the pattern machines keep the work they were given, and the level maintainer, the
+  Crafting Card or the ME Logistic Interface that asked for it still waits for that job. Nothing has to be finished or
+  cancelled before a launch. (A CPU that does not arrive whole, because only a part of it stood on the ship, pauses its
+  job, which then takes the next CPU that fits, as when a CPU is rebuilt.)
+- **Zone names** (issue #713). With Space Exploration every place the mod names a surface says its zone ("Nauvis Orbit",
+  "Calidus Asteroid Belt") or, for a spaceship in flight, the ship's name as Space Exploration shows it, instead of the
+  game's internal name ("nauvis", "spaceship-3"): the ME Interface Terminal's list (each block's position with its
+  place), the status line of the ME Quantum Bridge and the ME Wireless Link (where the other end stands), the ME P2P
+  tunnel's input, `/me-stats`, and after the map marker of every message (a provider that waits for blank patterns, a
+  drive that vanished, "Where is it?", the Wireless ME Terminal's tooltip). The zone comes from Space Exploration's
+  remote interface (`get_zone_from_surface_index`), called only when Space Exploration is active and has that function,
+  inside `pcall`, and kept for 10 seconds per surface (`scripts/fork-me-place.lua`), so a window that refreshes every
+  second asks once in ten. Without Space Exploration, or when the call fails, everything shows the surface's name as
+  before.
+- **Core mining** (issue #710). Space Exploration's core miner gives core fragments without end and drops them on the
+  tile in front of its output, as a mining drill does. Three ways to put it on an ME network:
+  - an **ME Interface on the output tile**: the interface is a chest to the game, the miner fills it directly, and what
+    lies in an interface that is no row of it goes into the network at its next visit (no belt, no inserter);
+  - a chest on the output tile with an **ME Import Bus** (the fragments move into the network) or an **ME Storage Bus**
+    (they stay in the chest and count as network storage);
+  - with several miners, a belt to one chest with a bus, as with any ore.
+
+  **Core fragment processing** (the pulveriser, 20 fragments into up to a dozen products, some of them by chance, some
+  recipes with a fluid):
+  - kept running: an **ME Export Bus** with the fragment as its filter on the pulveriser fills it (set the pulveriser's
+    recipe), and an **ME Storage Bus on the pulveriser** makes its output slots network storage: everything the recipe
+    leaves there shows in the terminal and is taken out of the machine when the network needs it. This storage is to take
+    from only, the network never stores into a machine's output; it works on the machine of core fragment processing
+    alone (a storage bus on another crafting machine is what it was: its fluid boxes, or nothing). An **ME Import Bus** on
+    the pulveriser moves the products into the drives instead. A fluid product or ingredient goes through a second bus on
+    a pipe or tank of the pulveriser, or through pipes.
+  - on demand: an **ME Pattern Provider next to the pulveriser** with a crafting pattern of the fragment recipe (the
+    ME Pattern Terminal encodes it from the recipe). A job for one product runs the recipe as often as its expected yield
+    says, every other product goes into the network.
+
+  **Products that come by chance** (issue #710; a fragment recipe's product at 30 %, any recipe with a probability or a
+  range). The crafting plan counts such a product at its expected yield (amount × probability, a range at its mean) and
+  runs the recipe that often; all the other products of the runs go into the network, as byproducts always did. Chance
+  may give less than expected: when the runs are done and the job has made less of its item than was asked for, it adds
+  the runs the shortfall needs (again at the expected yield), takes their ingredients from the network's stock, and goes
+  on. So the job is done when the requested amount is there; what chance gives beyond it goes into the network. A job
+  ends with less than asked for only when the network has no more of an ingredient for those runs (nothing is crafted
+  for them, the plan is not made again) or after 8 such rounds (a product at a tiny chance must not hold a Crafting CPU
+  for ever; a level maintainer or a Crafting Card asks again). Only the job's own item is topped up this way; a part made
+  on the way that came short is taken from the network's stock as before. A processing pattern is not affected: its
+  rows are amounts every run gives.
+- **Surfaces.** An ME Wireless Access Point reaches players on its own surface only; the ME Wireless Link joins blocks on
+  one surface. The **ME Quantum Bridge** joins two networks on any two surfaces without a limit: a planet and its orbit,
+  an asteroid field, a spaceship in flight (the test links Nauvis with a network in Nauvis Orbit and keeps the link while
+  the ship flies and lands; after a move the pair is linked again in the same tick when both ends have power).
+- **Deleted surfaces.** Before a surface is deleted or cleared the ME blocks on it leave their networks (what they hold
+  goes with the surface, as a chest's contents do). Space Exploration asks before it deletes the surface of a zone ("Delete
+  surface" in its zone list): it is told no while ME blocks stand there.
+- **Space Exploration's containers.** The storage bus, the import and the export bus work with its cargo rocket landing
+  pad (the game's cargo landing pad: a storage bus on it makes what the rockets bring part of the network), its launch
+  pad, its delivery cannon chest and its arcolink storage (a linked container), and with its machines like with any
+  crafting machine.
+- **Many surfaces.** Nothing in the scheduler walks the surfaces or all members per tick: the blocks are visited from
+  queues, whatever surface they stand on (measured with Space Exploration, 50 more surfaces and a moved ship: docs/PERFORMANCE.md, issue #708).
+- **Tested** headless by `devcheck.py se` (`tools/devcheck/semod`): the move is made the way Space Exploration's
+  `scripts/spaceship-clone.lua` makes it; and by `devcheck.py launch` (issue #706): a real spaceship in Nauvis Orbit
+  with an ME network on board, launched and landed on a headless server through Space Exploration's own
+  `Spaceship.launch` and `Spaceship.land_at_position` (Space Exploration 0.7.64). The button of its window is left to a
+  real game.
+
 ### View Cells
 
 AE2's **View Cell** (issue #440, AE2-Unofficial's `ItemViewCell`; technology ME Upgrade Cards, next to the workbench): a list
@@ -1345,7 +1642,7 @@ Tech `me-autocrafting` (needs `me-storage-64k`, Automation 2 and Circuit network
 | **ME Blank Pattern** | cheap item (2 per craft, recipe in **Recipes (standalone)**). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
-| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Since issue #560 a **member of the network that carries it**, like a cable (AE2): providers and assemblers touching each other in any arrangement are one network, without cables in between; no power connection: the ME Controller draws its energy usage while it crafts (with its cards' extra use) and a thirtieth of it while it is idle. While its network does not work it is switched off with a status saying why |
+| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Since issue #560 a **member of the network that carries it**, like a cable (AE2): providers and assemblers touching each other in any arrangement are one network, without cables in between; no power connection: the ME Controller draws its energy usage while it crafts (with its cards' extra use) and a thirtieth of it while it is idle. While its network does not work it is switched off with a status saying why, and with a mark in the world (issue #743): one of the game's alert icons on the block, blinking like the game's alerts: "unplugged" without an ME Controller in its network (also an assembler on its own), "no power" when the ME Controller has none, the warning icon in a controller conflict; the ME Space Molecular Assembler that rests on a planet (Space Exploration) has a steady warning icon. The mark is a render object made when the assembler is switched off and removed when it is switched on |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:

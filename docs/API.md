@@ -25,8 +25,8 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,
   `me-crafting-co-processing-unit`, `me-crafting-monitor` (each with a recipe of the same name; subgroup
   `fork-me-crafting-cpu`); the legacy CPUs `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu`
-  are gone since 0.5.1 (issue #145; still in `ME_NETWORK.removed`, their items migrate to `me-1k-crafting-storage`); hidden: the old drive items of Gregtorio saves (`me-drive-1k` ... and `me-fluid-drive-1k` ...: they place an ME Drive
-  with their cells). The old fluid blocks of issue #3 (`me-fluid-interface`, `me-fluid-import-bus`, `me-fluid-export-bus`,
+  are gone since 0.5.1 (issue #145; still in `ME_NETWORK.removed`, their items migrate to `me-1k-crafting-storage`). The old drive items of Gregtorio saves (`me-drive-1k` ... and `me-fluid-drive-1k` ...) are gone since 0.7.0 (issue #690; 0.6.0 replaced them in saves by
+  ME Drives with their cells, issue #689; they are in `replaced_items` as `me-drive`). The old fluid blocks of issue #3 (`me-fluid-interface`, `me-fluid-import-bus`, `me-fluid-export-bus`,
   `me-fluid-storage-bus`) have no prototype since 0.5.1 (issue #146); a stray item becomes the unified one.
 - `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four and the three legacy CPUs (0.3.0;
   since 0.5.1 they map to `me-1k-crafting-storage` and have no prototype any more).
@@ -46,7 +46,7 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   from top to bottom (all defined in `prototypes/network.lua`): `fork-me-network`, `fork-me-terminals`,
   `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-special-cells`, `fork-me-buses`,
   `fork-me-automation`, `fork-me-autocrafting`, `fork-me-crafting-cpu`, `fork-me-crafting-storage`, `fork-me-cards`,
-  `fork-me-capacity-speed-cards`, `fork-me-wireless`, `fork-me-components`, `fork-me-fluid-drives` (hidden items only).
+  `fork-me-capacity-speed-cards`, `fork-me-wireless`, `fork-me-components`, `fork-me-fluid-drives` (empty since issue #690).
   Until issue #474 they were rows of the Logistics tab, fewer and longer. A mod that moves an ME item or gives its
   recipe a subgroup should use one of these (or the item's own `subgroup`), so the item stays in the tab.
 
@@ -232,6 +232,34 @@ with one of the two mods, on by default) is on. The file uses only `replace_reci
 Every Krastorio 2 item goes through its helper `kr(name, fallback)`: the item when a prototype of an item type has that
 name, else the vanilla stand-in, with one log line. Krastorio 2's `data-final-fixes.lua` runs after it and takes the red to
 blue packs out of every technology that needs its advanced, optimization, matter or singularity cards.
+
+## Space Exploration
+
+me-network carries its Space Exploration compatibility itself as well (issue #703), in three parts:
+
+- `prototypes/compat/space-exploration-early.lua`, required by `data.lua` whenever `space-exploration` is active (a hidden
+  optional dependency, so its stages run first): every ME technology goes into Space Exploration's global
+  `se_procedural_tech_exclusions` (its procedural technology pass would read the 64 of `me-storage-64k` as an upgrade
+  level), and every entity of this mod gets `se_allow_in_space = true` (Space Exploration keeps assembling machines,
+  underground pipes, storage tanks and most containers out of space otherwise). Sets `ME_NETWORK.space_exploration_early`.
+  A mod that adds an ME technology of its own after me-network's `data.lua` enters it there itself.
+- `prototypes/compat/space-exploration.lua`, required by `data-updates.lua` when Space Exploration is active, Gregtorio
+  Continued is not and the startup setting `me-network-space-exploration-recipes` (made only with Space Exploration, on by
+  default) is on: the recipes on its materials and the technologies on its science tiers, through `replace_recipe`,
+  `set_technology` and `make_molecular_assembler` only. Every Space Exploration name goes through its helper
+  `se(name, fallback)` (the vanilla stand-in and one log line `ME-NETWORK: Space Exploration: no item ...` when it is
+  missing). Sets `ME_NETWORK.space_exploration` (`swaps`, `packs`, `missing`, `with_krastorio2`).
+- With Krastorio 2 as well the Krastorio 2 file runs first and the Space Exploration file second: it lays its swap table
+  over Krastorio 2's (`ME_NETWORK.krastorio2.swaps`, `prototypes/compat/common.lua`) and applies the result to the recipes
+  as they were before either (`ME_NETWORK.standalone.recipes`), so per recipe and stand-in Space Exploration's entry wins
+  where it has one; it sets every technology from ME 64k Storage on from the prerequisites of before either
+  (`ME_NETWORK.standalone.prerequisites`), keeping the Krastorio 2 prerequisite whose item a recipe still takes.
+
+At runtime (`scripts/fork-me-move.lua`): a block that is cloned and whose source a script destroys in the same tick was
+moved (Space Exploration's spaceships), and what it holds goes to the clone; the members of a surface leave before the
+surface is deleted or cleared; the remote interface `me-network-space-exploration` has the function
+`space_exploration_delete_surface` that Space Exploration calls before it deletes a zone's surface (refused while ME
+blocks stand on it).
 
 ## Runtime
 

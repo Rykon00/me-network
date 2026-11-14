@@ -9,7 +9,8 @@
 ---     it; a pipe built without an event gets one at the next look; a side tied to a fluid row has one; four tanks of an older
 ---     save are cut to those needed;
 ---   * the circuit interface: its section is the network's contents after each change; one amount changed writes one slot,
----     many the whole section, a change that leaves the amounts as they were writes nothing.
+---     many the whole section, a change that leaves the amounts as they were writes nothing. A phase during which another
+---     test made the graph anew (every network a new id, so the interface writes its section) is made again.
 --- Loaded by control.lua: require("perf420")(H) returns { setup, tick, running }.
 
 local NET, IO, CI, SB = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-circuit", "gregtorio-me-storagebus"
@@ -87,13 +88,41 @@ return function(H)
 		local function finish()
 			st.done = true
 			me_report("PERF420", "Performance levers (issue #420)", problems, "power kept, folded nodes, cell list, storage bus "
-				.. "lists, kept graph and rebuild, side tanks where needed, circuit interface writes")
+				.. "lists, kept graph and rebuild, side tanks where needed, circuit interface writes"
+				.. (st.again and ("; " .. st.again .. " circuit phase(s) made again after another test's rebuild of the graph") or ""))
 		end
 		local ctrl = s.find_entity("me-network-controller", { BX + 7, BY - 3 })
 		local ci = s.find_entity("me-circuit-interface", { BX + 9.5, BY - 2.5 })
 		local iface = s.find_entity("me-network-interface", { BX + 14.5, BY - 2.5 })
 		if not (ctrl and ci and iface) then expect(false, "entities missing") return finish() end
 		if st.phase ~= "start" and game.tick < st.tick + WAIT then return end
+		--- the changes of the circuit phases, by name
+		local CHANGES = {
+			one = function() remote.call(NET, "insert", ctrl, "coal", 5) end,                            -- (one amount)
+			many = function() for k = 1, 12 do remote.call(NET, "insert", ctrl, ITEMS[k], 1) end end,    -- (many amounts)
+			same = function()                                                                              -- (the same amounts again)
+				remote.call(NET, "insert", ctrl, "coal", 7)
+				remote.call(NET, "extract", ctrl, "coal", 7)
+			end,
+		}
+		--- make the change `name`; what the interface wrote for it is read after WAIT (in `phase`, or in this phase again)
+		local function change(name, phase)
+			remote.call(CI, "last_write", ci, true)
+			CHANGES[name]()
+			st.change, st.net = name, remote.call(NET, "network", ctrl).id
+			st.phase, st.tick = phase or st.phase, game.tick
+		end
+		--- Another test may make the whole graph anew while a phase waits (asmnet.lua: a rebuild from the map, at a tick that
+		--- depends on how long its crafting job takes with the loaded mods; with Gregtorio it fell into the phase of one
+		--- changed amount). Every network then has a new id and the interface writes its whole section once, as it must, so
+		--- the phase says nothing about the write of its own change: the change is made again and the phase waits again (at
+		--- most 5 times; then the phase's expectation reports it).
+		local function network_remade()
+			if remote.call(NET, "network", ctrl).id == st.net or (st.again or 0) >= 5 then return false end
+			st.again = (st.again or 0) + 1
+			change(st.change)
+			return true
+		end
 
 		if st.phase == "start" then
 			--- the controller's draw
@@ -179,38 +208,93 @@ return function(H)
 		if st.phase == "circuit1" then
 			local p = section_problems(ci, ctrl)
 			expect(#p == 0, "the section after the first contents: " .. line(p))
-			remote.call(CI, "last_write", ci, true)
-			remote.call(NET, "insert", ctrl, "coal", 5)                       -- (one amount)
-			st.phase, st.tick = "circuit2", game.tick
+			change("one", "circuit2")
 			return
 		end
 
 		if st.phase == "circuit2" then
+			if network_remade() then return end
 			local p = section_problems(ci, ctrl)
 			expect(#p == 0, "the section after one amount changed: " .. line(p))
 			local w = remote.call(CI, "last_write", ci, true)
 			expect(w == 1, "one amount changed wrote " .. tostring(w) .. " (want 1 slot)")
-			for k = 1, 12 do remote.call(NET, "insert", ctrl, ITEMS[k], 1) end   -- (many amounts)
-			st.phase, st.tick = "circuit3", game.tick
+			change("many", "circuit3")
 			return
 		end
 
 		if st.phase == "circuit3" then
+			if network_remade() then return end
 			local p = section_problems(ci, ctrl)
 			expect(#p == 0, "the section after many amounts changed: " .. line(p))
 			local w = remote.call(CI, "last_write", ci, true)
 			expect(w == "section", "many amounts changed wrote " .. tostring(w) .. " (want the section)")
-			remote.call(NET, "insert", ctrl, "coal", 7)                       -- (the same amounts again)
-			remote.call(NET, "extract", ctrl, "coal", 7)
-			st.phase, st.tick = "circuit4", game.tick
+			change("same", "circuit4")
 			return
 		end
 
 		if st.phase == "circuit4" then
+			if network_remade() then return end
 			local p = section_problems(ci, ctrl)
 			expect(#p == 0, "the section after a change that left the amounts: " .. line(p))
 			local w = remote.call(CI, "last_write", ci, true)
 			expect(w == nil, "a change that left the amounts wrote " .. tostring(w))
+			--- issue #721: the 1000 largest of a longer list, picked without the sort of formatted strings: the same signals
+			--- as a sort by amount picks (ties by the order string), in the list's order. 1500 signals in order, amounts
+			--- with many ties (also across the cut) and one above 32 bit.
+			local list, keys, by_key = {}, {}, {}
+			for i = 1, 1500 do
+				local sig = { order = string.format("item/n%04d/normal", i), count = (i * 7919) % 97 + 1 }
+				if i == 700 then sig.count = 5e9 end
+				list[i] = sig
+				local k = string.format("%016.0f", 1e15 - sig.count) .. sig.order   -- (1e15: exact; the old pick took 1e16, where doubles step by 2)
+				keys[i], by_key[k] = k, sig
+			end
+			table.sort(keys)
+			local keep, want = {}, {}
+			for i = 1, 1000 do keep[by_key[keys[i]]] = true end
+			for _, sig in ipairs(list) do if keep[sig] then want[#want + 1] = sig.order end end
+			local got = remote.call(CI, "top", list)
+			local same = #got == #want
+			for i = 1, #want do if got[i] ~= want[i] then same = false break end end
+			expect(same, "the 1000 largest of 1500 signals: " .. #got .. " picked, not the ones a sort by amount and order picks")
+			local few = remote.call(CI, "top", { list[3], list[9] })
+			expect(#few == 2 and few[1] == list[3].order and few[2] == list[9].order, "a short list is written whole: " .. line(few))
+			--- issue #721: the kept list. 300 rounds of moves (items in and out, also down to nothing and back; water at two
+			--- temperatures in fractions), after each the list as the network keeps it against one made from scratch: the same
+			--- signals, amounts and places. The version counts up exactly when an amount that is written changed.
+			local seed = 12345
+			local function rnd(n)
+				seed = (seed * 1103515245 + 12345) % 2147483648
+				return seed % n + 1
+			end
+			local kept_rounds, bad = 0, nil
+			local _, _, version = remote.call(CI, "list_check", ci)
+			for round = 1, 300 do
+				local moved = false
+				for _ = 1, rnd(4) do
+					local name = ITEMS[rnd(#ITEMS)]
+					local kind = rnd(10)
+					local have = remote.call(NET, "count", ctrl, name) or 0
+					local n
+					if kind <= 4 then n = remote.call(NET, "insert", ctrl, name, rnd(50))
+					elseif kind <= 7 then n = remote.call(NET, "extract", ctrl, name, rnd(50))
+					elseif kind == 8 then n = remote.call(NET, "extract", ctrl, name, have)      -- (the signal goes)
+					elseif kind == 9 then n = remote.call(NET, "insert_fluid", ctrl, "water", rnd(7) / 4, rnd(2) == 1 and 15 or 90)
+					else n = remote.call(NET, "extract_fluid", ctrl, "water", rnd(7) / 4, rnd(2) == 1 and 15 or 90) end
+					if type(n) == "number" and n > 0 then moved = true end
+				end
+				if round % 50 == 0 then                                        -- (a round that leaves every amount as it was)
+					remote.call(NET, "insert", ctrl, "coal", 3)
+					remote.call(NET, "extract", ctrl, "coal", 3)
+				end
+				local problem, kept, n = remote.call(CI, "list_check", ci)
+				if kept then kept_rounds = kept_rounds + 1 end
+				if problem and not bad then bad = "round " .. round .. ": " .. problem end
+				if not moved and n ~= version and not bad then bad = "round " .. round .. ": the version went from " .. tostring(version) .. " to " .. tostring(n) .. " without a move" end
+				version = n
+			end
+			expect(not bad, "the kept list of the circuit interfaces: " .. tostring(bad))
+			expect(kept_rounds >= 290, "the kept list was used in " .. kept_rounds .. " of 300 rounds")
 			return finish()
 		end
 	end

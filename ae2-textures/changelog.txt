@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.7
+Date: 2026-11-14
+  Graphics:
+    - The ME Space Molecular Assembler (ME Network with Space Exploration) shows AE2's molecular assembler in its blue tint, as block, item and technology (ME Network issues #711, #731). No new image.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.6
 Date: 2026-11-08
   Graphics:

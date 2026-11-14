@@ -10,7 +10,7 @@
     python tools/devcheck/devcheck.py all --with-mod Krastorio2 [--mods-from DIR]
                                                             # issue #591: with a third-party mod and its required
                                                             # dependencies (check --base-only: without Space Age)
-    python tools/devcheck/devcheck.py migrate --from-ref v0.5.0
+    python tools/devcheck/devcheck.py migrate --from-ref v0.6.0
                                                             # a save of an older version loaded with the working copy
     python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
                                                             # bases of 100, 1000 and 5000 endpoints (docs/PERFORMANCE.md)
@@ -59,8 +59,8 @@ MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
 # `runtime` creates its map with this seed, so a run is reproducible; `--seed N` or `--seed random` picks another
 DEFAULT_SEED = 3115102263
-# issue #146: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
-CUT_OFF = (0, 5, 0)
+# issues #146, #690: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
+CUT_OFF = (0, 6, 0)
 # (issue #487: Factorio 2.1 adds the built-in mod recycler, which space-age and quality depend on)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails", "recycler"}
 # the Factorio version the mods are written for (info.json factorio_version; the dependency mods are picked by it)
@@ -108,6 +108,12 @@ def dependency_names(info):
         if name not in BUILTIN and name not in (NAME, TEXTURES):
             out.append(name)
     return out
+
+
+def incompatible_names(info):
+    """the mods an info.json (a dict) declares incompatible (`! name`)"""
+    return [re.split(r"\s*[<>=]", dep.strip()[1:].strip())[0].strip() for dep in info.get("dependencies", [])
+            if dep.strip().startswith("!")]
 
 
 def required_mods(info_path):
@@ -334,7 +340,7 @@ def texture_stand_in():
 
 
 def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
-                 textures=None, with_mods=()):
+                 textures=None, with_mods=(), with_se=False):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
     Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
@@ -372,9 +378,16 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
         enabled.append(GREGTORIO)
     enabled += wanted
     disabled += [z for z in zips if z not in wanted]
+    # a built-in mod that a mod of --with-mod declares incompatible is off (Space Exploration: `! space-age`)
+    banned = {n for w in wanted for n in incompatible_names(zip_info(mod_zip(w)))} & set(enabled)
+    enabled = [n for n in enabled if n not in banned]
+    disabled += sorted(banned)
     if with_runtime:
         link_dir(MODS / "zz-me-network-devcheck-runtime", helper_dir(HERE / "runtimemod"))
         enabled.append("zz-me-network-devcheck-runtime")
+    if with_se:
+        link_dir(MODS / "zz-me-network-devcheck-se", helper_dir(HERE / "semod"))
+        enabled.append("zz-me-network-devcheck-se")
     if with_migrate:
         link_dir(MODS / "zz-me-network-devcheck-migrate", helper_dir(HERE / "migratemod"))
         enabled.append("zz-me-network-devcheck-migrate")
@@ -806,7 +819,12 @@ def check_map(a, mapfile, textures=None):
     report("recipes of me-network not unlocked or not craftable", recipes)
     uncraft = [f"{r}: {why}" for r, why in m.uncraftable()]
     print(f"\nunlocked recipes of the game: {len(m.unlocked)}")
-    if a.base_only:
+    if a.base_only or banned_builtin(a):
+        # with --with-mod a recipe that is not this mod's is the third-party mod's (Space Exploration: recipes whose
+        # ingredient only its scripts make, such as a used lifesupport canister)
+        third = [u for u in uncraft if getattr(a, "with_mod", None) and u.split(":")[0] not in own_recipes]
+        uncraft = [u for u in uncraft if u not in third]
+        report("unlocked but uncraftable recipes of the mods of --with-mod (information)", third)
         report("unlocked but uncraftable recipes", uncraft)
     else:
         # the model knows resources, trees, rocks, fish, asteroids and tile fluids, but not every source of Space
@@ -950,6 +968,12 @@ def check_textures(a, base_sec):
     applied = re.findall(rf"data-final-fixes\.lua:\d+: {TEXTURES}: (.*)", log)
     skipped = [l for l in applied if "SKIPPED" in l]
     problems += [f"override skipped: {l}" for l in skipped]
+    # issue #731: the entries of a prototype made only with Space Exploration may be absent, but not in a run with it
+    absent = [l for l in applied if "ABSENT" in l]
+    if "space-exploration" in (getattr(a, "with_mod", None) or []):
+        problems += [f"override absent in a run with Space Exploration: {l}" for l in absent]
+    elif absent:
+        print(f"overrides of prototypes made only with another mod, absent in this run: {len(absent)}")
     stray = sorted({p for p, _ in base_sec.get("PATHS", []) if p.startswith(f"__{TEXTURES}__/")})
     if stray:
         problems.append(f"without the texture mod the prototypes name its files: {stray[:3]}")
@@ -967,7 +991,7 @@ def check_textures(a, base_sec):
     real = real_override_keys()
     done = {l.split(": ", 1)[0] for l in applied if "SKIPPED" not in l}
     problems += [f"override of overrides.lua not applied: {k}" for k in real if k not in done]
-    print(f"overrides applied: {len(applied) - len(skipped)} ({len(real)} of overrides.lua, the {len(cases)} "
+    print(f"overrides applied: {len(applied) - len(skipped) - len(absent)} ({len(real)} of overrides.lua, the {len(cases)} "
           f"stand-ins), skipped: {len(skipped)}")
     print("stand-ins and copy removed: " + ("yes" if not (copy.exists() or (MODS / TEXTURES).exists()) else "NO"))
     report("problems of the texture mod run", problems)
@@ -983,8 +1007,18 @@ def with_mods(a):
     return names
 
 
+def banned_builtin(a):
+    """the built-in mods that a mod of --with-mod declares incompatible, among those in mods/ (prepare_mods turns them off)"""
+    out = set()
+    for w in getattr(a, "with_mod", None) or []:
+        for n in mod_closure([w]):
+            out |= set(incompatible_names(zip_info(mod_zip(n)))) & BUILTIN
+    return sorted(out)
+
+
 def mods_label(a, base_only=False):
     return (("base only" if base_only else "base, Space Age, quality")
+            + "".join(f" - {n}" for n in ([] if base_only else banned_builtin(a)))
             + (" + Gregtorio Continued" if getattr(a, "with_gregtorio", None) else "")
             + "".join(f" + {m}" for m in getattr(a, "with_mod", None) or []))
 
@@ -1017,6 +1051,70 @@ def check_krastorio2(sec):
                    f"kr-automation-core ({core[2]})")
     assembler = [r[1] for r in sec.get("KRASTORIO2", [])[1:] if r[0] == "assembler"]
     print(f"ME Molecular Assembler with Krastorio 2: {', '.join(assembler) or '?'}")
+    return out
+
+
+SE_SHORT = {"automation-science-pack": "red", "logistic-science-pack": "green", "chemical-science-pack": "blue",
+            "se-rocket-science-pack": "rocket", "space-science-pack": "space", "utility-science-pack": "utility",
+            "production-science-pack": "production"}
+
+
+def se_pack(name):
+    return SE_SHORT.get(name) or name.replace("se-", "").replace("-science-pack", "").replace("-", " ")
+
+
+def check_space_exploration(sec, active):
+    """Space Exploration (prototypes/compat/space-exploration-early.lua, space-exploration.lua; the section SPACEEXPLORATION
+    of the check mod). With Space Exploration loaded: every technology of this mod is in se_procedural_tech_exclusions, no
+    entity of this mod has its "space_tile" collision layer (each may stand in space), and no technology of this mod has a
+    pack that the compatibility did not give it (the procedural pass, or a later version of it, changed one). With the
+    compatibility active as well: no item or technology of Space Exploration was missing, and every pack of an ME technology
+    is a pack of one of its prerequisites or is unlocked by a technology before it (the pack of its own tier). Prints the
+    final technology tree. Returns the problems."""
+    rows = sec.get("SPACEEXPLORATION", [])
+    m = Model(sec["DUMP"])
+    techs = [r for r in rows if r[0] == "tech"]
+    given = {r[1]: [x for x in r[2].split(",") if x] for r in rows if r[0] == "set" and len(r) > 2}
+    out = []
+    excluded = {r[1] for r in rows if r[0] == "excluded"}
+    out += [f"{r[1]} is not in se_procedural_tech_exclusions" for r in techs if r[1] not in excluded]
+    out += [f"{r[1]} ({r[2]}) cannot stand in space (the space_tile collision layer)" for r in rows
+            if r[0] == "entity" and r[3] == "space"]
+    out += [f"no item or technology {r[1]} in Space Exploration ({r[2]} instead)" for r in rows if r[0] == "missing"]
+    makers = {}
+    for t, v in m.T.items():
+        for r in v["eff"]:
+            for x in m.R.get(r, {}).get("res", []):
+                makers.setdefault(x, set()).add(t)
+
+    def before(t):
+        seen, todo = set(), [t]
+        while todo:
+            for p in m.T.get(todo.pop(), {}).get("pre", []):
+                if p not in seen:
+                    seen.add(p)
+                    todo.append(p)
+        return seen
+
+    print("\nME technologies with Space Exploration (count x time, packs, prerequisites at the end of the data stage):")
+    for r in techs:
+        name, packs = r[1], [x for x in r[4].split(",") if x]
+        pre = [x for x in (r[5] if len(r) > 5 else "").split(",") if x]
+        print(f"  {name}: {r[2]} x {r[3]} s | {', '.join(se_pack(x) for x in packs)} | {', '.join(pre)}")
+        if name in given:
+            if set(packs) != set(given[name]):
+                out.append(f"{name}: packs {', '.join(sorted(set(packs) ^ set(given[name])))} differ from what the compatibility set")
+        else:
+            # a technology the compatibility leaves alone: nothing of Space Exploration's specialist or deep space tiers
+            # (the packs of its own that its last loop adds to utility and production science are its rule for every mod)
+            alien = [x for x in packs if re.match(r"se-.*-science-pack-\d$", x)]
+            if alien:
+                out.append(f"{name}: {', '.join(alien)}, which the compatibility did not set (the procedural pass)")
+        if active:
+            known, of_pre = before(name), {x for q in pre for x in m.T.get(q, {}).get("sci", [])}
+            for x in packs:
+                if x not in of_pre and not makers.get(x, set()) & known:
+                    out.append(f"{name}: the pack {x} is no pack of a prerequisite and no technology before it unlocks it")
     return out
 
 
@@ -1066,10 +1164,26 @@ def unlock_order(sec):
     return out
 
 
+def check_helper_paths():
+    """issue #732: every `__base__/` and `__core__/` picture a helper mod of tools/devcheck names exists in the game's
+    data. The headless game loads no image, so a wrong path shows only when a graphical client loads the helper mod (it
+    stops at the sprite atlas)."""
+    problems, count = [], 0
+    for lua in sorted(HERE.glob("*mod/*.lua")):
+        for n, line in enumerate(lua.read_text(encoding="utf-8").splitlines(), 1):
+            for mod, rest in re.findall(r"__(base|core)__/([^\"']+\.png)", line):
+                count += 1
+                if not (FACTORIO / "data" / mod / rest).is_file():
+                    problems.append(f"{lua.relative_to(ROOT).as_posix()}:{n}: __{mod}__/{rest} is not in the game's data "
+                                    "(a graphical client stops on it)")
+    print(f"helper mods' pictures of the base game: {count} paths, " + ("all exist" if not problems else f"{len(problems)} missing"))
+    return problems
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only, with_mods=with_mods(a))
     print("mods: " + mods_label(a, a.base_only))
-    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture()
+    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture() + check_helper_paths()
     if a.with_gregtorio:
         # issue #239: no AE2 graphics in a Gregtorio run; since issue #325 me-network requires the texture mod, so the
         # Gregtorio run loads its empty stand-in (texture_stand_in), never the texture mod itself or a zip of it
@@ -1111,6 +1225,18 @@ def check(a):
     if got == "active":
         k2_problems += check_krastorio2(sec)
     report("Krastorio 2 compatibility (issues #592, #593)", k2_problems)
+    # Space Exploration: the compatibility runs with it, never with Gregtorio Continued, and not with its setting off
+    se_loaded = "space-exploration" in (getattr(a, "with_mod", None) or [])
+    se_off = any(x.split("=")[0] == "me-network-space-exploration-recipes" and x.split("=")[1] == "false"
+                 for x in getattr(a, "startup", None) or [])
+    want = "active" if se_loaded and not a.with_gregtorio and not se_off else "inactive"
+    got = (sec.get("SPACEEXPLORATION") or [["missing"]])[0][0]
+    print(f"\nSpace Exploration compatibility: {got}")
+    se_problems = [] if got == want else [f"the Space Exploration compatibility is {got}, expected {want}"]
+    if se_loaded:
+        se_problems += check_space_exploration(sec, got == "active")
+    report("Space Exploration compatibility", se_problems)
+    k2_problems += se_problems
     # issue #594: no ME recipe comes before what it takes (information with Gregtorio, whose tree its own devcheck checks)
     order = unlock_order(sec)
     print(f"\nME recipes whose ingredients come no later than their technology: {len([n for k, n in sec.get('OWN', []) if k == 'recipe']) - len({o.split(' ')[0] for o in order})}")
@@ -1214,6 +1340,7 @@ RUNTIME_TESTS = (
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
     ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
     ("CABLESHAPE", "ME Cable shapes from blueprints and of ghosts (issue #670)"),
+    ("HIGHLIGHT", "the network highlighted on hover (issue #699)"),
     ("TURNBLOCKS", "Turned blueprints over ME blocks whose direction does not show (issue #674)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
@@ -1305,7 +1432,9 @@ def saveload(mapfile, ticks, extra_args=()):
                                  "--rcon-bind", f"127.0.0.1:{rcon_port}", "--rcon-password", password, *extra_args],
                                 stdout=out, stderr=subprocess.STDOUT)
         sock = None
-        deadline = time.time() + 120
+        # (start, the ticks up to SAVELOAD_TICK and the save: with Gregtorio Continued the load of its prototypes alone took
+        # 130 s on a busy machine, so 120 s for all of it was too short)
+        deadline = time.time() + 300
         try:
             while time.time() < deadline and proc.poll() is None:
                 try:
@@ -1388,7 +1517,13 @@ def runtime(a):
     # issue #38: the same map saved in the middle of its run and loaded again must schedule like the unbroken run
     if not getattr(a, "no_saveload", False):
         digests = dict(re.findall(r"DEVCHECK-RUNTIME-SCHEDULE (\d+) (.*)", log))
-        log_b, why = saveload(WORK / "runtime-map.zip", a.ticks)
+        try:
+            log_b, why = saveload(WORK / "runtime-map.zip", a.ticks)
+        except OSError as e:
+            # issue #705: a server that stops on a script error closes RCON; that is a failed half, not a crash of the harness
+            server_log = WORK / "saveload-server.log"
+            text = server_log.read_text(encoding="utf-8", errors="replace") if server_log.exists() else ""
+            log_b, why = None, f"the server stopped ({e}): {load_errors(text) or 'no error in ' + str(server_log)}"
         if not log_b:
             print(f"schedule after a save and load: {why}")
             fails.append("save and load: " + str(why))
@@ -1413,6 +1548,298 @@ def runtime(a):
     report("runtime problems", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
+        print("\nRESULT: PROBLEMS FOUND")
+        return 1
+    print("\nRESULT: OK")
+    return 0
+
+
+SE_TESTS = [
+    ("PLACE", "every ME block on space platform scaffold, plating, spaceship floor and Nauvis"),
+    ("BUILD", "a network on spaceship floor in Nauvis Orbit"),
+    ("ORBIT", "the network works in orbit, bridged to Nauvis"),
+    ("LAUNCH", "the ship moved to its own surface (clone_brush, raise_destroy)"),
+    ("TRAVEL", "the network works on the ship's surface"),
+    ("LAND", "the ship moved onto Nauvis"),
+    ("LANDED", "the network works on Nauvis as before the launch"),
+    ("COPY", "a clone whose source stays is a copy"),
+    ("PAD", "storage buses on Space Exploration's landing pad and delivery cannon chest"),
+    ("JOB", "a crafting job started before the launch runs over both moves (issue #704)"),
+    ("LOGISTICS", "a logistic interface and a logistic storage bus in the ship's logistic network (issue #707)"),
+    ("SPACEASM", "the ME Space Molecular Assembler crafts a space-crafting and a space-manufacturing recipe on a platform "
+                 "(issues #711, #729)"),
+    ("RELAUNCH", "the ship leaves Nauvis again: the ME Space Molecular Assembler that rested there works again (issue #729)"),
+    ("SHIPJOB", "a job on the ship's ME Space Molecular Assembler waits while the ship stands on Nauvis (issue #729)"),
+    ("ZONES", "Space Exploration's zone names for the windows and messages (issue #713)"),
+    ("FRAGMENTS", "a storage bus on Space Exploration's fragment processing machine (issue #710)"),
+    ("CHANCE", "a job for a product that comes by chance ends with the amount asked for (issue #710)"),
+    ("SURFACE", "a deleted surface leaves nothing in storage"),
+]
+
+
+# issue #706: the launch test calls Space Exploration's own functions in its Lua state (Spaceship.launch,
+# Spaceship.land_at_position, the fields of its spaceship table); they are no API, so the test is pinned to the version
+# it was written against and refuses another one
+SE_VERSION = "0.7.64"
+
+
+def se_no_flares():
+    """issue #707: Space Exploration starts a game with an energy beam that sweeps the start area of Nauvis (the "crash"
+    flare of its scripts/solar-flare.lua, from 13 s on for 45 s) and cut the cables of the ship the se test lands there;
+    its map setting "se-cmes-max-frequency" 0 ends it. (The setting stays 0 in .devcheck: no other run needs the beam.)"""
+    startup_setting("se-cmes-max-frequency", ("int", 6, 0), "runtime-global")
+
+
+class Server:
+    """A headless server on `mapfile` (real time, nobody connected) with RCON on a free port of 127.0.0.1, as the
+    save-and-load half starts one. `cmd(lua)` runs the Lua as a silent command and returns what it printed with
+    rcon.print; `mod` runs it in that mod's Lua state (`/silent-command __mod__ ...`). A server that stops (a script error)
+    raises OSError with the error of its log."""
+
+    def __init__(self, mapfile, log_name):
+        self.mapfile, self.log = Path(mapfile), WORK / log_name
+        self.proc = self.sock = self.out = None
+        self.req = 10
+
+    def __enter__(self):
+        import socket, time
+        binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
+        settings = WORK / "server-settings.json"
+        settings.write_text(json.dumps({"name": "devcheck", "description": "a server of devcheck",
+                                        "visibility": {"public": False, "lan": False}, "auto_pause": False,
+                                        "require_user_verification": False, "max_players": 1}), encoding="utf-8")
+        rcon_port, game_port = free_port(), free_port(socket.SOCK_DGRAM)
+        password = "devcheck-" + os.urandom(6).hex()
+        self.out = open(self.log, "w", encoding="utf-8")
+        self.proc = subprocess.Popen([str(binary), "--mod-directory", str(MODS), "--start-server", str(self.mapfile),
+                                      "--server-settings", str(settings), "--bind", f"127.0.0.1:{game_port}",
+                                      "--rcon-bind", f"127.0.0.1:{rcon_port}", "--rcon-password", password],
+                                     stdout=self.out, stderr=subprocess.STDOUT)
+        deadline = time.time() + 300
+        while time.time() < deadline and self.proc.poll() is None:
+            try:
+                self.sock = socket.create_connection(("127.0.0.1", rcon_port), timeout=10)
+                rcon(self.sock, 3, password, 1)
+                # (the first Lua command of a map only gets "repeat the command to proceed": achievements)
+                rcon(self.sock, 2, "/silent-command rcon.print(1)", 2)
+                return self
+            except OSError:
+                self.sock = None
+                time.sleep(0.5)
+        self.__exit__(None, None, None)
+        raise OSError("the server did not start or answer RCON" + port_taken(self.log) + ": " + self.error())
+
+    def error(self):
+        self.out.flush()
+        text = self.log.read_text(encoding="utf-8", errors="replace") if self.log.exists() else ""
+        m = re.search(r"(Error.*?)(\n\s*\d+\.\d+ |\Z)", text, re.S)
+        return m.group(1).strip()[:1500] if m else f"no error in {self.log}"
+
+    def cmd(self, lua, mod=None):
+        self.req += 1
+        try:
+            got = rcon(self.sock, 2, "/silent-command " + (f"__{mod}__ " if mod else "") + "local ok, err = pcall(function() "
+                       + lua + " end) if not ok then rcon.print('LUA-ERROR ' .. tostring(err)) end", self.req).strip()
+        except OSError as e:
+            raise OSError(f"the server stopped ({e}): {self.error()}") from None
+        if "LUA-ERROR" in got or got.startswith("Cannot execute command"):
+            raise OSError(f"the command `{lua[:200]}` failed: {got}")
+        return got
+
+    def tick(self):
+        return int(self.cmd("rcon.print(game.tick)"))
+
+    def wait_ticks(self, n, timeout=120):
+        import time
+        end, deadline = self.tick() + n, time.time() + timeout
+        while self.tick() < end:
+            if time.time() > deadline:
+                raise OSError(f"the server did not run {n} ticks in {timeout} s")
+            time.sleep(0.1)
+
+    def __exit__(self, *exc):
+        if self.sock:
+            try:
+                rcon(self.sock, 2, "/quit", 2)
+            except OSError:
+                pass
+            self.sock.close()
+            self.sock = None
+        if self.proc:
+            try:
+                self.proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        if self.out:
+            self.out.close()
+        return False
+
+
+def launch(a):
+    """issue #706: a real spaceship launch and landing of Space Exploration on a headless server. The helper mod `semod/`
+    (with its startup setting zz-me-se-real-launch) builds an ME network inside a real ship in Nauvis Orbit (floor, walls,
+    console, a booster tank with fuel, an engine); Space Exploration's integrity check must pass; then its own
+    Spaceship.launch and Spaceship.land_at_position are called through RCON in its Lua state, and the helper compares what
+    the network holds and how its blocks are set after each move."""
+    import time
+    names = ["space-exploration"] + [m for m in (a.with_mod or []) if m != "space-exploration"]
+    fetch_mods(names, a.mods_from)
+    a.with_mod = names
+    zips = sorted(z.name for z in MODS.glob("space-exploration_*.zip"))
+    if zips != [f"space-exploration_{SE_VERSION}.zip"]:
+        sys.exit(f"the launch test is pinned to Space Exploration {SE_VERSION} (it calls its internal functions); "
+                 f"in {MODS}: {', '.join(zips) or 'none'}")
+    prepare_mods(with_mods=names, with_se=True)
+    se_no_flares()
+    startup_setting("zz-me-se-real-launch", True)
+    print("mods: " + mods_label(a) + f" + the Space Exploration test mod (real launch, pinned to Space Exploration {SE_VERSION})")
+    fails = []
+
+    def step(label, line):
+        print(f"{label}: {line}")
+        if not line.startswith("ok"):
+            fails.append(f"{label}: {line}")
+
+    try:
+        mapfile = WORK / "launch-map.zip"
+        log, err = create_map(mapfile, *seed_args(a))
+        if err:
+            print(err)
+            return 1
+        with Server(mapfile, "launch-server.log") as sv:
+            def ship(lua):
+                return sv.cmd("local s = select(2, next(storage.spaceships)) " + lua, mod="space-exploration")
+
+            def helper(fn, *args):
+                call = ", ".join([json.dumps("me-se-launch"), json.dumps(fn)] + [json.dumps(x) for x in args])
+                return sv.cmd(f"rcon.print(remote.call({call}))")
+
+            def where():
+                got = ship('rcon.print(s.console.surface.name .. "|" .. s.console.position.x .. "|" .. s.console.position.y'
+                           ' .. "|" .. tostring(s.on_own_surface))').split("|")
+                return got[0], float(got[1]), float(got[2]), got[3] == "true"
+
+            def integrity(label):
+                """Space Exploration's integrity check runs over several ticks: wait for its end"""
+                deadline = time.time() + 120
+                while True:
+                    got = ship('rcon.print(tostring(s.is_doing_check) .. "|" .. tostring(s.integrity_valid) .. "|" .. '
+                               'tostring(s.integrity_stress) .. "|" .. tostring(s.integrity_limit) .. "|" .. '
+                               'serpent.line(s.check_message))').split("|")
+                    if got[0] != "true":
+                        break
+                    if time.time() > deadline:
+                        got[1] = "the check did not end in 120 s"
+                        break
+                    time.sleep(0.2)
+                step(label, ("ok" if got[1] == "true" else "failed") + f" (integrity check valid: {got[1]}, stress "
+                     f"{got[2]} of {got[3]}, message {got[4]})")
+                return got[1] == "true"
+
+            line = helper("build")
+            m = re.match(r"Space Exploration (\S+): (.*)", line, re.S)
+            if not m or m.group(1) != SE_VERSION:
+                fails.append(f"Space Exploration {m.group(1) if m else '?'} is loaded, the test is pinned to {SE_VERSION}")
+            step("a network inside a real spaceship in Nauvis Orbit", m.group(2) if m else line)
+            if integrity("Space Exploration's integrity check of the ship"):
+                sv.wait_ticks(180)
+                step("the network works in orbit", helper("keep"))
+                home, x0, y0, _ = where()
+                cost = ship("s.is_launching = true Spaceship.get_compute_launch_energy(s) "
+                            "rcon.print(tostring(Spaceship.get_launch_energy_cost(s)) .. ' of ' .. tostring(s.launch_energy))")
+                ship("s.is_launching = true Spaceship.launch(s)")
+                surface, x, y, own = where()
+                step("Spaceship.launch", ("ok" if own and surface != home else "failed")
+                     + f" (the ship is on {surface}, on its own surface: {own}; launch energy needed {cost} J on board)")
+                if own and surface != home:
+                    step("the ship moved to its own surface", helper("moved", "LAUNCH", surface, x - x0, y - y0))
+                    sv.wait_ticks(180)
+                    step("the network works on the ship's surface", helper("works", "TRAVEL"))
+                    # issue #707: robot attrition in flight (a robot with an item crashed as the mod Robot Attrition does it)
+                    deadline, got = time.time() + 20, helper("crash")
+                    while got == "none" and time.time() < deadline:
+                        time.sleep(0.05)
+                        got = helper("crash")
+                    step("robot attrition in flight", ("ok" if got.startswith("crashed") else "failed") + f" ({got})")
+                    integrity("the integrity check in flight")
+                    sv.wait_ticks(5)
+                    x0, y0 = x, y
+                    ship("Spaceship.land_at_position(s, { x = 120, y = 80 })")
+                    landed, x, y, own = where()
+                    step("Spaceship.land_at_position", ("ok" if not own and landed == home else "failed")
+                         + f" (the ship is on {landed} at an offset of {x - x0:g}, {y - y0:g}; on its own surface: {own})")
+                    if not own:
+                        step("the ship moved back into Nauvis Orbit", helper("moved", "LAND", landed, x - x0, y - y0))
+                        sv.wait_ticks(180)
+                        step("the network works after the landing", helper("works", "LANDED"))
+                        # issue #704: the job started before the launch ends with its product in the network
+                        deadline = time.time() + 120
+                        got = helper("job")
+                        while got == "running" and time.time() < deadline:
+                            time.sleep(0.5)
+                            got = helper("job")
+                        step("the crafting job started before the launch (issue #704)",
+                             "ok (ran over both moves and made its 32 iron sticks)" if got == "done" else "failed: " + got)
+                        # issue #707: the robots' deliveries end with every item exactly once
+                        deadline = time.time() + 120
+                        got = helper("logistics")
+                        while got == "running" and time.time() < deadline:
+                            time.sleep(0.5)
+                            got = helper("logistics")
+                        step("the logistic network on the ship (issue #707)",
+                             "ok (interface and logistic storage bus in the roboport's network after both moves, nothing lost or "
+                             "doubled, the deliveries ended)" if got == "done" else "failed: " + got)
+                        # (Space Exploration clears the ship's surface after the landing and keeps it for the next launch)
+                        left = sv.cmd(f"local s = game.get_surface({json.dumps(surface)}) if not s then rcon.print('0|true') return end "
+                                      "local hook = remote.call('me-network-space-exploration', 'space_exploration_delete_surface', "
+                                      "{ surface_index = s.index }) rcon.print(s.count_entities_filtered{ force = 'player' } .. '|' .. "
+                                      "tostring(hook.allow_delete))").split("|")
+                        step("the ship's own surface", ("ok" if left == ["0", "true"] else "failed")
+                             + f" (entities left on it: {left[0]}, no ME block recorded on it: {left[1]})")
+            print(f"server ran {sv.tick()} ticks")
+    except OSError as e:
+        fails.append(str(e))
+    finally:
+        startup_setting("zz-me-se-real-launch", None)
+    report("real spaceship launch problems", fails)
+    if fails:
+        print("\nRESULT: PROBLEMS FOUND")
+        return 1
+    print("\nRESULT: OK")
+    return 0
+
+
+def se(a):
+    """the runtime test with Space Exploration (tools/devcheck/semod): this mod, Space Exploration and its dependencies
+    (and the mods of --with-mod, Krastorio 2 for the combination), a new map, `--ticks` ticks"""
+    names = ["space-exploration"] + [m for m in (a.with_mod or []) if m != "space-exploration"]
+    fetch_mods(names, a.mods_from)
+    a.with_mod = names
+    prepare_mods(with_mods=names, with_se=True)
+    se_no_flares()
+    print("mods: " + mods_label(a) + " + the Space Exploration test mod")
+    mapfile = WORK / "se-map.zip"
+    log, err = create_map(mapfile, *seed_args(a))
+    if err:
+        print(err)
+        return 1
+    log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(a.ticks))
+    ran = re.search(r"Performed (\d+) updates", log)
+    err = re.search(r"(Error.*|non-recoverable.*)", log)
+    fails = re.findall(r"DEVCHECK-SE-FAIL (.*)", log)
+    print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
+    for key, label in SE_TESTS:
+        m = re.search(rf"DEVCHECK-SE-{key} (.*)", log)
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
+        if not m:
+            fails.append(f"{label} did not run")
+    if not re.search(r"DEVCHECK-SE-DONE", log):
+        fails.append("the test did not reach its end (needs --ticks >= 2400)")
+    report("Space Exploration runtime problems", fails)
+    if err or not ran or fails:
+        if err:
+            i = log.find(err.group(1))
+            print(log[i:i + 1500])
         print("\nRESULT: PROBLEMS FOUND")
         return 1
     print("\nRESULT: OK")
@@ -1503,10 +1930,10 @@ def migrate_run(a):
         startup_setting(ITEMS_SETTING, "new")
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
-    # issue #146: a save from before the cut-off must be refused when it loads, with the message that names 0.5.0
+    # issues #146, #690: a save from before the cut-off must be refused when it loads, with the message that names 0.6.0
     old_version = json.loads((old / "info.json").read_text(encoding="utf-8"))["version"]
     if tuple(int(n) for n in old_version.split(".")[:3]) < CUT_OFF:
-        refused = "no longer converts saves from before 0.5.0" in log
+        refused = "no longer converts saves from before 0.6.0" in log
         print(f"old save of {old_version} (before the cut-off {'.'.join(map(str, CUT_OFF))}) loaded with the working copy: "
               + ("refused with the message" if refused and not ran else "NOT REFUSED" if ran else "failed without the message"))
         if not refused:
@@ -1557,6 +1984,7 @@ BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua 
 CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
 BURST_TICKS = 330               # after the latency probes: the build burst (build, remove, plain build, plain remove, issue #538: ghosts)
+SHIP_TICKS = 620                # issue #708: after the burst, the ship's steps (benchmod/control.lua SH.tick)
 CABLE_GHOST_TICKS = 260         # issue #670: after the burst, the cable ghost steps (ticks 330 to 580 of the burst)
 GHOST_WAIT = 600                # issue #538: the ghost paste waits for the allocation meter's ticks (ALLOC_FROM + ALLOC_TICKS)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
@@ -1709,8 +2137,10 @@ def runtime_settings(values):
     f.write_bytes(_tree_write(version, root))
 
 
-def startup_setting(name, value):
-    """issue #503: a startup setting of a helper mod in mod-settings.dat (`value` None: removed, the default again)"""
+def startup_setting(name, value, section="startup"):
+    """issue #503: a startup setting of a helper mod in mod-settings.dat (`value` None: removed, the default again);
+    `section` "runtime-global": a map setting of another mod (issue #707: Space Exploration's flares; an integer as
+    ("int", 6, n), the form Factorio writes)"""
     f = MODS / "mod-settings.dat"
     version, root = _tree_read(f.read_bytes()) if f.exists() else ((2, 0, 0, 0), {})
     root = root or {}
@@ -1719,12 +2149,13 @@ def startup_setting(name, value):
         version = tuple(int(x) for x in full.split(".")[:3]) + (0,)
     except (OSError, ValueError, KeyError):
         pass
-    startup = root.get("startup") or {}
+    startup = root.get(section) or {}
     if value is None:
         startup.pop(name, None)
     else:
         startup[name] = {"value": value}
-    root["startup"] = startup
+    root[section] = startup
+    root.setdefault("startup", {})
     root.setdefault("runtime-global", {})
     root.setdefault("runtime-per-user", {})
     f.write_bytes(_tree_write(version, root))
@@ -1953,6 +2384,10 @@ def bench_config(a, scene, size, variant, profile):
            "cable_ghosts": (getattr(a, "cable_ghosts", 0) or 0) if scene == "me" else 0,
            # issue #603: that many characters with the ME Wireless Module and logistic requests at an access point
            "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0,
+           # issue #708: about that many ME blocks as a ship moved between two surfaces after the burst; that many more
+           # surfaces with an outpost of the first network behind an ME Quantum Bridge
+           "ship": (getattr(a, "ship", 0) or 0) if scene == "me" and not variant.get("noent") and not variant.get("long") else 0,
+           "outposts": (getattr(a, "outposts", 0) or 0) if scene == "me" and not variant.get("noent") else 0,
            # issue #639: every import and export bus with a circuit condition and a logistic condition (in the check list)
            "conditions": bool(getattr(a, "conditions", False)) if scene == "me" else None}
     return cfg
@@ -1987,7 +2422,8 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
-        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0)
+        + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0) \
+        + (SHIP_TICKS if cfg.get("ship") else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
     if not re.search(r"Performed (\d+) updates", log):
         print(f"  {label}: did not run\n{load_errors(log) or ''}")
@@ -2005,7 +2441,9 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
            "load": load_report(log, rows),
            "burst": burst_report(log, rows),
            "done": "DEVCHECK-BENCH-DONE" in log,
-           "errors": re.findall(r"(Error.*|non-recoverable.*)", log)[:3]}
+           # (issue #708: what the ship's steps and the outposts' check found)
+           "errors": (re.findall(r"(Error.*|non-recoverable.*)", log) + re.findall(r"DEVCHECK-BENCH-SHIP-FAIL (.*)", log))[:3],
+           "outposts": bench_json(log, "OUTPOSTS")}
     if cfg["scene"] == "planner":
         run["plan"] = plan_report(log)
     if cfg.get("slice"):
@@ -2365,7 +2803,13 @@ def print_bench(results):
         for what in ("build", "remove", "plain-build", "plain-remove", "asm-build", "asm-remove", "ghost-paste", "ghost-remove",
                      "cable-ghost-paste", "cable-ghost-paste-after", "cable-ghost-remove", "cable-ghost-remove-after",
                      "cable-ghost-paste2", "cable-ghost-build", "cable-ghost-build-after",
-                     "ghost-after"):
+                     "ghost-after",
+                     # issue #708: a ship moved as Space Exploration moves one (clone_brush, then raise_destroy)
+                     "ship-build", "ship-launch", "ship-launch-clone", "ship-launch-destroy", "ship-launch-after",
+                     "ship-land", "ship-land-clone", "ship-land-destroy", "ship-land-after",
+                     "ship-plain", "ship-plain-clone", "ship-plain-destroy",
+                     "ship-bridged-launch", "ship-bridged-launch-clone", "ship-bridged-launch-destroy", "ship-bridged-launch-after",
+                     "ship-bridged-land", "ship-bridged-land-clone", "ship-bridged-land-destroy", "ship-bridged-land-after"):
             v = b.get(what)
             if v:
                 print(f"  {scene_label(s)} {s['size']} {what:12}: {fmt(v.get('n'), 0)} entities, loop {fmt(v.get('ms'), 1)} ms, "
@@ -2580,9 +3024,18 @@ def main():
             p.add_argument("--ticks", type=int, default=1500)
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
             p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
+    p = sub.add_parser("se")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
+    p.add_argument("--ticks", type=int, default=2400)
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p = sub.add_parser("launch")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
-    p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
-                   "one than the cut-off 0.5.0 must be refused: issue #146)")
+    p.add_argument("--from-ref", default="v0.6.0", help="the git tag or commit of the old version (default v0.6.0; an older "
+                   "one than the cut-off 0.6.0 must be refused: issues #146, #690)")
     p.add_argument("--bump", action="store_true",
                    help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
                         "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "
@@ -2625,6 +3078,11 @@ def main():
                    "in the logistic network after the build burst, then removed in one tick")
     p.add_argument("--cable-ghosts", type=int, default=0, metavar="N", help="issue #670: N ME Cable ghosts in a square after the "
                    "build burst: pasted in one tick, removed in one, pasted again and built in one (with the ticks after)")
+    p.add_argument("--ship", type=int, default=0, metavar="N", help="issue #708: after the build burst, a network of about N ME "
+                   "blocks moved to another surface and back the way Space Exploration moves a spaceship (clone_brush, then "
+                   "raise_destroy), then N plain chests, then the ship as a part of the scene's network behind a quantum bridge")
+    p.add_argument("--outposts", type=int, default=0, metavar="K", help="issue #708: K more surfaces, each with a small part of "
+                   "the first network behind an ME Quantum Bridge (the network spans K + 1 surfaces)")
     p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
                    "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
@@ -2654,6 +3112,10 @@ def main():
         if a.ticks % BENCH_WARMUP:
             sys.exit(f"--ticks must be a multiple of {BENCH_WARMUP}")
         return bench(a)
+    if a.cmd == "se":
+        return se(a)
+    if a.cmd == "launch":
+        return launch(a)
     if a.cmd == "migrate":
         return migrate(a)
     if a.cmd == "setup":

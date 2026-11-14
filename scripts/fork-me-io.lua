@@ -2886,6 +2886,21 @@ function M.on_configuration_changed()
 	table.sort(s.list)
 end
 
+--- The interface or bus `source` was moved to `destination` (scripts/fork-me-move.lua): its cards go with it. Its filters,
+--- rows and priority the clone has already (M.on_built with a source); the fluid of an interface's sides is in the cloned
+--- side tanks.
+function M.on_moved(source, destination)
+	cards.move_cards(source, destination)
+	icards.move_cards(source, destination)
+	--- issue #704: the jobs its Crafting Card started and the retries it waits for (the jobs name the clone as their owner:
+	--- M.carry_links of scripts/fork-me-autocraft.lua)
+	local a, b = rec_of(source.unit_number), rec_of(destination.unit_number)
+	if a and b and a ~= b and (a.cjobs or a.cretry) then
+		b.cjobs, b.cretry, b.cnext, b.cstat = a.cjobs, a.cretry, a.cnext, a.cstat
+		a.cjobs, a.cretry, a.cnext = nil, nil, nil
+	end
+end
+
 remote.add_interface("gregtorio-me-io", {
 	--- issue #420 (tests): the interface looks at its sides now (the fallback's look); true when a tank was made or removed
 	refit_tanks = function(entity)

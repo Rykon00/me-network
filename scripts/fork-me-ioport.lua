@@ -486,6 +486,17 @@ function M.by_unit(unit)
 	return rec and rec.entity and rec.entity.valid and rec.entity or nil
 end
 
+--- The IO port `source` was moved to `destination` (scripts/fork-me-move.lua): its two cells and its cards go with it
+function M.on_moved(source, destination)
+	local a, b = rec_of(source), rec_of(destination)
+	if not (a and b) or a == b then return end
+	cells_of(a)
+	cells_of(b)
+	a.cells, b.cells = b.cells, a.cells
+	cards.move_cards(source, destination)
+	wake(destination.unit_number)
+end
+
 remote.add_interface("gregtorio-me-ioport", {
 	info = function(entity) return M.info(entity) end,
 	set_mode = function(entity, mode) return M.set_mode(entity, mode) end,

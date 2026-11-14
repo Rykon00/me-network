@@ -103,39 +103,11 @@ for _, tier in ipairs({ "1k", "4k", "16k", "64k", "256k", "1024k", "4096k", "163
 	SWAPS["me-" .. tier .. "-fluid-storage-cell"] = { ["plastic-bar"] = each(GLASS) }   -- (the fluid cell housing's quartz glass)
 end
 
---- the recipe `name` with its stand-ins swapped (an item that is a stand-in of itself stays; equal items are merged)
-local function swapped(name, swaps)
-	local r = data.raw.recipe[name]
-	if not r then return end
-	local out, at = {}, {}
-	local function put(item, amount)
-		if not item or amount <= 0 then return end
-		if at[item] then out[at[item]].amount = out[at[item]].amount + amount
-		else out[#out + 1] = { type = "item", name = item, amount = amount } at[item] = #out end
-	end
-	for _, i in ipairs(r.ingredients or {}) do
-		local to = i.type ~= "fluid" and swaps[i.name]
-		if to then
-			for _, t in ipairs(to) do put(t[1], type(t[2]) == "table" and t[2].n or i.amount * t[2]) end
-		elseif i.type == "fluid" then
-			out[#out + 1] = table.deepcopy(i)
-		else
-			put(i.name, i.amount)
-		end
-	end
-	for _, a in ipairs(swaps.add or {}) do put(a[1], a[2]) end
-	local def = table.deepcopy(r)
-	def.ingredients = out
-	return def
-end
-
-for _, name in ipairs(table.deepcopy(ME.recipes)) do
-	local swaps = SWAPS[name]
-	if swaps then
-		local def = swapped(name, swaps)
-		if def then ME.replace_recipe(def) end
-	end
-end
+--- (the swapping itself: prototypes/compat/common.lua, shared with the Space Exploration compatibility, which reads this
+--- table to lay its own stand-ins over it when both mods are active)
+ME.krastorio2.swaps = SWAPS
+ME.krastorio2.glass = GLASS
+require("prototypes.compat.common").apply(SWAPS)
 
 --------------------------------------------------------------------------------
 --- Issue #593: the ME Molecular Assembler again. prototypes/autocrafting.lua made it in our data.lua from the item
@@ -144,17 +116,9 @@ end
 --- its own machines (crushing, electrolysis, matter, ...) are never categories of the assembling machine 2.
 --------------------------------------------------------------------------------
 
-local assembler = data.raw["assembling-machine"]["me-molecular-assembler"]
-local base = data.raw["assembling-machine"]["assembling-machine-2"]
-if assembler and base then
-	local categories = {}
-	for _, c in pairs(base.crafting_categories or {}) do
-		if not c:find("fluid") then categories[#categories + 1] = c end
-	end
-	ME.make_molecular_assembler{ base = "assembling-machine-2", crafting_categories = categories,
-		crafting_speed = assembler.crafting_speed, energy_usage = assembler.energy_usage }
-	ME.krastorio2.assembler_categories = categories
-end
+ME.krastorio2.assembler_categories = require("prototypes.compat.common").remake_assembler(function(category)
+	return not category:find("fluid")
+end)
 
 --------------------------------------------------------------------------------
 --- Issue #594: the technologies on Krastorio 2's science tiers. The storage ladder follows its tiers: up to 256k the

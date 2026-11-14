@@ -884,7 +884,7 @@ function M.tell_waiting(p, player, by_hand)
 	local last = s.told[player.index]
 	if last and game.tick < last + 600 then return end
 	s.told[player.index] = game.tick
-	local gps = string.format("[gps=%d,%d,%s]", math.floor(e.position.x), math.floor(e.position.y), e.surface.name)
+	local gps = N.place.gps(e.position, e.surface)            -- (issue #713: with the zone's name)
 	if c > 0 then player.print({ "fork-me-pattern.waiting-cards-message", c, gps }) end
 	if n > 0 then player.print({ "fork-me-pattern.waiting-message", n, gps }) end
 end
@@ -1199,8 +1199,7 @@ local function vanish_provider(s, p)
 	if n > 0 and surface then
 		local force = game.forces[p.force or "player"]
 		if force then
-			force.print({ "fork-me-pattern.provider-vanished", n,
-				string.format("[gps=%d,%d,%s]", math.floor(p.position.x), math.floor(p.position.y), surface.name) })
+			force.print({ "fork-me-pattern.provider-vanished", n, N.place.gps(p.position, surface) })
 		end
 	end
 	p.slots = {}
@@ -2996,6 +2995,12 @@ local function job_step(s, job, work)
 
 	--- 4) done?
 	if job.done_runs >= job.total_runs and #job.leases == 0 then
+		--- issue #710: the product came by chance and less of it than asked for: more runs, while the network has the
+		--- ingredients
+		if M.chance_top_up(job, net) then
+			set_wait(job, nil)
+			return
+		end
 		job.closing = "done"
 		job.closing_steps = 0
 		set_wait(job, nil)
@@ -3465,6 +3470,59 @@ function M.start(entity, key, amount, owner, want, waker)
 	return id, nil, plan
 end
 
+--- Issue #710: a requested product that a recipe gives by chance (Space Exploration's core fragment processing: a product at
+--- 30 %; any recipe with a probability or a range). The plan counts the product at its expected yield (product_yield:
+--- amount x probability, a range at its mean) and runs the pattern ceil(amount / yield) times; every other product of the
+--- runs goes into the network as it always did. Chance may give less than the plan expected. When all runs are done and the
+--- job has made less of its item than asked for, it adds the runs the shortfall needs at the expected yield (again) and
+--- takes their ingredients from the network's stock, as the start did, and goes on; so a job is done when the requested
+--- amount is there (more than asked for goes into the network with the rest). It ends with what it has, as before this
+--- issue, when the stock lacks an ingredient of those runs (nothing is crafted for a top-up: the plan is not made again),
+--- or after TOP_UPS rounds (a product at a tiny chance must not keep a CPU for ever; the level maintainer or the Crafting
+--- Card that asked starts the next job). Only the step that makes the job's item is topped up: an intermediate that came
+--- short is taken from the network's stock, or stalls the job, as before (step 5 of job_step).
+M.TOP_UPS = 8
+function M.chance_top_up(job, net)
+	local key = job.item
+	if job.closing or not key or (job.topups or 0) >= M.TOP_UPS then return false end
+	local short = job.amount - (job.sent or 0) - (job.pool[key] or 0)
+	if short <= FLUID_EPS then return false end
+	for i = #job.steps, 1, -1 do                           -- (the item's own step is the last one that makes it)
+		local step = job.steps[i]
+		local yield, exact = def_yield(step.def, key)
+		if yield > 0 then
+			if exact then return false end
+			local runs = math.ceil(short / yield - 1e-9)
+			local inputs = def_inputs(step.def)
+			local take = {}
+			for j = 1, #inputs do
+				local k = inputs[j][1]
+				local lack = inputs[j][2] * runs - (job.pool[k] or 0)
+				if lack > FLUID_EPS then
+					if is_fluid(k) then lack = lack + FLUID_MARGIN end
+					if base_count(net, k) < lack then return false end
+					take[#take + 1] = { k, lack }
+				end
+			end
+			for _, t in ipairs(take) do
+				local got
+				if is_fluid(t[1]) then
+					got = fluids.remove_key(net, t[1], t[2])
+				else
+					local name, q = N.parse_key(t[1])
+					got = N.extract(net, name, q, t[2])
+				end
+				if got > 0 then pool_add(job, t[1], got) end
+			end
+			step.runs = step.runs + runs
+			job.total_runs = job.total_runs + runs
+			job.topups = (job.topups or 0) + 1
+			return true
+		end
+	end
+	return false
+end
+
 --- Issue #418: the plan of `amount` more joins `job`: its ingredients are taken out of the network into the job's pool, each
 --- step adds its runs to the job's step of the same pattern (or comes after the job's steps), the job's amount, runs and
 --- bytes grow. Returns the job's id, nil and the plan (as M.start does), and true (merged).
@@ -3598,7 +3656,7 @@ function M.job(id)
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool, sent = job.sent or 0,
 		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
-		steps = steps, reason = job.reason, problem = job.problem }
+		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0 }
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)
@@ -3691,8 +3749,7 @@ local function resize_provider(p)
 		end
 	end
 	if n > 0 and p.entity.valid then
-		p.entity.force.print({ "fork-me-pattern.provider-shrunk", n, string.format("[gps=%d,%d,%s]", math.floor(p.position.x),
-			math.floor(p.position.y), p.entity.surface.name) })
+		p.entity.force.print({ "fork-me-pattern.provider-shrunk", n, N.place.gps(p.position, p.entity.surface) })
 	end
 	changed(p)
 end
@@ -4560,6 +4617,171 @@ end
 
 --- Other mods and the devcheck runtime test use the same code paths. Resource keys are item names
 --- or "fluid/<fluid name>".
+--- The pattern provider `source` was moved to `destination` (scripts/fork-me-move.lua): its encoded patterns (and those a
+--- blueprint still waits for) go into the same slots, then its cards, so the source has nothing to spill. The patterns
+--- first: a provider that loses its Pattern Capacity Cards puts the patterns above its size on the ground.
+---
+--- Issue #704: a crafting job that runs while its blocks are moved goes with them. The blocks of a move leave and arrive one
+--- by one, so the job is carried in a book of the tick, `storage.fork_ae2.carry = { tick, jobs = { [job id] = a moved
+--- crafting block }, machines = { [old unit] = { source, clone, products_finished of the clone less the source's } } }`:
+---   * a crafting block that moves hands its group's mode to the clone's group and takes the group's job off the old group
+---     (so the group that is taken apart block by block pauses nothing); M.after_move puts the job on the clone's group;
+---   * the jobs started at the moved block (`job.anchor`, with `surface` and `pos`), the jobs it asked for (`job.owner`: a level
+---     maintainer, a Crafting Card's block, an ME Logistic Interface) and what its starts lacked (`s.wmissing`, keyed
+---     "m<unit>:<key>" / "c<unit>:<key>") follow it to the clone (M.carry_links; looked up through an index made once per
+---     tick, so a move of N blocks is not N walks over the jobs);
+---   * a pattern machine a job works with is no block of this mod and its removal raises no event here: M.on_machine_cloned
+---     notes its clone, and M.after_move hands the lease to the clone when the source is gone (a clone whose source stays
+---     is a copy: the lease stays with the source).
+--- M.after_move runs at the start of the next on_tick (control.lua), before any job is stepped or a CPU is given away, and
+--- costs one field read while nothing moved.
+function M.on_moved(source, destination)
+	local s = storage.fork_ae2
+	if not s then return end
+	local unit, new = source.unit_number, destination.unit_number
+	local ca, cb = s.cblocks and s.cblocks[unit], s.cblocks and s.cblocks[new]
+	if ca and cb then
+		local g, ng = s.groups[ca.group], s.groups[cb.group]
+		if g and ng and g ~= ng then
+			if g.mode then ng.mode = g.mode end
+			local job = g.job and s.jobs[g.job]
+			if job and job.group == g.id then
+				g.job, job.group = nil, nil
+				M.carry_book(s).jobs[job.id] = destination
+			end
+		end
+	end
+	if #s.active > 0 or (s.wmissing and next(s.wmissing)) then M.carry_links(s, unit, destination) end
+	local a, b = s.providers[unit], s.providers[new]
+	if not (a and b) or a == b then return end
+	b.slots, a.slots = a.slots, {}
+	b.pending, a.pending = a.pending, nil
+	b.nslots = a.nslots
+	cards.move_cards(source, destination)
+	if s.locked and s.locked[unit] then                          -- (issue #346: a lock in effect stays in effect)
+		b.locked, a.locked = a.locked, nil
+		s.locked[unit], s.locked[new] = nil, true
+	end
+	changed(b)
+end
+
+--- the book of this tick's move (a book of an earlier tick is settled first)
+function M.carry_book(s)
+	local c = s.carry
+	if c and c.tick ~= game.tick then
+		M.after_move()
+		c = nil
+	end
+	if not c then
+		c = { tick = game.tick, jobs = {}, machines = {} }
+		s.carry = c
+	end
+	return c
+end
+
+--- the block `unit` moved to `destination`: the jobs started at it, the jobs it owns and its notes of missing ingredients
+function M.carry_links(s, unit, destination)
+	local c = M.carry_book(s)
+	if not c.anchors then
+		local anchors, owners, notes = {}, {}, {}
+		local function add(index, key, value)
+			local list = index[key]
+			if not list then
+				list = {}
+				index[key] = list
+			end
+			list[#list + 1] = value
+		end
+		for _, id in pairs(s.active) do
+			local job = s.jobs[id]
+			if job then
+				local e = job.anchor
+				if e and e.valid and e.unit_number then add(anchors, e.unit_number, job) end
+				if job.owner then add(owners, job.owner, job) end
+			end
+		end
+		for key, w in pairs(s.wmissing or {}) do
+			if w.unit then add(notes, w.unit, key) end
+		end
+		c.anchors, c.owners, c.notes = anchors, owners, notes
+	end
+	local new = destination.unit_number
+	for _, job in ipairs(c.anchors[unit] or {}) do
+		job.anchor = destination
+		job.surface = destination.surface.index
+		job.pos = { x = destination.position.x, y = destination.position.y }
+	end
+	for _, job in ipairs(c.owners[unit] or {}) do job.owner = new end
+	local keys = c.notes[unit]
+	if keys then
+		for _, key in ipairs(keys) do
+			local w = s.wmissing[key]
+			if w then
+				local kind, rest = key:match("^(%a)" .. unit .. "(:.*)$")
+				s.wmissing[key] = nil
+				w.unit = new
+				s.wmissing[kind and (kind .. new .. rest) or key] = w
+			end
+		end
+		M.wmiss.ver = M.wmiss.ver + 1
+	end
+end
+
+--- on_entity_cloned of any entity: a pattern machine that a job works with now is noted with its clone
+function M.on_machine_cloned(source, destination)
+	local s = storage.fork_ae2
+	if not (s and s.busy and source and source.valid and destination and destination.valid) then return end
+	local unit = source.unit_number
+	if not (unit and s.busy[unit] and destination.unit_number) then return end
+	local crafts = source.type == "assembling-machine" or source.type == "furnace"
+	M.carry_book(s).machines[unit] = { source, destination,
+		crafts and (destination.products_finished - source.products_finished) or 0 }
+end
+
+--- the start of a tick (control.lua): what a move of the tick before left open
+function M.after_move()
+	local s = storage.fork_ae2
+	local c = s and s.carry
+	if not c then return end
+	s.carry = nil
+	for old, m in pairs(c.machines) do
+		local source, destination = m[1], m[2]
+		local id = s.busy[old]
+		local job = id and s.jobs[id]
+		if job and not source.valid and destination.valid then
+			local new = destination.unit_number
+			for _, lease in pairs(job.leases) do
+				if lease.unit == old then
+					lease.machine, lease.unit = destination, new
+					if lease.finished0 then lease.finished0 = lease.finished0 + m[3] end
+				end
+			end
+			s.busy[old], s.busy[new] = nil, id
+		end
+	end
+	for id, block in pairs(c.jobs) do
+		local job = s.jobs[id]
+		if job and not job.group and (job.status == "running" or job.status == "queued") then
+			local b = block.valid and s.cblocks[block.unit_number]
+			local g = b and s.groups[b.group]
+			if g and g.status == "ok" and not g.job and g.bytes >= job_bytes(job) then
+				g.job, job.group = id, g.id
+				local e = g.anchor
+				if e and e.valid then
+					job.surface = e.surface.index
+					set_pos(job, e)
+					if not (job.anchor and job.anchor.valid) then job.anchor = e end
+				end
+				group_changed(g)
+			elseif job.status == "running" and not job.closing then
+				--- (the CPU did not arrive whole: the job pauses with what it holds and takes the next CPU that fits)
+				job.status, job.wait = "queued", nil
+			end
+		end
+	end
+	s.await = nil
+end
+
 remote.add_interface("gregtorio-me-autocraft", {
 	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids, bytes } or nil
 	plan = function(entity, key, amount, fresh_only)
@@ -4595,6 +4817,12 @@ remote.add_interface("gregtorio-me-autocraft", {
 	--- issue #350: the mode of the CPU of a crafting block ("all", "player", "automation")
 	set_cpu_mode = function(block, mode) return M.set_cpu_mode(block, mode) end,
 	cancel = function(id) return M.cancel(id) end,
+	--- (tests, issue #704) the notes of what failed starts lacked: { [owner key] = the unit of the block that noted it }
+	missing_notes = function()
+		local out = {}
+		for key, w in pairs(storage.fork_ae2 and storage.fork_ae2.wmissing or {}) do out[key] = w.unit end
+		return out
+	end,
 	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,

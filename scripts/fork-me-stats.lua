@@ -150,7 +150,7 @@ end
 
 local function surface_name(index)
 	local surface = index and game.get_surface(index)
-	return surface and surface.name or "?"
+	return surface and N.place.name(surface) or "?"         -- (issue #713: Space Exploration's zone name)
 end
 
 --- the lines of one network

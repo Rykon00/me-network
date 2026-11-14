@@ -3,7 +3,6 @@
 
 --- the network core: cable graph, controller, drives and cells, storage API
 local fork_net = require("scripts.fork-me-network")
-local legacy_drives = require("scripts.fork-me-legacy-drives")   -- (issue #689: the old drive items, once per save)
 --- ME Storage Bus: a chest or cargo wagon, or the fluid segment of a tank, as network storage (its visits run in the
 --- I/O step; the fluid side is scripts/fork-me-fluid-storagebus.lua)
 local fork_sbus = require("scripts.fork-me-storagebus")
@@ -75,6 +74,9 @@ local memcard = require("scripts.fork-me-memorycard")
 --- issue #629: the ME P2P Tunnels (frequencies; a pattern provider serves the machines their outputs face)
 local fork_p2p = require("scripts.fork-me-p2p")
 local ghostwin = require("scripts.fork-me-ghostwin")      -- (issue #659: the ME window of a ghost)
+--- blocks another mod moves (a clone, then its source destroyed: a Space Exploration spaceship), surfaces that are deleted
+local move = require("scripts.fork-me-move")
+require("scripts.fork-me-highlight")                      -- (issue #699: the network highlighted while a member is hovered)
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -130,6 +132,8 @@ end)
 --- cloned entities (e.g. by other mods) need to be registered as well (the settings of drives, interfaces, buses,
 --- providers, level maintainers and circuit interfaces are copied; an interface takes its cloned side tanks)
 script.on_event(defines.events.on_entity_cloned, function(event)
+	move.on_cloned(event.source, event.destination)          -- (a move when a script destroys the source in this tick)
+	fork_ae2.on_machine_cloned(event.source, event.destination)   -- (issue #704: a pattern machine a job works with)
 	fork_net.on_built(event.destination)
 	fork_net.on_cloned(event.source, event.destination)
 	fork_io.on_built(event.destination, nil, event.source)
@@ -211,7 +215,7 @@ local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
 --- underground pipes and pumps: a removed one may split the fluid segment of a storage bus on fluid)
 for _, t in pairs({ "simple-entity-with-force", "display-panel", "storage-tank", "lamp", "electric-energy-interface", "container",
-	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
+	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-landing-pad", "linked-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end
@@ -287,7 +291,25 @@ script.on_event(defines.events.on_object_destroyed, function(event)
 	fork_lc.on_object_destroyed(event)
 	cableshape.on_object_destroyed(event)                     -- (issue #670: an ME ghost gone, its cable ghost neighbours follow)
 end)
-script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
+--- a block a script destroys in the tick it was cloned was moved (scripts/fork-me-move.lua): what it holds goes to its clone
+--- first (the modules that hold items, the graph's cells last), then it leaves like any destroyed block, with nothing to spill
+move.hooks = { fork_ae2.on_moved, fork_circuit.on_moved, fork_io.on_moved, fork_sbus.on_moved, fork_wl.on_moved, fork_ioport.on_moved,
+	fork_lif.on_moved, fork_bench.on_moved, fork_pt.on_moved, fork_vc.on_moved, fork_p2p.on_moved, fork_net.on_moved }
+move.destroyed = on_destroyed
+script.on_event(defines.events.script_raised_destroy, function(event)
+	local entity = event.entity
+	--- (the ME Quantum Bridge and the ME Wireless Link are electric energy interfaces, as the ME Controller is)
+	local link = entity and entity.valid and entity.type == "electric-energy-interface"
+	local moved = move.before_destroyed(entity)
+	on_destroyed(event)
+	--- (a moved bridge or link: its frequency has two blocks again, linked now, not at the next slow step)
+	if moved and link then fork_qbridge.step() end
+end, REMOVED_FILTER)
+--- a surface that is deleted or cleared takes its entities without an event: its members leave first
+script.on_event({ defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, function(event)
+	move.on_surface_gone(event)
+	fork_net.place.on_surface_gone(event)                     -- (issue #713: the kept name of the surface)
+end)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
 --- interfaces and buses, storage buses, ME IO Ports (issue #386), crafting jobs, provider rescans, level maintainers and
@@ -297,6 +319,7 @@ local function on_tick(tick)
 	--- a save of a development build of the same version (no on_configuration_changed): the underground cables' turn once
 	if not storage.fork_me_ug_vanilla then fork_net.migrate_underground_direction() end
 	sched.mark(tick)
+	fork_ae2.after_move()                                     -- (issue #704: a job carried over a move of the tick before)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ioport.on_tick(tick)
@@ -309,6 +332,7 @@ local function on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
 	cableshape.on_tick(tick)                                  -- (issue #670: queued ghosts shaped, the cables under a paste)
+	fork_net.highlight.on_tick()                              -- (issue #699: a highlight that still spreads)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
@@ -336,24 +360,30 @@ script.on_event(defines.events.on_player_rotated_entity, function(event)
 end)
 
 --- Issue #146: saves from before 0.5.0 are no longer converted (the old drives, controller and interface of before the
---- ME rework, the old fluid blocks of issue #3, the providers of before issue #80 are gone). Such a save is refused
---- before anything is changed: the engine aborts the load, the file stays as it was. `old`: the mod's version in the
---- save, or nil for the state of a Gregtorio Continued 0.4.x save (the hand-over).
-local CUT_OFF = { 0, 5, 0 }
-local function before_cut_off(version)
+--- ME rework, the old fluid blocks of issue #3, the providers of before issue #80 are gone). Issue #690: since 0.7.0 the
+--- cut-off is 0.6.0, the version that replaced the old drive items of a save by ME Drives with their cells (issue #689)
+--- before their prototypes were removed. Such a save is refused before anything is changed: the engine aborts the load,
+--- the file stays as it was. `old`: the mod's version in the save, or nil for the state of a Gregtorio Continued 0.4.x
+--- save (the hand-over).
+local CUT_OFF = { 0, 6, 0 }
+local function version_before(version, ref)
 	local parts = {}
 	for n in string.gmatch(version, "%d+") do parts[#parts + 1] = tonumber(n) end
 	for i = 1, 3 do
-		local a, b = parts[i] or 0, CUT_OFF[i]
+		local a, b = parts[i] or 0, ref[i]
 		if a ~= b then return a < b end
 	end
 	return false
 end
+local function before_cut_off(version) return version_before(version, CUT_OFF) end
 local function refuse_old_save(old)
+	--- a save from before 0.5.0 (or a Gregtorio Continued 0.4.x save) needs 0.5.0 first, then 0.6.0
+	local steps = (not old or version_before(old, { 0, 5, 0 }))
+		and ("me-network 0.5.0" .. (old and "" or " (and a Gregtorio Continued version that works with it)") .. ", save it, then load it once with me-network 0.6.0")
+		or "me-network 0.6.0"
 	error("\n\nme-network: this save holds an ME network of " .. (old and ("me-network " .. old) or "Gregtorio Continued 0.4.x")
-		.. ".\nSince 0.5.1 me-network no longer converts saves from before 0.5.0 (issue #146).\n"
-		.. "Load the save once with me-network 0.5.0" .. (old and "" or " (and a Gregtorio Continued version that works with it)")
-		.. ", save it, then update. The save file was not changed.\n", 0)
+		.. ".\nSince 0.7.0 me-network no longer converts saves from before 0.6.0 (issues #146, #690).\n"
+		.. "Load the save once with " .. steps .. ", save it, then update. The save file was not changed.\n", 0)
 end
 local function handover_pending()
 	local iface = remote.interfaces["gregtorio-me-handover"]
@@ -368,7 +398,6 @@ script.on_init(function()
 	wired.migrate()                                           -- (issue #628: old buses and providers, before the graph)
 	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
-	legacy_drives.on_init()
 	cableshape.migrate()                                      -- (issue #670: ME ghosts of a handed-over save)
 end)
 
@@ -396,9 +425,6 @@ script.on_configuration_changed(function(data)
 	fork_ae2.clean_removed_items()
 	fork_circuit.clean_removed_items()
 	fork_io.clean_removed_items()
-	--- issue #689: the old drive items of a save (in the drives' cells, inventories, hands, belts, on the ground) become ME Drives
-	--- with their cells, once, before the graph rebuild computes the networks' totals from the cells
-	legacy_drives.convert()
 	--- the underground cables of a save from before 0.5.11 turned to the vanilla underground pipe's rule, then the graph first
 	--- (the only map scan), then the modules that read it
 	fork_net.migrate_underground_direction()
@@ -406,6 +432,7 @@ script.on_configuration_changed(function(data)
 	cableshape.migrate()                                      -- (issue #670: the ME ghosts registered, cable ghosts shaped)
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
 	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil
+	storage.fork_me_legacy_drives = nil                       -- (issue #690: the flag of 0.6.0's conversion of the old drive items)
 	fork_me.on_configuration_changed()
 	fork_fluids.on_configuration_changed()
 	fork_ae2.on_configuration_changed()

@@ -3441,6 +3441,24 @@ cable, built in one tick and removed in one tick; `bench --sizes 1000 --runs 3`,
 
 About 0.1 ms per member, what the other ME blocks cost (the burst of 998 buses, interfaces and cables: 99 to 105 ms).
 
+**The mark of an assembler that is switched off** (issue #743) is a render object on the entity, drawn by that slow step
+when it switches the assembler off and destroyed when it switches it on: nothing per tick, and nothing in a step in which
+no assembler changes its state (the blinking is the engine's: `blink_interval`). The ids are kept by unit number
+(`s.asm_marks`), so the graph's rebuild, which makes every node anew, does not draw a second mark. What a change of
+state costs, measured with one network of 2000 assemblers whose controller loses its power and gets it back
+(`M.assembler_step` under a LuaProfiler, one run on a quiet machine):
+
+| the step in which 2000 assemblers change | without marks | with a mark each |
+|---|---|---|
+| switched off | 6.4 ms | 14.6 ms |
+| switched on | 4.9 ms | 9.4 ms |
+| nothing changes | 3.6 ms | 3.5 ms |
+
+About 4 us to draw a mark and 2 us to destroy one. So that a big network that stops does not hitch, a step draws at
+most 250 new marks (`M.ASM_MARK_STEP`, about 1 ms): 2000 assemblers are marked within 8 seconds. Marks are removed at
+once, so no working assembler keeps one. (Later runs with the cap were on a busier machine, their unchanged step three
+times as dear; they show the marks arriving 250 a step and no number worth a table. The runtime test counts them.)
+
 **The scenes** have an assembler next to every pattern provider, members now: `bench --check origin/main --sizes 100,1000
 --runs 3` (three rounds in turns):
 
@@ -4627,3 +4645,195 @@ the radius (every second tile of 180 x 180, a drive on every ninth odd column):
 | none to turn (the searches only) | 13.6 to 17.0 | 21.0 to 31.7 |
 
 Measured with 36 names, before the Pattern Provider joined the list. A key is a person pressing it, so this stays a cost of a moment, not of the running base; the bench has no players, none of it runs there.
+
+## The network highlighted on hover (issue #699)
+
+**What changed:** a new module, scripts/fork-me-highlight.lua. While a player hovers a member, the cables of its network within
+64 x 40 tiles are drawn in grey (render objects for that player). Nothing runs for a player who hovers nothing of the network;
+on_tick reads one field of `storage` while no highlight spreads. The bench has no players, so a hover never runs there.
+
+**How it got cheap** (a probe mod from `on_init`, headless, `helpers.create_profiler`, the hovered cable in the middle of each
+network). The first version drew one picture per cable (the pipe's visualization of its shape) after a
+`find_entities_filtered` over the area:
+
+| ms per hover, first version | line 1000 | comb 5k | comb 20k | grid 10k |
+|---|---|---|---|---|
+| cables drawn | 129 | 4 181 | 4 345 | 6 000 (the cap) |
+| hover | 1.3 | 47 | 86 | 144 |
+
+About 10 us per render object. One line per straight run of cables instead cut the drawing to 0.05 to 0.2 ms, but finding the
+cables still cost about 5 us each, as much with a search of the surface as with a walk through the graph (a pass over the
+graph's tables alone costs about 0.75 us per member here, a table insert 0.5 us). So the walk is spread over ticks: at most 200
+steps a tick (a step is one member visited or one cable followed along a run), drawing as it goes, so no tick pays more than
+the budget, whatever the network's size. The comb: a spine with rows of cables on every second tile (half the tiles are
+cable); the grid: every tile is cable (the worst case).
+
+| final version, three runs | line 1000 | comb 1k | comb 5k | comb 20k | comb 45k | grid 10k | grid 40k |
+|---|---|---|---|---|---|---|---|
+| objects drawn | 1 | 26 | 42 | 42 | 42 | 181 | 210 |
+| ticks until drawn | 2 | 10 | 41 | 44 | 44 | 118 | 157 |
+| ms in the first tick | 0.7 to 1.0 | 0.8 | 1.0 to 1.9 | 0.7 to 1.4 | 1.0 to 1.3 | 1.0 to 1.8 | 1.4 to 1.9 |
+| ms per tick after it (mean) | | 0.7 to 0.9 | 1.0 | 1.0 | 1.0 | 1.3 to 1.4 | 1.4 |
+| ms to clear | 0.01 | 0.03 | 0.04 | 0.04 | 0.04 to 0.06 | 0.13 to 0.33 | 0.16 to 0.53 |
+| ms for a hover kept (same network, near) | 0.01 | 0.02 | 0.02 to 0.04 | 0.02 to 0.04 | 0.02 | 0.02 to 0.03 | 0.02 to 0.03 |
+
+So a hover costs about 1 ms a tick for under a second in a cable layout like the comb (2 to 2.6 s for a screen full of cable),
+the same in a network of 5 000 or 45 000 members. A highlight that is still spreading starts again only when its own network
+changes its members: the graph's global version changes with every build anywhere, and in the runtime test, where other
+scenes build at the same time, the grid of 900 cables took 70 ticks with that rule and 20 with the network's own count.
+
+`bench --check v0.6.1` (sizes 100, 1000, 5000, three rounds in turns; the maintainer's game ran on the same machine):
+
+| | v0.6.1 | #699 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.344 / 4.00 | 0.340 / 3.54 |
+| 1000: script avg / p99 (ms) | 0.569 / 4.36 | 0.574 / 4.26 |
+| 5000: script avg / p99 (ms) | 1.578 / 5.95 | 1.542 / 5.80 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.92 / 41.71 / 61.79 | the same |
+| burst build / remove ms (5000) | 174.3 / 149.6 | 172.9 / 188 (±98) |
+| load first tick ms (100 / 1000 / 5000) | 2.05 / 6.65 / 11.41 | 4.13 / 6.02 / 10.30 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+
+That run found one regression beyond the noise, the first tick after the load at size 100 (2.05 -> 4.13 ms, noise 1.81). The
+module does nothing on load and nothing in a tick while no highlight spreads (one read of `storage`), and the same number
+was lower at 1000 and 5000. `bench --check v0.6.1 --sizes 100 --runs 6` again: 2.15 ±1.03 -> 2.49 ±2.07 ms, script avg 0.270 ->
+0.288 ms (±0.07 / ±0.11), `regressions beyond the noise: 0`.
+
+## Space Exploration: many surfaces and a moved ship (issue #708)
+
+Measured first, then decided (the maintainer's order). Machine as above (i7-8700K), Factorio 2.1.24, Space Exploration
+0.7.64 with its dependencies (Space Age off, quality on), three runs each, 3600 ticks; `bench --with-mod space-exploration`.
+
+### Does the scheduler walk the surfaces?
+
+By the code: no. Every `pairs(game.surfaces)` of `scripts/` is in `on_configuration_changed`, in a migration, or in the
+graph's rebuild and its scan for marked members (`M.rebuild`, `M.keep_graph`, `M.scan_decon`: `on_init` and
+`on_configuration_changed`). Nothing in `on_tick` or `on_nth_tick` names a surface: the blocks are visited from their
+queues, the 60 tick step walks the networks, the ME Chests and 200 members of the sweep.
+
+By the numbers (script time per tick, ms; the scene "me" at 5000 buses and interfaces, 20 000 members; "idle": nothing to
+move; "noent": the same scene without its ME entities, i.e. the other mods' scripts):
+
+| | busy avg | busy p99 | idle avg | idle p99 | noent avg |
+|---|---|---|---|---|---|
+| vanilla (Space Age, quality) | 0.930 | 2.86 | 0.345 | 1.03 | 0.008 |
+| vanilla, 50 outposts on 50 more surfaces | 0.989 | 3.71 | 0.388 | 2.08 | |
+| Space Exploration | 1.401 | 13.2 | 0.370 | 1.11 | 0.025 |
+| Space Exploration, 20 outposts | 1.327 | 12.9 | 0.425 | 1.46 | |
+| Space Exploration, 50 outposts | 1.376 | 13.0 | 0.419 | 2.13 | |
+
+An outpost (`--outposts K`) is a surface of its own with an ME Quantum Bridge, eight cables, an ME Interface and an ME
+Storage Bus on a chest, joined to the scene's network by its bridge; with 50 of them one network spans 51 surfaces (52
+with Nauvis, plus Space Exploration's own) and has 550 members more. 50 outposts cost 0.04 to 0.06 ms a tick, which is what
+their 100 interfaces and storage buses cost on one surface (about 0.8 us per block and tick, the idle scene's rate:
+0.345 ms for 20 000 members with 5000 buses and interfaces). 20 and 50 outposts differ by less than the runs do. So the
+cost follows the blocks, not the surfaces.
+
+Space Exploration itself costs 0.025 ms a tick in this scene ("noent"); the idle ME scene costs the same with it and
+without it (0.345 and 0.370 less its 0.017 more).
+
+### The busy scene with Space Exploration: the Circuit Interface, not the surfaces
+
+The busy scene is 0.47 ms a tick dearer with Space Exploration, with 120 ticks above 5 ms in the window (one every 30
+ticks, 12 to 17 ms; vanilla: 7 ticks). The profile (`--profile 1000 --with-mod space-exploration`) names it:
+
+| | ms/tick | calls/tick | us/call |
+|---|---|---|---|
+| `circuit.visit_circuit` | 0.462 | 0.17 | 2773 |
+| `circuit.circuit_step` | 0.306 | 0.15 | 2040 |
+| `circuit.network_signals` | 0.154 | 0.02 | 9225 |
+
+The scene stores every item of the game in its drives, and with Space Exploration that is 2900 item types (855 in the
+vanilla profile above, where `circuit.visit_circuit` costs 0.94 ms a call). An ME Circuit Interface without a filter writes
+the 1000 largest of them as signals, 10 updates a second across all interfaces (the map setting), and its cost grows with
+the item types of the network. That is the known cost of an unfiltered Circuit Interface (the sections above), three
+times as high in a game with three times the items. It has nothing to do with surfaces; a follow-up issue asks for a
+cheaper unfiltered update. Everything else of the profile is as in vanilla.
+
+**Issue #721, the first step.** Two sorts are gone from that path. `network_signals` sorted the order strings of all
+signals at every list (2900 strings, a string comparison each); it now keeps the rank of every order string seen so far
+(a memo per load, sorted again only when a new one appears) and lays the signals out by rank. `view` picked the 1000
+largest of an unfiltered interface by sorting one formatted string per signal; it now sorts the plain amounts, takes the
+amount of the last one that fits and keeps the list's order for ties. (The old key was `1e16 - amount` as text; doubles
+step by 2 up there, so two amounts one apart could swap places at the cut. The new pick is exact.) The same scene
+(`bench --sizes 1000 --runs 1 --ticks 1200 --profile 1000 --exclusive --with-mod space-exploration`, own time per
+function):
+
+| | before | after |
+|---|---|---|
+| script, ms/tick (unprofiled run) | 0.749 | 0.612 |
+| p99 of a tick, ms | 12.50 | 7.02 |
+| `circuit.circuit_step`, us/call | 2066 | 1397 |
+| `circuit.network_signals`, us/call | 8424 | 6426 |
+
+**The second step: the kept list.** What was left was the walk over every key of the network once a second (a table
+per signal, 6.4 ms with 2900 types). It is gone as well: the network notes every key whose amount moved (`net.ckeys`,
+one table write in `moved_key`, only while a circuit interface's list exists; a cell that comes or goes drops the note
+and the list is made from scratch once). A due list is the last one with those keys counted again
+(`kept_list` in `scripts/fork-me-circuit.lua`): per signal the amounts of its keys (an item with tags and a fluid at
+several temperatures are one signal), changed in place; a new version only when an amount that is written changed; the
+layout by rank only when a signal came or went. The cost follows the keys that moved, not the keys of the network.
+
+The same scene, three runs each on the same machine (`bench --sizes 1000 --runs 3 --ticks 1200 --with-mod
+space-exploration`; the runs scatter, the first of a series is often slow):
+
+| script, ms/tick avg / p99 / max | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| before (the first step) | 1.280 / 15.69 / 29.51 | 0.736 / 7.94 / 22.80 | 0.739 / 7.92 / 21.09 |
+| the kept list | 0.599 / 7.56 / 8.78 | 0.526 / 6.90 / 7.78 | 0.620 / 7.47 / 10.09 |
+
+The median goes from 0.74 to 0.60 ms a tick and the worst tick from 21 to 9 ms. In the profile `network_signals` no
+longer appears in the window (it runs once, for the first list), and `signals_of` with the kept list costs 11 us a call.
+What remains per update is the engine's write of the section (1000 slots) and building its 1000 filters.
+
+### A ship moved in one tick
+
+`bench --ship N` (after the build burst): a network of its own of about N ME blocks (a controller, two drives with eight
+cells, a 2x2 Crafting CPU, and per row of 32 tiles a cable row with import and storage buses on chests north of it and
+ME Interfaces south of it: the burst's mix, a third cable, a third buses, a third interfaces) is moved to another
+surface and back the way Space Exploration's `scripts/spaceship-clone.lua` moves a spaceship: `LuaSurface.clone_brush`
+over its tiles, then every original destroyed with `raise_destroy`, all in one tick. Then as many steel chests are moved
+the same way (the engine's and the other mods' share), then the ship again as a part of the scene's network of 4500
+members behind an ME Quantum Bridge.
+
+Why these N: Space Exploration limits a ship by its integrity stress, about 0.78 per floor tile less the walls' credit
+(the test ship of `devcheck.py launch`: 540 tiles, stress 419). Without the infinite technology the limit is 3500, a ship
+of about 4500 tiles. 250 blocks is a small ship with a terminal, a drive and a few buses; 1000 a freighter whose hold is
+an ME network; 4000 the upper bound, nearly every tile of the largest ship an ME block.
+
+ms of the loop, median of three runs (the tick's whole script time is 1 to 2 ms more):
+
+| | 318 blocks | 1032 blocks | 4092 blocks | per block |
+|---|---|---|---|---|
+| vanilla: launch (clone + removal) | 81 (47 + 34) | 250 (136 + 112) | 992 (534 + 449) | 0.24 ms |
+| vanilla: landing | 85 | 277 | 1114 | 0.27 ms |
+| vanilla: the same number of steel chests | 21 (17 + 4) | 47 (34 + 12) | 157 (106 + 49) | 0.04 ms |
+| vanilla: as a part of a 4500 member network, launch / landing | 85 / 82 | 260 / 253 | 999 / 980 | 0.24 ms |
+| Space Exploration: launch (clone + removal) | 103 (60 + 43) | 324 (183 + 137) | 1281 (730 + 541) | 0.31 ms |
+| Space Exploration: landing | 103 | 338 | 1407 | 0.33 ms |
+| Space Exploration: the same number of steel chests | 32 (24 + 8) | 90 (64 + 26) | 320 (216 + 100) | 0.08 ms |
+| Space Exploration: as a part of a 4500 member network | 107 / 107 | 331 / 321 | 1279 / 1289 | 0.31 ms |
+| the tick after (the carried job, the wakes) | 3 | 3 | 4 to 5 | |
+
+(The entities moved are a third more than the blocks: the chests of the buses, the power.) The cost is **linear** in the
+blocks, 0.24 ms each (0.31 ms with Space Exploration, whose own handlers of the clone and removal events take 0.04 ms an
+entity, as the chests show), and the same whether the ship is a network of its own or a part of a large one. The tick
+after a move costs 3 to 5 ms (the work `M.after_move` and the woken blocks leave), nothing after that. A move is a hitch
+of a third of a second for a 1000 block ship, once at the launch and once at the landing, next to Space Exploration's own
+work of that tick.
+
+### Is the split check of every removal a bottleneck?
+
+No. The function profile of the removal of 1032 blocks (`--profile 1000 --ship 1000 --exclusive`): `remove_node_graph`
+43 ms of 112 ms (1032 calls, 42 us each, with the split search, the 194 parts it split off and the neighbours' cable
+pictures), the modules' `on_removed` 20 ms, the rest the engine's destroy and the event dispatch; of the clone:
+`add_node` 43 ms of 136 ms, `io.on_built` 17 ms, `io.ensure_tanks` 8 ms, `storagebus.on_built` 6 ms.
+
+The experiment that decides it: with the split search and the neighbours' cable pictures **switched off** for a moved
+block (a hack for the measurement, wrong as code: the parts a move leaves would have to be found in one pass at its end)
+the removal of 1032 blocks took 101 to 127 ms in four moves, against 108 to 125 ms with them. The saving is inside the
+noise. The split search of issue #38 (lever 5) already costs the size of the smaller part, and a ship's blocks leave in
+an order that keeps the parts small. So the splits are **not bundled**: it would add a second way to keep the graph
+(parts found late, a network that is wrong until the end of the move) for no measurable gain. The cost of a move is
+spread over every module's build and removal handler, 0.1 ms a block each way, the same as the build burst's (199 ms
+to build and 99 ms to remove 998 blocks in the same scene).

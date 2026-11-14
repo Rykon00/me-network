@@ -62,7 +62,7 @@ do
 	m.minable = nil
 	m.next_upgrade = nil
 	m.fast_replaceable_group = nil
-	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local icon = "__base__/graphics/icons/iron-gear-wheel.png"
 	local function hot(name, ingredients, results)
 		return { type = "recipe", name = name, categories = { "zz-devcheck-hot" }, energy_required = 1, enabled = true, icon = icon,
 			subgroup = "intermediate-product", ingredients = ingredients, results = results }
@@ -80,7 +80,7 @@ end
 --- issue #261 (gridfluid.lua): two recipes of the hot machine with water on the engine's grid of 2^-24, as Gregtorio
 --- rounds every recipe (its #117): 14.4 and 0.1234564 rounded up to the grid
 do
-	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local icon = "__base__/graphics/icons/iron-gear-wheel.png"
 	local function grid(a) return math.ceil(a * 16777216) / 16777216 end
 	local function g(name, amount)
 		return { { type = "item", name = "zz-devcheck-grid-token-" .. name, icon = icon, stack_size = 50, subgroup = "intermediate-product" },
@@ -104,7 +104,7 @@ do
 	m.minable = nil
 	m.next_upgrade = nil
 	m.fast_replaceable_group = nil
-	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local icon = "__base__/graphics/icons/iron-gear-wheel.png"
 	local function r(name)
 		return { type = "recipe", name = name, categories = { "zz-devcheck-fixed" }, energy_required = 1, enabled = true, icon = icon,
 			subgroup = "intermediate-product", ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
@@ -123,7 +123,7 @@ do
 	m.minable = nil
 	m.next_upgrade = nil
 	m.fast_replaceable_group = nil
-	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local icon = "__base__/graphics/icons/iron-gear-wheel.png"
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-bulk" }, m,
 		{ type = "item", name = "zz-devcheck-bulk-part", icon = icon, stack_size = 100, subgroup = "intermediate-product" },
 		{ type = "recipe", name = "zz-devcheck-bulk", categories = { "zz-devcheck-bulk" }, energy_required = 0.5, enabled = true,
@@ -147,7 +147,7 @@ do
 	m.minable = nil
 	m.next_upgrade = nil
 	m.fast_replaceable_group = nil
-	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local icon = "__base__/graphics/icons/iron-gear-wheel.png"
 	local out = { { type = "recipe-category", name = "zz-devcheck-p2p" }, m }
 	for _, r in ipairs({ { "a", { { type = "item", name = "iron-plate", amount = 1 } } },
 		{ "b", { { type = "fluid", name = "water", amount = 10 } } },
@@ -205,7 +205,7 @@ end
 
 if mods["gregtorio-continued"] then return end
 
-local ICON = "__base__/graphics/icons/signal/signal-info.png"
+local ICON = "__base__/graphics/icons/iron-gear-wheel.png"
 local function item(name)
 	if data.raw.item[name] then return end
 	data:extend({ { type = "item", name = name, icon = ICON, stack_size = 200, subgroup = "intermediate-product" } })

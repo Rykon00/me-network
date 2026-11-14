@@ -41,6 +41,13 @@ function M.entity_lookup(fn) lookups[#lookups + 1] = fn end
 
 function M.entity_by_unit(unit)
 	if not unit then return nil end
+	--- (an ME Controller another mod moved has a new unit number: scripts/fork-me-move.lua keeps the old one as a forward)
+	local moved = storage.fork_me_move and storage.fork_me_move.units
+	local hops = 0
+	while moved and moved[unit] and hops < 64 do
+		unit = moved[unit]
+		hops = hops + 1
+	end
 	local s = storage.fork_me_net
 	local node = s and s.nodes and s.nodes[unit]
 	if node and node.entity and node.entity.valid then return node.entity end

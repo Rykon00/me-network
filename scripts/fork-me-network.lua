@@ -61,7 +61,7 @@ local md_cache
 local function mod_data()
 	if not md_cache then
 		local md = prototypes.mod_data["fork-me-network"]
-		md_cache = md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {} }
+		md_cache = md and md.data or { cells = {}, drive_slots = 10, names = {} }
 	end
 	return md_cache
 end
@@ -108,6 +108,9 @@ local function kinds()
 	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
 	--- (M.assembler_power); another mod's (ME_NETWORK.make_molecular_assembler) has the same name
 	k["me-molecular-assembler"] = "assembler"
+	--- issue #711: the ME Space Molecular Assembler (with Space Exploration) is the same kind: every code path of the assembler
+	--- (the graph, its power through the controller, the providers next to it) is the one above
+	k["me-space-molecular-assembler"] = "assembler"
 	k["me-level-maintainer"] = "maintainer"
 	k["me-circuit-interface"] = "circuit"
 	k["me-fluid-interface"] = "fluid-interface"
@@ -388,6 +391,10 @@ function M.reshape_cable(entity)
 	local node = M.node_of(entity)
 	if node then update_cable(storage.fork_me_net, node) end
 end
+
+--- issue #713: what a surface is called (Space Exploration's zone names) and the map marker of a message; a field of M, so
+--- every module that has this one has it (and this file is at Lua's 200 locals)
+M.place = require("scripts.fork-me-place")
 
 local recompute
 local net_cell
@@ -1695,6 +1702,9 @@ end
 --- the network's amount of `key` went up (`up`) or down: the version of its contents and the waiting endpoints
 local function moved_key(net, key, up)
 	net.cver = (net.cver or 0) + 1
+	--- issue #721: the keys that moved since the circuit interfaces' list was made (net.ckeys, kept while such a list is)
+	local ck = net.ckeys
+	if ck then ck[key] = true end
 	local waits = up and net.wait_in or net.wait_out
 	if waits then
 		if waits[key] then fire(net, waits, key) end
@@ -1986,6 +1996,7 @@ function net_cell(net, cid, cell, sign)
 		end
 	end
 	net.cver = (net.cver or 0) + 1
+	net.ckeys = nil                                   -- (issue #721: a whole cell came or went: the list is made anew)
 	if woken then
 		table.sort(woken)
 		for _, key in ipairs(woken) do fire(net, waits, key) end
@@ -2063,6 +2074,7 @@ end
 --- second, and an assembler whose network does not work is switched off with a status saying why (`off`), and on again (`on`:
 --- switched on since its node was made). The usage per name is derived, read once per load.
 M.ASM_IDLE = 30
+M.SPACE_ASM = "me-space-molecular-assembler"
 M.asm_usage = {}
 function M.asm_watts(entity, crafting)
 	local name = entity.name
@@ -2098,29 +2110,93 @@ function M.asm_draw(s, net, node, w)
 	end
 end
 
+--- Issue #743: the mark of an assembler that is switched off, in the world. An assembler that does not work looked like an
+--- idle one, and its status line is only in its window (and not even there without a recipe: the game opens the recipe
+--- picker). The mark is a render object on the entity, made when M.assembler_step switches the assembler off and removed
+--- when it switches it on: no work per tick, and the object goes with its entity. The game's own alert icons, blinking as
+--- its alerts do (30 ticks); the rest on a planet is no fault and gets a steady one. The ids are kept by unit number in
+--- s.asm_marks, not in the node: the graph's rebuild makes the nodes anew, and a mark that was forgotten would be drawn a
+--- second time.
+--- reason -> { sprite, blink interval in ticks (nil: steady) }
+M.ASM_MARKS = {
+	["no-network"] = { "utility/electricity_icon_unplugged", 30 },
+	["no-controller"] = { "utility/electricity_icon_unplugged", 30 },
+	["no-power"] = { "utility/electricity_icon", 30 },
+	conflict = { "utility/warning_icon", 30 },
+	ground = { "utility/warning_icon" },
+}
+M.ASM_MARK = { "utility/warning_icon", 30 }          -- (a reason without an entry)
+M.ASM_MARK_SCALE = 0.3                               -- (64 px icons: 0.6 of the tile, the block's frame stays visible)
+--- the centre of the cube's top face: the picture shows a side face on the right and the front below, so the top face's
+--- centre is 5 of the picture's 64 px left of and above the tile's (measured in ME Network's own picture and in the AE2
+--- texture mod's); there the mark is also clear of the cards' icons of the Alt mode
+M.ASM_MARK_OFFSET = { -0.08, -0.08 }
+--- new marks per step (once a second). A mark costs 4 us to draw (2000 assemblers that lose their power at once: 8 ms in one
+--- tick, measured), so a big network that stops is marked over a few seconds, 1 ms each. Marks are removed at once (2 us).
+M.ASM_MARK_STEP = 250
+
+--- the mark of the assembler `unit` (entity `e`) shows the reason `why` (nil: no mark)
+function M.asm_mark(s, unit, e, why)
+	local marks = s.asm_marks
+	if not marks then
+		marks = {}
+		s.asm_marks = marks
+	end
+	local obj = marks[unit] and rendering.get_object_by_id(marks[unit])
+	if obj and obj.valid then obj.destroy() end
+	marks[unit] = nil
+	if not why then return end
+	local def = M.ASM_MARKS[why] or M.ASM_MARK
+	marks[unit] = rendering.draw_sprite{ sprite = def[1], target = { entity = e, offset = M.ASM_MARK_OFFSET }, surface = e.surface,
+		x_scale = M.ASM_MARK_SCALE, y_scale = M.ASM_MARK_SCALE, blink_interval = def[2] }.id
+end
+
 function M.assembler_step(s)
 	local working = defines.entity_status.working
+	local marks = s.asm_marks or M.NONE
+	local budget = M.ASM_MARK_STEP
+	if s.asm_prune then
+		--- (after a rebuild of the graph: the marks of assemblers that are gone; their render objects went with the entities)
+		s.asm_prune = nil
+		for unit in pairs(marks) do
+			if not s.asm[unit] then M.asm_mark(s, unit, nil, nil) end
+		end
+	end
 	for unit in pairs(s.asm) do
 		local node = s.nodes[unit]
 		if not (node and node.kind == "assembler") then
 			s.asm[unit] = nil
+			if marks[unit] then M.asm_mark(s, unit, nil, nil) end
 		elseif node.entity.valid then
 			local e = node.entity
 			local net = s.nets[node.net]
 			local ok, why = M.usable(net)
+			--- issue #729: the ME Space Molecular Assembler rests on the ground of a planet or moon (a ship that landed
+			--- there): Space Exploration's space recipes are for space. (`node.space`: is it that block, read once per node)
+			if node.space == nil then node.space = e.name == M.SPACE_ASM end
+			if ok and node.space and M.place.ground(e.surface) then ok, why = false, "ground" end
 			local w
 			if ok then
 				if not node.on then
 					e.disabled_by_script = false
 					e.custom_status = nil
-					node.on, node.off = true, nil
+					node.on, node.off, node.marked = true, nil, nil
+					if marks[unit] then M.asm_mark(s, unit, e, nil) end
 				end
 				w = M.asm_watts(e, e.status == working)
 			else
 				if node.off ~= why then
 					e.disabled_by_script = true
 					e.custom_status = { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-" .. why } }
-					node.on, node.off = nil, why
+					node.on, node.off, node.marked = nil, why, nil
+				end
+				--- issue #743: its mark for this reason (`node.marked`; an assembler that was off before the marks, a save from
+				--- before, and one whose node the graph's rebuild made anew get theirs here), M.ASM_MARK_STEP new ones per step
+				if not node.marked and budget > 0 then
+					budget = budget - 1
+					M.asm_mark(s, unit, e, why)
+					marks = s.asm_marks
+					node.marked = true
 				end
 				w = M.asm_watts(e, false)
 			end
@@ -2422,7 +2498,8 @@ local function refresh_screens(s)
 			local unit = sl[i]
 			local node = nodes[unit]
 			if node then
-				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+				--- (a member whose entity went without an event is the sweep's: it is left alone here)
+				if node.entity.valid then set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind) end
 				i = i + 1
 			else
 				screen_gone(s, unit)                           -- (the last one took its place: look at it next)
@@ -4907,23 +4984,6 @@ end
 --- events
 --------------------------------------------------------------------------------
 
---- the old drive item a build consumed (placing it gives an ME Drive with its four empty cells; issue #146: the items
---- stay, 0.5.0 left them in inventories as they were)
-local function legacy_item(event)
-	local md = mod_data()
-	local function tags_of(st) return st.is_item_with_tags and st.tags or nil end
-	local stack = event and event.stack
-	if stack and stack.valid and stack.valid_for_read and md.legacy_drives[stack.name] then return stack.name, tags_of(stack) end
-	local consumed = event and event.consumed_items
-	if consumed and consumed.valid then
-		for i = 1, #consumed do
-			local st = consumed[i]
-			if st.valid_for_read and md.legacy_drives[st.name] then return st.name, tags_of(st) end
-		end
-	end
-	return nil
-end
-
 --- `event`: the build event (for the item that was placed); `source`: the original of a clone
 function M.on_built(entity, event)
 	if not (entity and entity.valid) then return end
@@ -4935,25 +4995,7 @@ function M.on_built(entity, event)
 		s.toggle_off[entity.unit_number] = true
 		return
 	end
-	if kind == "drive" then
-		local d = drive_record(s, entity)
-		local old, tags = legacy_item(event)
-		if old then
-			local info = mod_data().legacy_drives[old]
-			for i = 1, info.cells do d.slots[i] = new_cell(info.cell) end
-			--- an old fluid drive item carries its fluid in its tags: into the cells (more cells if needed)
-			local fluid = info.fluid and type(tags) == "table" and type(tags[info.fluid_tag]) == "table" and tags[info.fluid_tag]
-			if fluid then
-				local left = M.fill_fluids(entity, info.cell, fluid)
-				for _, def in ipairs(M.fluid_cells(info.cell, left)) do spill(entity.surface, entity.position, def) end
-			end
-			if info.extra and prototypes.item[info.extra.name] then
-				local player = event.player_index and game.get_player(event.player_index)
-				local got = player and player.insert(info.extra) or 0
-				if got < info.extra.count then spill(entity.surface, entity.position, { name = info.extra.name, count = info.extra.count - got }) end
-			end
-		end
-	end
+	if kind == "drive" then drive_record(s, entity) end
 	if kind == "chest" then
 		drive_record(s, entity)
 		CH.parts(s, entity)
@@ -5407,7 +5449,7 @@ local function vanish(s, unit)
 			for _, def in ipairs(defs) do spill(surface, d.position, def) end
 			local force = game.forces[d.force]
 			if #defs > 0 and force then
-				force.print({ "fork-me-net.drive-vanished", #defs, string.format("[gps=%d,%d,%s]", math.floor(d.position.x), math.floor(d.position.y), surface.name) })
+				force.print({ "fork-me-net.drive-vanished", #defs, M.place.gps(d.position, surface) })
 			end
 		end
 		clear_leds(d)
@@ -5714,101 +5756,6 @@ function M.clean_removed_items()
 	end
 end
 
---- Issue #689: the old drive items (before issue #68) that the cells of drives and ME Chests hold are replaced, before the graph
---- rebuild of on_configuration_changed computes every network's totals and index from the cells. `products(name, quality,
---- count, data)` gives the stack definitions that replace `count` of the old item (an ME Drive, its cells, a card). They go into
---- the same drive's item cells where there is room (an empty cell as its plain key, a cell with contents as a key with its
---- tags, as M.storable keys them); the rest is returned with the drive's place: { { surface, position, defs } }. Returns the
---- number of old items replaced and that list.
-function M.convert_legacy_drive_keys(products)
-	local s = state()
-	local legacy = mod_data().legacy_drives or {}
-	local found, spills = 0, {}
-	local units = {}
-	for unit in pairs(s.drives) do units[#units + 1] = unit end
-	table.sort(units)
-	for _, unit in ipairs(units) do
-		local d = s.drives[unit]
-		local defs = {}
-		local has
-		for slot = 1, drive_slots() do
-			local cell = d.slots[slot]
-			for key in pairs(cell and cell.items or {}) do
-				if legacy[(parse_key(key))] then has = true break end
-			end
-			if has then break end
-		end
-		--- (a drive in a network: its cells leave the network's totals and index while they change, and come back after)
-		local net = has and drive_net(s, unit)
-		local counted = {}
-		if net then
-			for slot = 1, drive_slots() do
-				local cid = unit .. ":" .. slot
-				if d.slots[slot] and net.cells[cid] == d.slots[slot] then
-					net_cell(net, cid, d.slots[slot], -1)
-					counted[slot] = true
-				end
-			end
-		end
-		for slot = 1, has and drive_slots() or 0 do
-			local cell = d.slots[slot]
-			local spec = cell and cell_spec(cell.name)
-			if spec and not fluid_cell(spec) and not spec.creative then
-				local keys = {}
-				for key in pairs(cell.items) do
-					if legacy[(parse_key(key))] then keys[#keys + 1] = key end
-				end
-				table.sort(keys)
-				for _, key in ipairs(keys) do
-					local n = math.floor(cell.items[key])
-					local data = cell.data and cell.data[key]
-					local name, q = parse_key(key)
-					cell_add(cell, spec, key, -cell.items[key])
-					if cell.data then cell.data[key] = nil end
-					for _, def in ipairs(products(name, q, n, data)) do defs[#defs + 1] = def end
-					found = found + n
-				end
-			end
-		end
-		if #defs > 0 then
-			s.dirty[unit] = true
-			local rest = {}
-			for _, def in ipairs(defs) do
-				local key = def.tags and key_of(def.name, def.quality, helpers.table_to_json({ tags = def.tags }))
-					or key_of(def.name, def.quality)
-				local left = def.count
-				for slot = 1, drive_slots() do
-					local cell = d.slots[slot]
-					local spec = cell and cell_spec(cell.name)
-					if left <= 0 then break end
-					if spec and item_exists(def.name) then
-						local n = math.min(left, math.floor(cell_room(cell, spec, key)))
-						if n > 0 then
-							cell_add(cell, spec, key, n)
-							if def.tags then cell.data[key] = { tags = def.tags } end
-							left = left - n
-						end
-					end
-				end
-				if left > 0 then
-					local copy = {}
-					for k, v in pairs(def) do copy[k] = v end
-					copy.count = left
-					rest[#rest + 1] = copy
-				end
-			end
-			if #rest > 0 then
-				local e = d.entity
-				local surface = e and e.valid and e.surface or (d.surface and game.surfaces[d.surface])
-				local position = e and e.valid and e.position or d.position
-				if surface and position then spills[#spills + 1] = { surface = surface, position = position, defs = rest } end
-			end
-		end
-		for slot in pairs(counted) do net_cell(net, unit .. ":" .. slot, d.slots[slot], 1) end
-	end
-	return found, spills
-end
-
 --- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same
 --- rules and prototypes (s.graph_sig), and with few members that changed without an event: those that vanished are taken out
 --- as the sweep takes them out (vanish), member entities that came without an event (the count of the map's member
@@ -5925,6 +5872,7 @@ function M.rebuild(full)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
 	s.asm = {}                                             -- (issue #560)
+	s.asm_prune = true                                     -- (issue #743: M.assembler_step drops the marks of assemblers that are gone)
 	local names = M.node_names()
 	M.scan_decon(s)                                        -- (marked members are no members: M.set_marked)
 	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
@@ -6147,8 +6095,7 @@ function M.tell_asm_conflicts(s)
 		end
 		local force = asm and ctrl and game.forces[net.force]
 		if force then
-			force.print({ "fork-me-net.assembler-conflict", string.format("[gps=%d,%d,%s]", math.floor(ctrl.position.x),
-				math.floor(ctrl.position.y), ctrl.surface.name) })
+			force.print({ "fork-me-net.assembler-conflict", M.place.gps(ctrl.position, ctrl.surface) })
 		end
 	end
 end
@@ -6322,6 +6269,41 @@ local function info(net)
 end
 
 remote.add_interface("gregtorio-me-network", {
+	--- issue #743 (tests): the mark of an assembler that is switched off: its sprite, its blink interval, whether it is on
+	--- the entity, its id; nil without one. `drop`: the mark is taken away as a save from before the marks has none.
+	assembler_mark = function(entity, drop)
+		local s = state()
+		local unit = entity and entity.valid and entity.unit_number
+		local id = unit and s.asm_marks and s.asm_marks[unit]
+		local obj = id and rendering.get_object_by_id(id)
+		if drop then
+			if unit then
+				M.asm_mark(s, unit, entity, nil)
+				if s.nodes[unit] then s.nodes[unit].marked = nil end
+			end
+			return nil
+		end
+		if not (obj and obj.valid) then return nil end
+		local target = obj.target
+		return obj.sprite, obj.blink_interval, target and target.entity == entity, obj.id
+	end,
+	--- issue #743 (tests): how many new marks a step draws
+	assembler_mark_step = function() return M.ASM_MARK_STEP end,
+	--- issue #743 (tests): the number of marks the mod remembers, and how many of them are render objects that exist
+	assembler_marks = function()
+		local n, alive = 0, 0
+		for _, id in pairs(state().asm_marks or {}) do
+			n = n + 1
+			local obj = rendering.get_object_by_id(id)
+			if obj and obj.valid then alive = alive + 1 end
+		end
+		return n, alive
+	end,
+	--- issue #743 (tests): is the render object `id` still there
+	mark_alive = function(id)
+		local obj = id and rendering.get_object_by_id(id)
+		return obj ~= nil and obj.valid
+	end,
 	--- issue #229: what an ME Chest's window shows (M.chest_info), its input slot into a target, its view's grid entries
 	chest = function(entity) return M.chest_info(entity) end,
 	chest_take_input = function(entity, target) return M.chest_take_input(entity, target) end,
@@ -6431,7 +6413,7 @@ remote.add_interface("gregtorio-me-network", {
 		inv.destroy()
 		return n
 	end,
-	--- what a build event does for `entity` placed from `stack` (an old drive item gives its cells)
+	--- what a build event does for `entity` placed from `stack`
 	built = function(entity, stack) M.on_built(entity, { stack = stack }) end,
 	extract_to = function(entity, target, key, count) return M.extract_to(M.network_of(entity), target, key, count) end,
 	insert_cell = function(drive, stack, slot) return M.insert_cell(drive, stack, slot) end,
@@ -6521,5 +6503,26 @@ remote.add_interface("gregtorio-me-network", {
 		return exit, entry
 	end,
 })
+
+--- The drive or ME Chest `source` was moved to `destination` (scripts/fork-me-move.lua): its cells go into the same slots
+--- of the destination as they are, with their contents (out of the source's network, into the destination's), so the
+--- source has none to spill. Returns the number of cells moved.
+function M.on_moved(source, destination)
+	local s = state()
+	local a = s.drives[source.unit_number]
+	if not (a and CELL_KINDS[M.kind_of(destination.name)]) then return 0 end
+	local b = drive_record(s, destination)
+	local slots = {}
+	for slot in pairs(a.slots) do slots[#slots + 1] = slot end
+	table.sort(slots)
+	local n = 0
+	for _, slot in ipairs(slots) do
+		if not b.slots[slot] then
+			place_cell(s, b, slot, remove_cell(s, a, slot))
+			n = n + 1
+		end
+	end
+	return n
+end
 
 return M

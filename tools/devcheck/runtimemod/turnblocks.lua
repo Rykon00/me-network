@@ -164,7 +164,10 @@ return function(H)
 		local all = {}
 		for name, p in pairs(prototypes.entity) do
 			local h = prototypes.get_history(p.type, name)
-			if h and h.created == "me-network" and p.items_to_place_this and #p.items_to_place_this > 0 and not name:find("%-legacy$") then
+			--- (issue #711: not a block a player cannot build on this ground at all, the ME Space Molecular Assembler: the game
+			--- refuses every paste of it here, turned or not)
+			if h and h.created == "me-network" and p.items_to_place_this and #p.items_to_place_this > 0 and not name:find("%-legacy$")
+					and not p.collision_mask.layers.ground_tile then
 				all[#all + 1] = name
 			end
 		end

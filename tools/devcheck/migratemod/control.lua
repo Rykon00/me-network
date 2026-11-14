@@ -202,6 +202,10 @@ local function setup_unified(s)
 	--- the new technology ME Level Emitter researched, which now unlocks the level emitter and the circuit interface
 	local auto = game.forces.player.technologies["me-automation"]
 	if auto then auto.researched = true end
+	--- (a version that has ME Level Emitter already, 0.6.0 and later: its save ran the migration when it was made, and a player
+	--- researches it before ME Automation, its prerequisite)
+	local le = game.forces.player.technologies["me-level-emitter"]
+	if le then le.researched = true end
 	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
 		local m = place(s, fails, "me-molecular-assembler", x, -0.5)
 		local p = place(s, fails, "me-pattern-provider", x, 0.5)
@@ -338,6 +342,7 @@ local function setup_unified(s)
 	local old_underground = tonumber(va) == 0 and (tonumber(vb) < 5 or tonumber(vb) == 5 and tonumber(vc) < 11)
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
 		old_underground = old_underground,
+		old_no_emitter_tech = tonumber(va) == 0 and tonumber(vb) < 6,   -- (a save of 0.6.0 or later ran that migration when it was made)
 		damaged = damaged, items = items, lif = lif, big = big, links = links }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
@@ -362,7 +367,7 @@ local function check_unified(st)
 		and ug and ug.direction == defines.direction.south, "the underground cables of the old save: "
 		.. serpent.line({ ua and ua.direction, ub and ub.direction, ug and ug.direction }))
 	--- me-network issue #679 (a version that has the technology ME Level Emitter): researched where ME Automation was
-	if prototypes.technology["me-level-emitter"] then
+	if prototypes.technology["me-level-emitter"] and st.old_no_emitter_tech then
 		local p, e = game.forces.player, game.forces.enemy
 		expect(p.technologies["me-level-emitter"].researched and not e.technologies["me-level-emitter"].researched
 			and p.recipes["me-level-emitter"].enabled and p.recipes["me-circuit-interface"].enabled,

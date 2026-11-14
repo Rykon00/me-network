@@ -46,7 +46,7 @@ do
 	table.sort(categories)
 	for _, prototypes_of_type in pairs(data.raw) do
 		for name, entity in pairs(prototypes_of_type) do
-			if type(entity) == "table" and type(entity.module_slots) == "number" and entity.module_slots > 0 and name ~= "me-molecular-assembler" then
+			if type(entity) == "table" and type(entity.module_slots) == "number" and entity.module_slots > 0 and not ME.assemblers[name] then
 				if entity.allowed_module_categories == nil then
 					entity.allowed_module_categories = table.deepcopy(categories)
 				else
@@ -216,5 +216,31 @@ do
 		light.icon = "__me-network__/graphics/icons/hd/me-controller.png"
 		light.animations = { cview.off or NONE, cview.on or NONE, cview.conflict or NONE }
 		data:extend({ light })
+	end
+end
+
+--- Issue #729: the ME Space Molecular Assembler on spaceships. Space Exploration's data-final-fixes (which ran before this
+--- one: it is an optional dependency) makes a hidden "-grounded" twin of every machine with a "space-..." category whose
+--- mask lacks the spaceship layer, and swaps the two when a ship lands on a planet; the assembler had the layer until
+--- here (prototypes/compat/space-exploration-early.lua), so no twin was made. Now the layer goes: the assembler can be
+--- built on spaceship floor and is never swapped. (On a planet's ground the network switches it off: M.assembler_step.)
+if ME.space_assembler and spaceship_collision_layer then
+	local name = ME.space_assembler.name
+	local asm = data.raw["assembling-machine"][name]
+	if asm and asm.collision_mask and asm.collision_mask.layers then
+		if data.raw["assembling-machine"][name .. "-grounded"] then
+			log("ME-NETWORK: " .. name .. " has a grounded twin of Space Exploration; it stays off spaceships")
+		else
+			asm.collision_mask.layers[spaceship_collision_layer] = nil
+			--- Space Exploration's tooltip line "Cannot be placed on: land, spaceship" (on the entity and its item) was
+			--- written from the mask with the layer: it names the land alone now
+			for _, proto in pairs({ asm, data.raw.item[name] }) do
+				for _, field in pairs(proto.custom_tooltip_fields or {}) do
+					if type(field.value) == "table" and field.value[1] == "space-exploration.cannot_be_placed_on_line" then
+						field.value = { "space-exploration.cannot_be_placed_on_line", { "space-exploration.collision_mask_land" } }
+					end
+				end
+			end
+		end
 	end
 end

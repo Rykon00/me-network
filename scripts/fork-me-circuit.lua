@@ -23,7 +23,7 @@
 --- key is taken from the network (N.wait_for) or MAINTAINER_IDLE ticks passed (circuit targets and conditions have
 --- no event); its job's end wakes it. A circuit interface is updated every CIRCUIT_INTERVAL ticks and writes only
 --- when the network's contents changed; the sorted signals of a network are made once per CIRCUIT_INTERVAL and
---- shared by its interfaces (net.sigs). Issue #420 (lever 7): a list equal to the last one keeps its version (nothing is
+--- shared by its interfaces (net.sigs; issue #721: kept and counted again only for the keys that moved). Issue #420 (lever 7): a list equal to the last one keeps its version (nothing is
 --- written); a list that differs from the last one only in a few amounts (DIFF_MAX) names those slots (net.sigs.diff), and
 --- an interface that wrote the last list writes only them; a filtered interface writes nothing while its signals are the ones
 --- it wrote (rec.vsig).
@@ -476,13 +476,49 @@ end
 --- from 1 unit, rounded down. Issue #5: straight from the network's totals, in a fixed order (the 1000 an interface
 --- writes are chosen by amount in `view`). Issue #503: a key whose item or fluid no longer exists (on_configuration_changed
 --- maps or drops such keys; one it missed) makes no signal: the engine refuses an unknown name.
-local function network_signals(net, filter)
+local rank, ranked = {}, {}     -- order string -> its place among the order strings seen so far; those, sorted
+--- issue #721: the signals `out` in the order of their order strings, each with its place (`i`). No sort per list:
+--- every order string seen so far has its rank among them (`rank`, a pure memo kept per load: the ranks follow the
+--- string comparison, so every list comes out as a sort of its own strings would give it), and the signals are laid out
+--- by rank. Only a string seen for the first time sorts the known ones again: once per item, fluid and quality of the
+--- game at most.
+local function laid_out(out)
+	local fresh
+	for _, sig in ipairs(out) do
+		if not rank[sig.order] then
+			ranked[#ranked + 1] = sig.order
+			rank[sig.order] = 0
+			fresh = true
+		end
+	end
+	if fresh then
+		table.sort(ranked)
+		for i, k in ipairs(ranked) do rank[k] = i end
+	end
+	local at = {}
+	for _, sig in ipairs(out) do at[rank[sig.order]] = sig end
+	local sorted, n = {}, 0
+	for i = 1, #ranked do
+		local sig = at[i]
+		if sig then
+			n = n + 1
+			sorted[n] = sig
+			sig.i = n
+		end
+	end
+	return sorted
+end
+
+--- (`cnt`, a table: filled with the amount of every item key, for the kept list of issue #721; the second value: every
+--- signal by its order string, those below one unit too)
+local function network_signals(net, filter, cnt)
 	local out, by_item = {}, {}
 	if N.usable(net) then
 		for key, count in pairs(net.items) do
 			local p = parts(key)
 			if p[5] then                                     -- (issue #503: no signal of a name the game does not know)
 			elseif p[1] == "item" then
+				if cnt then cnt[key] = count end
 				if not filter or filter[p[2]] then
 					local sig = by_item[p[4]]
 					if sig then sig.count = sig.count + count
@@ -515,12 +551,7 @@ local function network_signals(net, filter)
 		end
 		for i = n + 1, #out do out[i] = nil end
 	end
-	--- sorted by the order strings (the string comparison, no Lua comparator)
-	local keys, by_key = {}, {}
-	for i, sig in ipairs(out) do keys[i], by_key[sig.order] = sig.order, sig end
-	table.sort(keys)
-	for i, k in ipairs(keys) do out[i] = by_key[k] end
-	return out
+	return laid_out(out), by_item
 end
 
 --- The sorted signals of the whole network, shared by its circuit interfaces (in storage, net.sigs, because which
@@ -582,16 +613,108 @@ local function live_list(list)
 	return v
 end
 
-local function signals_of(net)
-	if not stale(net) and live_list(net.sigs.list) then return net.sigs end
-	local old = net.sigs
-	local list = network_signals(net)
-	if old and old.n and same_signals(old.list, list) then
+--- Issue #721: the kept list. The network notes every key whose amount moved (net.ckeys, scripts/fork-me-network.lua:
+--- moved_key; a cell that comes or goes drops the note and the list is made anew). A due list is then the last one with
+--- those keys counted again: `by` is every signal by its order string (those below one unit too), `cnt` the amount last
+--- counted per item key (a fluid signal keeps its temperatures in `keys`), `i` a signal's place in the list. The signals
+--- are changed in place; a new record (and with it a new version `n`) is made when an amount that is written changed,
+--- and the list is laid out again only when a signal came or went. The result is the list network_signals would make.
+local function kept_list(net, old, ck)
+	net.ckeys = {}
+	if next(ck) == nil then
 		old.cver, old.tick = net.cver, game.tick
 		return old
 	end
+	local by, cnt, items = old.by, old.cnt, net.items
+	local was, touched = {}, {}                          -- signal -> its amount before; the touched signals
+	local temps = false                                  -- a fluid's amount at one temperature changed (filters read them)
+	for key in pairs(ck) do
+		local p = parts(key)
+		if not p[5] then
+			local now = items[key] or 0
+			local sig = by[p[4]]
+			if p[1] == "item" then
+				local d = now - (cnt[key] or 0)
+				if d ~= 0 then
+					cnt[key] = now > 0 and now or nil
+					if not sig then
+						sig = { type = "item", name = p[2], quality = p[3], count = 0, order = p[4] }
+						by[p[4]] = sig
+					end
+					if was[sig] == nil then
+						was[sig] = sig.count
+						touched[#touched + 1] = sig
+					end
+					sig.count = sig.count + d
+				end
+			else
+				if not sig then
+					sig = { type = "fluid", name = p[2], count = 0, order = p[4], keys = {} }
+					by[p[4]] = sig
+				end
+				if (sig.keys[key] or 0) ~= now then
+					if was[sig] == nil then
+						was[sig] = sig.count
+						touched[#touched + 1] = sig
+					end
+					sig.keys[key] = now > 0 and now or nil
+					temps = true
+				end
+			end
+		end
+	end
+	local member, diff = false, {}
+	for _, sig in ipairs(touched) do
+		if sig.keys then                                    -- a fluid: its temperatures added up, rounded down
+			local n = 0
+			for _, c in pairs(sig.keys) do n = n + c end
+			sig.count = math.floor(n)
+		end
+		local before, after = was[sig], sig.count
+		if (before >= 1) ~= (after >= 1) then member = true
+		elseif after >= 1 and math.min(before, SIGNAL_MAX) ~= math.min(after, SIGNAL_MAX) then diff[#diff + 1] = sig.i end
+		if sig.keys then
+			if next(sig.keys) == nil then by[sig.order] = nil end
+		elseif after <= 0 then
+			by[sig.order] = nil
+		end
+	end
+	if not (member or temps or #diff > 0) then
+		old.cver, old.tick = net.cver, game.tick
+		return old
+	end
+	local c = { cver = net.cver, tick = game.tick, n = old.n + 1, by = by, cnt = cnt, list = old.list }
+	if member then
+		local out = {}
+		for _, sig in pairs(by) do
+			if sig.count >= 1 then out[#out + 1] = sig end
+		end
+		c.list = laid_out(out)
+		live_lists[c.list] = true
+	elseif #c.list <= MAX_SIGNALS and #diff <= DIFF_MAX then
+		table.sort(diff)
+		c.diff = diff
+	end
+	net.sigs = c
+	return c
+end
+
+local function signals_of(net)
+	if not stale(net) and live_list(net.sigs.list) then return net.sigs end
+	local old = net.sigs
+	if old and old.n and old.by and net.ckeys and N.usable(net) and live_list(old.list) then
+		return kept_list(net, old, net.ckeys)
+	end
+	local cnt = {}
+	local list, by = network_signals(net, nil, cnt)
+	net.ckeys = N.usable(net) and {} or nil              -- (from here on the network notes the keys that move)
 	live_lists[list] = true                              -- (network_signals makes no signal of an unknown name)
-	local c = { cver = net.cver, tick = game.tick, list = list, n = (old and old.n or 0) + 1 }
+	if old and old.n and same_signals(old.list, list) then
+		--- the same signals: the version stays; the record takes the new tables (one set of signals for list, by and cnt)
+		old.cver, old.tick, old.list, old.by, old.cnt = net.cver, game.tick, list, by, cnt
+		return old
+	end
+	local c = { cver = net.cver, tick = game.tick, list = list, n = (old and old.n or 0) + 1, by = by, cnt = cnt }
 	if old and old.n then c.diff = slot_diff(old.list, list) end
 	net.sigs = c
 	return c
@@ -616,16 +739,24 @@ local function view(list, filter)
 		end
 	end
 	if #out <= MAX_SIGNALS then return out end
-	local keys, by_key = {}, {}
-	for i, sig in ipairs(out) do
-		local k = string.format("%017.0f", 1e16 - sig.count) .. sig.order
-		keys[i], by_key[k] = k, sig
+	--- issue #721: the MAX_SIGNALS largest through the amount of the last one that fits (a sort of plain numbers): every
+	--- larger amount is written, and of those with exactly that amount the first in the list's order (type, name, quality)
+	local counts = {}
+	for i, sig in ipairs(out) do counts[i] = sig.count end
+	table.sort(counts)
+	local least = counts[#counts - MAX_SIGNALS + 1]
+	local room = MAX_SIGNALS
+	for i = #counts, #counts - MAX_SIGNALS + 1, -1 do
+		if counts[i] > least then room = room - 1 else break end
 	end
-	table.sort(keys)
-	local keep = {}
-	for i = 1, MAX_SIGNALS do keep[by_key[keys[i]]] = true end
 	local top = {}
-	for _, sig in ipairs(out) do if keep[sig] then top[#top + 1] = sig end end
+	for _, sig in ipairs(out) do
+		if sig.count > least then top[#top + 1] = sig
+		elseif sig.count == least and room > 0 then
+			room = room - 1
+			top[#top + 1] = sig
+		end
+	end
 	return top
 end
 
@@ -644,14 +775,14 @@ local function circuit_step(rec, force)
 		filter = {}
 		for _, key in pairs(rec.filters) do filter[key] = true end
 	end
-	local filters = not filter and sigs and built[sigs.list]           -- the same list unfiltered: built once
+	local filters = not filter and sigs and built[sigs]                -- the same version unfiltered: built once
 	if not filters then
 		filters = {}
 		for i, sig in ipairs(sigs and view(sigs.list, filter) or {}) do
 			filters[i] = { value = { type = sig.type, name = sig.name, quality = sig.quality or "normal", comparator = "=" },
 				min = amount(sig) }
 		end
-		if not filter and sigs then built[sigs.list] = filters end
+		if not filter and sigs then built[sigs] = filters end
 	end
 	local cb = e.get_or_create_control_behavior()
 	--- issue #420: an unfiltered interface that wrote the last list writes the slots that changed; a filtered one nothing while
@@ -981,6 +1112,29 @@ function M.on_removed(entity)
 	end
 end
 
+--- Issue #704: the level maintainer `source` was moved to `destination` (scripts/fork-me-move.lua). The clone has its rows
+--- already (M.on_built with a source); the job of each row, its state and what the circuit's rows hold go to it, so the
+--- maintainer at the new place waits for the job it started and does not start a second one. (The jobs themselves name
+--- the clone as their owner: M.carry_links of scripts/fork-me-autocraft.lua.)
+function M.on_moved(source, destination)
+	if not (source.valid and destination.valid and source.name == MAINTAINER and destination.name == MAINTAINER) then return end
+	local s = storage.fork_ae2
+	local a, b = s and s.maintainers[source.unit_number], s and s.maintainers[destination.unit_number]
+	if not (a and b) or a == b then return end
+	local from, to = rows_of(a), rows_of(b)
+	for i, row in ipairs(from) do
+		local t = to[i]
+		if t and t.key == row.key then
+			t.job, t.status, t.missing, t.retry, t.noted, t.stock, t.target = row.job, row.status, row.missing, row.retry,
+				row.noted, row.stock, row.target
+			row.job, row.noted = nil, nil
+		end
+	end
+	b.crows, a.crows = a.crows, nil
+	b.job, b.status, b.stock, b.target, b.missing = a.job, a.status, a.stock, a.target, a.missing
+	a.job = nil
+end
+
 --- copy the settings (shift right click, shift left click); the game copies the lamp's circuit condition
 --- and the combinator's signals itself, the interface rewrites them at once
 function M.on_entity_settings_pasted(event)
@@ -1025,7 +1179,11 @@ autocraft.blueprint_hooks[#autocraft.blueprint_hooks + 1] = tag_blueprint
 function M.clean_removed_items()
 	local s = storage.fork_me_net
 	for _, net in pairs(s and s.nets or {}) do
-		if net.sigs then net.sigs.cver, net.sigs.tick, net.sigs.list, net.sigs.diff = nil, -CIRCUIT_INTERVAL - 1, {}, nil end
+		if net.sigs then
+			net.sigs.cver, net.sigs.tick, net.sigs.list, net.sigs.diff = nil, -CIRCUIT_INTERVAL - 1, {}, nil
+			net.sigs.by, net.sigs.cnt = nil, nil               -- (issue #721: no kept list across a change of the mods)
+		end
+		net.ckeys = nil
 	end
 end
 
@@ -1098,6 +1256,33 @@ end
 --- Other mods and the devcheck runtime test use the same code paths. Keys are item names or
 --- "fluid/<name>".
 remote.add_interface("gregtorio-me-circuit", {
+	--- issue #721 (tests): the network's list made now (as if it were due) and compared with one made from scratch: a
+	--- problem or nil, whether the kept list was used, the version
+	list_check = function(entity)
+		local net = network_of(entity)
+		if not net then return "no network" end
+		if net.sigs then net.sigs.tick = -CIRCUIT_INTERVAL - 1 end
+		local kept = net.sigs ~= nil and net.sigs.by ~= nil and net.ckeys ~= nil
+		local c = signals_of(net)
+		local fresh = network_signals(net)
+		if not same_signals(c.list, fresh) then
+			local a, b = {}, {}
+			for i, sig in ipairs(c.list) do a[i] = sig.order:gsub("%c", "/") .. "=" .. sig.count end
+			for i, sig in ipairs(fresh) do b[i] = sig.order:gsub("%c", "/") .. "=" .. sig.count end
+			return "kept " .. table.concat(a, " ") .. " | fresh " .. table.concat(b, " "), kept, c.n
+		end
+		for i, sig in ipairs(c.list) do
+			if sig.i ~= i then return "signal " .. i .. " has the place " .. tostring(sig.i), kept, c.n end
+		end
+		return nil, kept, c.n
+	end,
+	--- issue #721 (tests): the signals an unfiltered interface writes of a list ({ { order, count } } in the list's order):
+	--- their order strings
+	top = function(list)
+		local out = {}
+		for i, sig in ipairs(view(list)) do out[i] = sig.order end
+		return out
+	end,
 	--- issue #420 (tests): what the last write of a circuit interface wrote ("section", a number of slots, "none"; nil: nothing
 	--- since `clear`)
 	last_write = function(entity, clear)

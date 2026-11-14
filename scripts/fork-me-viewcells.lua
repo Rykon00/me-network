@@ -231,6 +231,19 @@ function M.draw(box, entity, player)
 	end)
 end
 
+--- The ME Terminal `source` was moved to `destination` (scripts/fork-me-move.lua): its view cells go with it
+function M.on_moved(source, destination)
+	local s = storage.fork_me_view
+	local a = s and s.terms[source.unit_number]
+	if not (a and is_terminal(destination)) or s.terms[destination.unit_number] == a then return end
+	local old = s.terms[destination.unit_number]
+	if old and old.inv and old.inv.valid and old.inv.is_empty() then old.inv.destroy() end
+	s.terms[source.unit_number] = nil
+	s.terms[destination.unit_number] = a
+	a.entity = destination
+	a.where = { surface = destination.surface.index, x = destination.position.x, y = destination.position.y }
+end
+
 remote.add_interface("gregtorio-me-viewcells", {
 	--- (tests) the view cell inventory of a terminal (or, with `player`, of the wireless window of an access point)
 	inventory = function(entity, player) return M.inventory(entity, player) end,
