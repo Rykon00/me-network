@@ -38,14 +38,18 @@ recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface
 --- Issue #588: since Gregtorio #612 its gear recipe `iron-gear-crafting-table`, the one the autocrafting tests craft, also uses
 --- up a charge of GT crafting tools (the items `hammer-usage`, `wire-cutter-usage`; Gregtorio's FORK_TOOLS). The tests check
 --- autocrafting, not Gregtorio's tools: the recipe keeps its plate and sticks, as the stand-in of data.lua has it.
+--- Issue #775: the same for its stick recipe of the crafting table, `iron-rod-crafting-table` (an iron ingot and a charge
+--- of the file), the stick step of fairsteps.lua.
 do
-	local r = data.raw.recipe["iron-gear-crafting-table"]
 	local tools = {}
 	for _, usage in pairs(type(FORK_TOOLS) == "table" and FORK_TOOLS or {}) do tools[usage] = true end
-	if r and r.ingredients then
-		for i = #r.ingredients, 1, -1 do
-			local name = r.ingredients[i].name or r.ingredients[i][1]
-			if tools[name] or (type(name) == "string" and name:match("%-usage$")) then table.remove(r.ingredients, i) end
+	for _, recipe in pairs({ "iron-gear-crafting-table", "iron-rod-crafting-table" }) do
+		local r = data.raw.recipe[recipe]
+		if r and r.ingredients then
+			for i = #r.ingredients, 1, -1 do
+				local name = r.ingredients[i].name or r.ingredients[i][1]
+				if tools[name] or (type(name) == "string" and name:match("%-usage$")) then table.remove(r.ingredients, i) end
+			end
 		end
 	end
 end
