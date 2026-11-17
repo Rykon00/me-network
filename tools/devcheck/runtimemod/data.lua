@@ -249,6 +249,9 @@ for _, c in pairs({ "zz-macerator", "zz-chemical-reactor", "zz-extractor", "zz-s
 --- Gregtorio's gear recipe (crafting table): 1 plate + 2 sticks -> 1 gear, a hand recipe the molecular assembler
 --- also makes
 recipe("iron-gear-crafting-table", "crafting", 1, { I("iron-plate", 1), I("iron-stick", 2) }, { I("iron-gear-wheel", 1) })
+--- Gregtorio's stick recipe of the crafting table: 1 iron ingot -> 1 stick, the one the molecular assembler makes there
+--- (issue #775: Gregtorio's recipe `iron-stick` is a lathe recipe, which the assembler cannot craft)
+recipe("iron-rod-crafting-table", "crafting", 1, { I("iron-ingot", 1) }, { I("iron-stick", 1) })
 --- Gregtorio's macerator recipe of raw iron (since its issue #202 as GT New Horizons': nickel dust at 5 %; me-network
 --- issue #171: a byproduct at a chance)
 recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) },
