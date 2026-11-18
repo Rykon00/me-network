@@ -334,7 +334,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Level Maintainer | five rows: item or fluid, amount, batch, stock and status (the circuit options and the conditions: the panel below) |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
-| ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
+| ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413; set by the circuit network with **Set filters** of the panel below, issue #780), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
@@ -345,12 +345,33 @@ the lamp window of the level maintainer is replaced, its circuit and logistic ne
 network settings of the ME Import, Export and Storage Bus, the ME Interface, the ME Pattern Provider and the ME Level
 Maintainer are in a small panel **to the right of the block's window**, which moves, opens and closes with it. It is there
 only while the block has a red or green wire (**Circuit connection**: the networks it is connected to, **Enable if** with the
-condition and a line saying whether it holds, and the block's circuit modes: the export bus's **Pulse**, the interface's
+condition and a line saying whether it holds, and the block's circuit modes: the export bus's **Pulse**, the export and
+import bus's **Set filters** (issue #780, below), the interface's
 **Rows from the circuit** with the rows they make, the provider's **Lock crafting** mode by the circuit, the maintainer's
 **Amount from the circuit** per row and **Craft what the circuit asks**) or stands in the logistic area of a logistic network
 of its force, or is connected to one (**Logistic connection**: **Connect** and a condition on the network's contents). Nothing
 circuit-related is in the ME windows any more. The ME Toggle Bus and the ME Inverted Toggle Bus open the game's lamp window,
 which has the same settings. The ME Level Emitter and the ME Circuit Interface only send signals and have no panel.
+
+**Filters from the circuit** (issue #780, asked for by Totue). The check box **Set filters** in the panel of an ME Export Bus
+or ME Import Bus is the vanilla inserter's mode of the same name: every **item and fluid signal with a positive value** on
+the bus's red and green wire (added) is a filter, an item with the quality its signal has. The values play no part (the
+export bus fills its target by its usual rule, a machine up to two crafts of its recipe); virtual signals and signals of zero
+or less are no filters. With more signals than the bus has filters (9, with Capacity Cards 18 or 27) the first in the game's
+signal order apply, the ones a vanilla inserter takes from the same wire, and the panel says how many have no slot. The
+filter slots of the window then show what the wires name and take no click. The bus's **own filters are kept**: they apply
+again when the mode is switched off and while no wire is connected; blueprints, settings paste, clones and a ghost's
+window keep the mode with them. An import bus in the mode takes nothing while its wires name nothing (without the mode a bus
+without filters takes everything); the Inverter, Fuzzy and Crafting Card work on the wire's filters as on the bus's own, and a
+Group Filter Card's text still stands in for the item filters. The ME Storage Bus has no such mode: its filters are a
+partition of the network's storage, and the vanilla game has nothing like it.
+
+The use: **a mall before autocrafting**. An assembling machine with **Read ingredients** puts its recipe's ingredients on a
+wire; an ME Export Bus that faces it, wired to it and set to **Set filters**, exports exactly those. One blueprint of
+machine, bus and wire serves every recipe: only the machine's recipe changes. A constant or selector combinator works the
+same way. The bus follows a change of the signals within a sixth of a second in a small base; the signals are read by the
+checks of the circuit conditions (16 blocks per tick for the whole map, issue #412), so with thousands of such buses a
+change takes longer to arrive and a tick costs no more.
 
 ## Wireless: the Wireless ME Terminal
 

@@ -246,6 +246,17 @@ N.off_setters.io = function(unit, off)
 	rec.coff = off
 	wake(unit)
 end
+--- Issue #780: the connector module's check hands the filters its wires name to a bus whose filters come from the circuit
+--- (`keys`: the list in the game's signal order; nil: no wire, its own filters apply). Called only when they changed: the
+--- filters that apply are split anew and the bus is woken; a visit reads `rec.filters` as ever.
+N.filter_setters.io = function(unit, keys)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	if not (rec and rec.cflt) then return end
+	rec.ckeys = keys
+	M.bus_split(rec)
+	wake(unit)
+end
 
 local function kind(entity) return entity and entity.valid and N.kind_of(entity.name) end
 
@@ -2084,14 +2095,15 @@ function M.set_bus_filters(entity, filters)
 	return true
 end
 
---- The filters that apply (the first filters_of(rec) of rec.keys, issue #413) split into rec.filters (item keys) and
+--- The filters that apply (the first filters_of(rec) of rec.keys, issue #413; issue #780: of rec.ckeys, what the bus's wires
+--- name, while its filters come from the circuit and it has a wire) split into rec.filters (item keys) and
 --- rec.ffilters (fluid names) and their sets; rec.iq: a filter names a quality. With a Fuzzy Card (rec.fz) the item set holds
 --- the items' names, so a filter takes every quality of its item, and rec.fznames is that set for the export (M.gf_list).
 function M.bus_split(rec)
 	local items, fl, iset, fset = {}, {}, {}, {}
 	local fkeys, temps, iq = {}, false, false
 	local fz, n = rec.fz, filters_of(rec)
-	for i, key in ipairs(rec.keys or rec.filters or {}) do
+	for i, key in ipairs(rec.cflt and rec.ckeys or rec.keys or rec.filters or {}) do
 		if i > n then break end
 		do
 			if N.is_fluid_key(key) then
@@ -2131,8 +2143,9 @@ end
 --- (MAX_FILTERS, the filters' count), each visit moving what its speed allows; without a text it exports nothing.
 function M.bus_gf(rec)
 	rec.gf = rec.gcard and rec.gtext or nil
+	--- (issue #780: an import bus whose filters come from the circuit takes nothing while its wires name nothing)
 	rec.all = IMPORTS[rec.kind] and ((rec.gcard and not rec.gtext)
-		or (not rec.gcard and #(rec.filters or {}) + #(rec.ffilters or {}) == 0)) or nil
+		or (not rec.gcard and not (rec.cflt and rec.ckeys) and #(rec.filters or {}) + #(rec.ffilters or {}) == 0)) or nil
 	rec.glist, rec.gkgen = nil, nil
 end
 
@@ -2176,6 +2189,26 @@ function M.set_bus_pulse(entity, on)
 	return true
 end
 
+--- Issue #780: the filters of an export or import bus come from its circuit wires (`on`), vanilla's "Set filters" of an
+--- inserter: every item and fluid signal with a positive value on its red and green wire is a filter (an item's quality as
+--- the signal has it), whatever its value; more signals than the bus has filters (9, more with Capacity Cards): the first in
+--- the game's signal order. The bus's own filters stay (`rec.keys`) and apply without the option, and with it while no wire
+--- is connected. The signals are read by the connector module's checks (a list and a budget, fork-me-connector.lua), never by
+--- a visit: `rec.ckeys` changes only when they change.
+function M.set_bus_circuit(entity, on)
+	if not BUSES[kind(entity)] then return false end
+	local rec = register(state(), entity)
+	if not on and not rec.cflt then return true end        -- (nothing to switch off: no record of the checks is made)
+	if not rec.keys then rec.keys = { table.unpack(rec.filters or {}) } end   -- (a record of a save before issue #3)
+	rec.cflt = on and true or nil
+	rec.ckeys = nil
+	M.bus_split(rec)
+	Conn.ensure(entity)
+	Conn.set_filter_mode(entity.unit_number, rec.cflt)
+	wake(entity.unit_number)
+	return true
+end
+
 --- Issue #426: an export bus in craft only (AE2-U's `Settings.CRAFT_ONLY`) exports nothing from storage: with its Crafting Card
 --- it crafts what its target can take, and the jobs hand the products to the target (without the card it exports as before)
 function M.set_bus_craft_only(entity, on)
@@ -2203,8 +2236,10 @@ function M.get_bus(entity)
 	local rec = s and entity and entity.valid and s.recs[entity.unit_number]
 	if not rec then return nil end
 	local t = rec.target
+	--- (issue #780: `filters` are the bus's own; `circuit`: they come from the circuit, `cfilters`: what its wires name then)
 	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil,
-		gtext = rec.gtext, pulse = rec.pulse, conly = rec.conly }
+		gtext = rec.gtext, pulse = rec.pulse, conly = rec.conly, circuit = rec.cflt,
+		cfilters = rec.cflt and rec.ckeys and { table.unpack(rec.ckeys) } or nil }
 end
 
 --- one filter of a bus (the window's filter buttons): `key` nil clears it; the list stays packed
@@ -2260,6 +2295,7 @@ function M.bus_info(entity)
 	--- issue #413: the filters that apply (more with Capacity Cards), whether some are kept beyond them, the Fuzzy and Inverter Card
 	b.kind, b.import, b.max = k, IMPORTS[k] == true, filters_of(rec)
 	b.kept = #(rec.keys or {}) > b.max or nil
+	b.cmore = b.cfilters and #b.cfilters > b.max and #b.cfilters - b.max or nil   -- issue #780: signals beyond the filters
 	b.fuzzy, b.inverted = rec.fz == true, rec.binv == true
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
 	b.tstat = rec.status == "temperature" and rec.tstat or nil      -- issue #159: { fluid, the network has, the target takes }
@@ -2614,6 +2650,7 @@ function M.on_built(entity, tags, source, player, inv)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
 			if t.conly then M.set_bus_craft_only(entity, true) end             -- (issue #426)
+			if t.circuit then M.set_bus_circuit(entity, true) end              -- (issue #780)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, player, inv) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
@@ -2621,6 +2658,7 @@ function M.on_built(entity, tags, source, player, inv)
 			if from and from.gtext then M.set_bus_gtext(entity, from.gtext) end
 			if from and from.pulse then M.set_bus_pulse(entity, true) end      -- (issue #412)
 			if from and from.conly then M.set_bus_craft_only(entity, true) end -- (issue #426)
+			if from and from.circuit then M.set_bus_circuit(entity, true) end  -- (issue #780)
 			local from_rec = bus_rec(source)
 			local list = from_rec and cards.card_list(from_rec)
 			if list then cards.want_cards(entity, list, nil) end
@@ -2748,6 +2786,7 @@ function M.on_entity_settings_pasted(event)
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
 		M.set_bus_gtext(dst, from and from.gtext or "")                    -- (issue #363)
+		M.set_bus_circuit(dst, from and from.circuit)                      -- (issue #780)
 		if k == "export-bus" then
 			M.set_bus_pulse(dst, from and from.pulse)                                -- (issue #412)
 			M.set_bus_craft_only(dst, from and from.conly)                           -- (issue #426)
@@ -2777,9 +2816,9 @@ function M.tag_blueprint(bp, mapping)
 			local b = M.get_bus(entity)
 			local rec = bus_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
-			if b and (#b.filters > 0 or list or b.gtext or b.pulse or b.conly) then
+			if b and (#b.filters > 0 or list or b.gtext or b.pulse or b.conly or b.circuit) then
 				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext, pulse = b.pulse,
-					conly = b.conly })                                             -- (issue #426: craft only)
+					conly = b.conly, circuit = b.circuit })            -- (issue #426: craft only; issue #780: filters from the circuit)
 			end
 		end
 	end
@@ -2858,6 +2897,11 @@ function M.on_configuration_changed()
 				if o then rec.gtext, rec.gcard = o.gtext, o.gcard M.bus_gf(rec) end                                       -- issue #363
 				--- issue #628: the pulse mode, craft only and the Crafting Card's jobs were lost at every update before
 				if o then rec.pulse, rec.conly, rec.cjobs = o.pulse, o.conly, o.cjobs end
+				--- issue #780: the filters from the circuit (the connector module's record keeps the set its last check saw)
+				if o and o.cflt then
+					rec.cflt, rec.ckeys = true, o.ckeys
+					M.bus_split(rec)
+				end
 			end
 			if rec.kind == "interface" then
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
@@ -3025,6 +3069,16 @@ remote.add_interface("gregtorio-me-io", {
 	set_bus_pulse = function(entity, on) return M.set_bus_pulse(entity, on) end,
 	--- issue #426: the export bus's craft only
 	set_bus_craft_only = function(entity, on) return M.set_bus_craft_only(entity, on) end,
+	--- issue #780: the filters of an export or import bus from the circuit
+	set_bus_circuit = function(entity, on) return M.set_bus_circuit(entity, on) end,
+	--- tests: the filter keys that apply to a bus now (the items, then the fluids)
+	get_bus_applied = function(entity)
+		local rec = bus_rec(entity)
+		if not rec then return nil end
+		local out = { table.unpack(rec.filters or {}) }
+		for i, name in ipairs(rec.ffilters or {}) do out[#out + 1] = rec.fkeys and rec.fkeys[i] or N.fluid_key(name) end
+		return out
+	end,
 	set_interface_circuit = function(entity, on) return M.set_interface_circuit(entity, on) end,
 	--- issue #363: the Group Filter Card's text ("" clears it)
 	set_bus_gtext = function(entity, text) return M.set_bus_gtext(entity, text) end,

@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.7.2
+  Features:
+    - ME Export Bus and ME Import Bus: "Set filters" in the circuit network panel (issue #780, asked for by Totue), the vanilla inserter's mode of the same name. Every item and fluid signal with a positive value on the bus's red and green wire is a filter (an item with the quality of its signal; the values play no part), so an export bus wired to an assembling machine with "Read ingredients" exports exactly the ingredients of the machine's recipe: one blueprint of machine, bus and wire serves every recipe of a mall, long before autocrafting. With more signals than the bus has filters (9, more with Capacity Cards) the first in the game's signal order apply, as on an inserter. The bus's own filters are kept and work again when the mode is switched off or no wire is connected; blueprints, settings paste and ghosts keep the mode. A megabase pays nothing per bus: the signals are read by the checks of the circuit conditions (16 blocks per tick for the whole map), and a bus's filter list is only made anew when its signals change.
+---------------------------------------------------------------------------------------------------
 Version: 0.7.1
 Date: 2026-11-18
   Features:

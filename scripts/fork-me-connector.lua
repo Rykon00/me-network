@@ -33,8 +33,13 @@
 ---     (also inside a construction area only) it is off; a circuit condition without a wire does nothing. With both on, the
 ---     block works only while both hold: the level of both replaces the circuit's (the off state, the pulse's rise, the
 ---     provider's locks).
+---   * Issue #780: the ME Export and Import Bus's "filters from the circuit" (`flt`), vanilla's "Set filters" of an inserter:
+---     a check compares the item and fluid signals with a positive value on the block's wires with the set it saw last (`fset`,
+---     `fn`: one read of the wires, one table lookup per signal, nothing made); only a change makes the list anew (in the game's
+---     signal order) and hands it to the block's module (N.filter_setters), which wakes the block. A visit of the bus never
+---     reads a wire. Without a wire the bus has its own filters (`fset` nil), as an inserter without one.
 --- State: storage.fork_me_conn = { hosts = { [unit] = { host, kind, cc, cond, lc, lcond, lnet, lnext, pulse, read, last, sig,
---- due } },
+--- flt, fset, fn, fgen, due } },
 --- off = { [unit] = true }, edge = { [unit] = true }, list = { units }, cursor,
 --- orphans = { ["<surface>:<x>:<y>"] = { entity = an old connector's ghost waiting for its block's ghost, tick } } }
 --- `cond` = { first_signal, comparator, constant, second_signal } (a CircuitCondition without `fulfilled`).
@@ -274,6 +279,119 @@ local function wake(h, unit)
 	if w then w(unit) end
 end
 
+--------------------------------------------------------------------------------
+--- filters from the circuit (issue #780)
+--------------------------------------------------------------------------------
+
+--- the modules whose blocks take their filters from the circuit: N.filter_setters[kind](unit, keys), `keys` the list of
+--- filter keys the wires name (nil: no wire, the block's own filters)
+N.filter_setters = N.filter_setters or {}
+
+--- the filter key of a signal (item: "name" / "name@quality", fluid: "fluid/<name>"; false: a virtual or any other signal),
+--- made once per signal and kept outside `storage` (derived from the prototypes: a check makes no string)
+local signal_keys = { item = {}, fluid = {} }
+local function signal_key(id)
+	local t = id.type or "item"
+	local by = signal_keys[t]
+	if not by then return false end
+	local name = id.name
+	if t == "fluid" then
+		local key = by[name]
+		if not key then
+			key = "fluid/" .. name
+			by[name] = key
+		end
+		return key
+	end
+	local q = id.quality or "normal"
+	local keys = by[name]
+	if not keys then
+		keys = {}
+		by[name] = keys
+	end
+	local key = keys[q]
+	if not key then
+		key = N.key_of(name, q)
+		keys[q] = key
+	end
+	return key
+end
+
+--- where a filter key stands in the game's signal order: the items by group, subgroup, order and name, then by the level of
+--- their quality, after them the fluids. A vanilla inserter whose filters are set by the circuit takes the first of that
+--- order when there are more signals than filter slots (measured on Factorio 2.1: eight item signals on a fast inserter's
+--- five slots; their values play no part). One string per key, made when a list is made and kept outside `storage`.
+local ranks = {}
+local function rank(key)
+	local r = ranks[key]
+	if r then return r end
+	local p, level, kind
+	if N.is_fluid_key(key) then
+		p, level, kind = prototypes.fluid[(N.split_fluid_key(key))], 0, "1"
+	else
+		local name, q = N.parse_key(key)
+		p, kind = prototypes.item[name], "0"
+		local quality = prototypes.quality[q or "normal"]
+		level = quality and quality.level or 0
+	end
+	if p then
+		r = table.concat({ kind .. p.group.order, p.subgroup.order, p.order, p.name, string.format("%03d", level) }, "\0")
+	else
+		r = "2" .. key
+	end
+	ranks[key] = r
+	return r
+end
+local function by_rank(a, b) return rank(a) < rank(b) end
+
+--- One check of a block whose filters come from the circuit: the item and fluid signals with a positive value on its wires
+--- (red and green added) against the set of the last check; a change (also the wire coming or going) makes the list and
+--- hands it to the block's module. Returns whether it changed.
+local function check_filters(h, unit)
+	local e = h.host
+	local set = h.fset
+	if not wired(e) then
+		if set == nil then return false end
+		h.fset, h.fn = nil, nil
+		local f = N.filter_setters[h.kind]
+		if f then f(unit, nil) end
+		return true
+	end
+	local sigs = e.get_signals(RED, GREEN)
+	local n, same = 0, set ~= nil
+	if sigs then
+		for i = 1, #sigs do
+			local sig = sigs[i]
+			if sig.count > 0 then
+				local key = signal_key(sig.signal)
+				if key then
+					n = n + 1
+					if same and not set[key] then same = false end
+				end
+			end
+		end
+	end
+	if same and n == h.fn then return false end
+	local keys, seen = {}, {}
+	if sigs then
+		for i = 1, #sigs do
+			local sig = sigs[i]
+			if sig.count > 0 then
+				local key = signal_key(sig.signal)
+				if key and not seen[key] then
+					seen[key] = true
+					keys[#keys + 1] = key
+				end
+			end
+		end
+	end
+	table.sort(keys, by_rank)
+	h.fset, h.fn, h.fgen = seen, #keys, (h.fgen or 0) + 1
+	local f = N.filter_setters[h.kind]
+	if f then f(unit, keys) end
+	return true
+end
+
 local function listed(s, unit)
 	for _, u in ipairs(s.list) do if u == unit then return true end end
 	return false
@@ -290,7 +408,7 @@ function M.update(unit)
 	local s = state()
 	local h = s.hosts[unit]
 	if not h then return end
-	if h.cc or h.lc or h.pulse or h.read then
+	if h.cc or h.lc or h.pulse or h.read or h.flt then
 		if not listed(s, unit) then s.list[#s.list + 1] = unit end
 		local lv = level(h)
 		local on = lv ~= false
@@ -298,6 +416,7 @@ function M.update(unit)
 		set_off(s, h.kind, unit, not on, lv)
 		if h.pulse then h.last = on end
 		if h.read then h.sig = signature(unit) end
+		if h.flt then check_filters(h, unit) end                 -- (issue #780; a change wakes the block through its setter)
 		if on ~= was or h.read then wake(h, unit) end
 	else
 		local was = s.off[unit]
@@ -330,6 +449,24 @@ function M.set_mode(unit, pulse, read)
 	h.pulse, h.read = pulse or nil, read or nil
 	if not pulse then s.edge[unit] = nil end
 	M.update(unit)
+end
+
+--- Issue #780: the filters of an export or import bus come from the circuit (`on`; the bus's module keeps the setting, this
+--- is the check). Switched on, the wires are read at once and the module gets the list (without a wire it keeps its own).
+function M.set_filter_mode(unit, on)
+	local s = state()
+	local h = s.hosts[unit]
+	if not h then return end
+	h.flt, h.fset, h.fn = on and true or nil, nil, nil
+	M.update(unit)
+end
+
+--- Issue #780 (the tests): the state of the filter check of block `e`: { on, wired = its wires name the filters, n, gen =
+--- the lists made so far }
+function M.filter_mode(e)
+	local s = storage.fork_me_conn
+	local h = e and e.valid and s and s.hosts[e.unit_number]
+	return { on = h ~= nil and h.flt == true, wired = h ~= nil and h.fset ~= nil, n = h and h.fn or nil, gen = h and h.fgen or 0 }
 end
 
 --- the block's condition: `cc` (it switches the block), `cond` (as stored; nil: none set)
@@ -672,6 +809,7 @@ function M.on_tick(tick)
 						wake(h, unit)
 					end
 				end
+				if h.flt then check_filters(h, unit) end       -- (issue #780)
 			end
 		end
 	end
@@ -736,6 +874,8 @@ remote.add_interface("gregtorio-me-connector", {
 	--- tests: the block's wires were changed by a script (the next check sees it; this makes it now)
 	update = function(entity) if entity and entity.valid then M.update(entity.unit_number) end end,
 	is_off = function(entity) return entity and entity.valid and M.is_off(entity.unit_number) or false end,
+	--- issue #780: the filter check's state of a bus { on, wired, n }
+	filter_mode = function(entity) return M.filter_mode(entity) end,
 	--- tests: the state { hosts, listed, off, orphans } of the checks
 	stats = function()
 		local s = state()
