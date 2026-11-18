@@ -4952,3 +4952,56 @@ shared there); script average 0.122 ms for the chain (0.116 to 0.133 before). Th
 (the gear takes two sticks), a job of 96 gears: while stick runs are left, gear runs are handed out (16 at tick 50 of the job,
 32 by the time the sticks are all handed out: more than one hand-over, so the gear step holds a machine of its own); the job
 ends with 96 gears and nothing left. On the code before, the gear step got no machine before every stick run was handed out.
+
+## Filters of the export and import bus from the circuit (issue #780)
+
+Vanilla's "Set filters" on the ME Export and Import Bus. The rule of the design: **a visit of a bus reads no wire**. The
+signals are read by the check queue of the circuit conditions (`fork-me-connector.lua`, issues #412 and #639: 16 blocks per
+tick for the whole map, each at most every 10 ticks), and a bus's filters are split anew only when its signals changed:
+
+- a check reads the wires once (`get_signals` of red and green) and compares the item and fluid signals with a positive value
+  with the set of the last check (`fset`, `fn`: one table lookup per signal; the filter key of a signal is made once per
+  session and kept outside `storage`). The values play no part, so a changing value changes nothing;
+- only a change makes the list (sorted in the game's signal order, the rank string of a key made once) and hands it to the I/O
+  module (`N.filter_setters.io`), which calls `M.bus_split` once and wakes the bus; the visit then works on `rec.filters` as
+  it always did;
+- a bus without the mode has no record of the checks and costs nothing; the mode on a bus without a wire costs a check that
+  finds no signals and asks for the wires.
+
+Measured on a display panel (Factorio 2.1.24, 10 000 calls): `get_signals` of one signal 1.2 µs and 0.52 KB (the engine's
+result: a table per signal), of a wire without signals 0.4 µs; the two `get_circuit_network` calls that tell "no wire" from
+"no signal" 0.6 µs and 0.14 KB. The first version asked for the wires at every check; now only when `get_signals` gives
+nothing (the allocation went from 10.9 to 8.6 KB per tick in the scene below).
+
+`bench --check origin/main --sizes 1000,5000 --circuit-filters` (new variant: every import and export bus of the scene that has
+filters, 270 at 1000 and 1350 at 5000, gets a constant combinator without collision on its tile that sends exactly those
+filters and a wire to it, in both versions; the working copy also switches the mode on, so every such bus is in the check
+list and exports what it did before; three rounds in turns):
+
+| | origin/main | #780, first version | #780 |
+|---|---|---|---|
+| 1000: script avg / p99 (ms) | 0.388 / 2.03 | 0.441 / 2.01 (origin/main in that run: 0.349 / 1.94) | 0.460 / 2.12 |
+| 5000: script avg / p99 (ms) | 1.016 / 2.96 | 1.128 / 3.13 (origin/main in that run: 0.997 / 2.92) | 1.107 / 3.05 |
+| Lua alloc KB per tick (1000 / 5000) | 32.04 / 53.15 | 42.92 / 64.12 | 40.67 / 61.87 |
+| gc avg ms (1000 / 5000) | 0.039 / 0.053 | 0.042 / 0.063 | 0.041 / 0.056 |
+| items/s (1000 / 5000) | 33 270 / 165 100 | 33 340 / 164 700 | 33 340 / 164 700 |
+| fluid/s (1000 / 5000) | 205 800 / 1 004 000 | 205 800 / 1 008 000 | 205 800 / 1 008 000 |
+
+The mode on every filtered bus costs 0.07 to 0.09 ms per tick (first version: 0.09 to 0.13) and 8.6 KB of allocation per tick,
+the same at 270 and at 1350 buses: the 16 checks per tick are the limit of the cost, whatever the number of buses; more buses
+are checked less often (every 17 ticks at 270, every 84 ticks at 1350, the time a changed signal takes to arrive). The
+allocation is the engine's signal tables of 16 reads. The throughput differs by 0.2 to 0.4 % (the filters are the same; the
+wake at the first list shifts the visits). `bench --check` reports the script average and the allocation as regressions: they
+are the price of the mode where every bus uses it, as with `--conditions` (issue #639).
+
+`bench --check origin/main --sizes 1000,5000` (the scenes without the mode: no bus is in the check list, a visit has no new
+code): 5000: 0.970 / 2.91 against 0.967 / 2.90 ms, allocation 53.15 KB and throughput identical. 1000 in three rounds 0.348
+against 0.383 ms with one slow round each way, so it was run again with five rounds (`--runs 5`): 0.373 / 2.02 against
+0.378 / 2.03 ms, allocation 32.03 KB both, throughput identical, `regressions beyond the noise: 0`.
+
+**The test** (`circuitflt.lua`): the panel's check box through a stand-in player; positive item and fluid signals are the
+filters (a negative and a virtual one are none); a changed value makes no new list (the checks' list counter stays); red and
+green are added; twelve signals on nine filters apply in the order a vanilla inserter with "Set filters" on the same wire has
+its own filters; without a wire and without the mode the bus's own filter works; a blueprint copy, a settings paste and a
+clone keep the mode; the import bus takes only what its wire names and nothing while it names nothing; an export bus wired to
+an assembling machine that reads its ingredients exports exactly those.

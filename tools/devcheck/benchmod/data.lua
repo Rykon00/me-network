@@ -30,6 +30,19 @@ port.next_upgrade = nil
 port.fast_replaceable_group = nil
 data:extend({ port })
 
+--- issue #780: a constant combinator without collision (placed on a bus's tile in the dense scene): the wire that names the
+--- bus's filters in `circuit_filters`
+local comb = table.deepcopy(data.raw["constant-combinator"]["constant-combinator"])
+comb.name = "zz-bench-combinator"
+comb.collision_mask = { layers = {} }
+comb.collision_box = { { -0.1, -0.1 }, { 0.1, 0.1 } }
+comb.selection_box = { { -0.1, -0.1 }, { 0.1, 0.1 } }
+comb.selectable_in_game = false
+comb.minable = nil
+comb.next_upgrade = nil
+comb.fast_replaceable_group = nil
+data:extend({ comb })
+
 --- issue #752: the recipes of the feed scene, a tenth of a second each in an assembling machine: a plate from water (a
 --- crafting pattern with a fluid), a gear from a plate (items only), a stick from a gear (a processing pattern). Factorio
 --- 2.0 names a recipe's category `category`, 2.1 `categories` and refuses the old key (the helper runs in both).

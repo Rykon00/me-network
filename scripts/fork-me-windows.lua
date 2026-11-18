@@ -2290,7 +2290,7 @@ function M.side_state(entity)
 		d.cl, d.ll = circuit.levels(entity)
 	else
 		d.kind = entity.name == "me-export-bus" and "export" or entity.name == "me-network-interface" and "interface"
-			or entity.name == "me-pattern-provider" and "provider" or "bus"
+			or entity.name == "me-pattern-provider" and "provider" or entity.name == "me-import-bus" and "import" or "bus"
 		d.cc, d.cond = Conn.condition(entity)
 		d.lc, d.lcond = Conn.logistic(entity)
 		d.cl, d.ll = Conn.levels(entity)
@@ -2348,12 +2348,18 @@ local function section(side, name, caption)
 end
 
 --- the circuit network section's modes of each block (moved from the windows): the export bus's pulse mode (#412), the
---- interface's rows from the circuit (#412), the provider's circuit lock (#429), the maintainer's amounts from the circuit and
+--- export and import bus's filters from the circuit (#780), the interface's rows from the circuit (#412), the provider's circuit lock (#429), the maintainer's amounts from the circuit and
 --- "craft what the circuit asks" (#351)
 local function build_modes(box, entity, d)
-	if d.kind == "export" then
-		box.add{ type = "checkbox", name = "fork_me_bus_pulse", state = false, caption = { "fork-me-gui.bus-pulse" },
-			tooltip = { "fork-me-gui.bus-pulse-tooltip" }, tags = G.act("bus_pulse") }
+	if d.kind == "export" or d.kind == "import" then
+		if d.kind == "export" then
+			box.add{ type = "checkbox", name = "fork_me_bus_pulse", state = false, caption = { "fork-me-gui.bus-pulse" },
+				tooltip = { "fork-me-gui.bus-pulse-tooltip" }, tags = G.act("bus_pulse") }
+		end
+		--- issue #780: vanilla's "Set filters" (the game's own caption), with the filters the wires name
+		box.add{ type = "checkbox", name = "fork_me_bus_circuit", state = false, caption = { "gui-control-behavior-modes.set-filters" },
+			tooltip = { "fork-me-gui.bus-circuit-tooltip" }, tags = G.act("bus_circuit") }
+		G.label(box, "", SIDE_WIDTH, nil, "fork_me_bus_circuit_filters")
 	elseif d.kind == "interface" then
 		box.add{ type = "checkbox", name = "fork_me_if_circuit", state = false, caption = { "fork-me-gui.interface-circuit" },
 			tooltip = { "fork-me-gui.interface-circuit-tooltip" }, tags = G.act("if_circuit") }
@@ -2403,6 +2409,13 @@ local function build_side(side, entity, d)
 			tooltip = { "fork-me-gui.logistic-condition-tooltip" }, tags = G.act(m and "maint_lcond_on" or "lcond_on") }
 		condition_row(box, "fork_me_lcond", m and "maint_lcond" or "lcond", d.lcond, true, 2)
 	end
+end
+
+--- issue #780: a filter key as rich text (an item with its quality, a fluid)
+local function key_tag(key)
+	if N.is_fluid_key(key) then return "[fluid=" .. (N.split_fluid_key(key)) .. "]" end
+	local name, q = N.parse_key(key)
+	return "[item=" .. name .. ((q and q ~= "normal") and (",quality=" .. q) or "") .. "]"
 end
 
 --- the state line of a condition: `on` (switched on), `level` (true, false, nil), `none` (why it does nothing)
@@ -2458,8 +2471,20 @@ refresh_side = function(frame, entity)
 	if const then const.visible = d.cond.second_signal == nil end
 	state_line(side, "fork_me_cond_state", d.cc, d.cl, d.kind == "maintainer" and "fork-me-gui.maintainer-condition-off"
 		or "fork-me-gui.circuit-condition-off", "fork-me-gui.circuit-condition-no-wire")
-	if d.kind == "export" then
-		set_state(side, "fork_me_bus_pulse", (M.bus_data(entity) or {}).pulse or false)
+	if d.kind == "export" or d.kind == "import" then
+		local b = M.bus_data(entity) or {}
+		set_state(side, "fork_me_bus_pulse", b.pulse or false)
+		set_state(side, "fork_me_bus_circuit", b.circuit or false)
+		--- issue #780: the filters the wires name, as many as apply; how many signals are beyond them
+		local line = G.find(side, "fork_me_bus_circuit_filters")
+		if line then
+			local shown = {}
+			for n = 1, math.min(#(b.cfilters or {}), b.max or 0) do shown[#shown + 1] = key_tag(b.cfilters[n]) end
+			--- (nothing while the mode is on without a wire of its own: a ghost's stand-in, the bus's own filters apply)
+			line.caption = not (b.circuit and b.cfilters) and "" or #shown == 0 and { "fork-me-gui.bus-circuit-none" }
+				or b.cmore and { "", { "fork-me-gui.bus-circuit-filters", table.concat(shown, " ") }, " ", { "fork-me-gui.bus-circuit-more", b.cmore } }
+				or { "fork-me-gui.bus-circuit-filters", table.concat(shown, " ") }
+		end
 	elseif d.kind == "interface" and G.find(side, "fork_me_if_circuit") then
 		local i = M.interface_data(entity)
 		set_state(side, "fork_me_if_circuit", i.circuit or false)
@@ -2564,13 +2589,17 @@ function M.refresh_bus(player, frame)
 	if not entity then return false end
 	local d = M.bus_data(entity)
 	--- (issue #413: 9 filters a row, 9 to 27 with Capacity Cards)
-	rebuild(frame, "fork_me_bus_filters", d.max .. ":" .. tostring(d.fuzzy) .. ":" .. table.concat(d.filters, ","), function(box)
+	--- issue #780: while the filters come from the circuit (and a wire is there), the slots show what the wires name and take
+	--- no click; the bus's own filters are kept and shown again without the mode or the wire
+	local shown = d.cfilters or d.filters
+	rebuild(frame, "fork_me_bus_filters", d.max .. ":" .. tostring(d.fuzzy) .. ":" .. tostring(d.cfilters ~= nil) .. ":"
+		.. table.concat(shown, ","), function(box)
 		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
 		for i = 1, d.max do
 			--- issue #291: what a filter without a quality takes (the import bus every quality, the export bus normal); issue #413:
 			--- with a Fuzzy Card every filter takes every quality of its item
-			local key = d.filters[i]
-			local tip = { "fork-me-gui.key-slot-tooltip" }
+			local key = shown[i]
+			local tip = { d.cfilters and "fork-me-gui.bus-circuit-slot" or "fork-me-gui.key-slot-tooltip" }
 			if key and d.fuzzy and not N.is_fluid_key(key) and prototypes.item[(N.parse_key(key))] then
 				tip = { "", { "fork-me-gui.bus-filter-fuzzy" }, "\n", tip }
 			elseif key and script.feature_flags.quality and prototypes.item[key] ~= nil then
@@ -2644,7 +2673,9 @@ G.on("bus_filter", function(event, player, el)
 	local entity = window_entity(player)
 	if not entity then return end
 	local index = el.tags.index
-	local key = M.bus_data(entity).filters[index]
+	local d = M.bus_data(entity)
+	if d.cfilters then return end                               -- (issue #780: the circuit sets them)
+	local key = d.filters[index]
 	if right_click(event) then
 		if key then io.set_bus_filter(entity, index, nil) G.refresh_one(player) end
 		return
@@ -2657,6 +2688,12 @@ G.on("bus_pulse", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
 	if entity then io.set_bus_pulse(entity, el.state) G.refresh_one(player) end
+end)
+--- issue #780: the filters of an export or import bus from the circuit
+G.on("bus_circuit", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then io.set_bus_circuit(entity, el.state) G.refresh_one(player) end
 end)
 --- issue #426: the export bus's craft only
 G.on("bus_conly", function(event, player, el)
