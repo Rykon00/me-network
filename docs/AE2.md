@@ -389,7 +389,9 @@ built. A block in the world never has that copy, so nothing is shown or sent. Li
 combinator's count is 32 bit) and an emitter on stored energy are not offered as parameters; a fluid filter of one temperature
 keeps the temperature only while the fluid is not replaced; the **ME Interface's rows** and the **ME Level Maintainer's
 rows** are not parametrised (the container and the lamp they are have no field for it); the maintainer's enable condition is
-the lamp's own and was always the game's to parametrise. Blueprints made before this version work as before; made again,
+the lamp's own and was always the game's to parametrise. A blueprint that holds an ME Circuit Interface with filters
+lists one more number, 1, in the **Parametrise** window: it is the count the copy of a filter needs in a combinator's slot
+(a slot cannot be without one, and the game lists every number, 0 too) and means nothing; leave it unticked. Blueprints made before this version work as before; made again,
 they get the copy.
 
 ## Wireless: the Wireless ME Terminal
