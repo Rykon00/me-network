@@ -55,6 +55,13 @@
   `scripts/fork-me-wired.lua` replaces them, moving their state to the new unit number through each module's `M.rekey`. A new
   table keyed by the unit number of a bus or provider needs its line in that module's `rekey`. The entity types the buses work with are in `scripts/fork-me-targets.lua`. The terminal module registers every GUI event and hands it to `fork-me-gui.lua`
   (`dispatch`: actions by the `fork_me_act` tag; the block windows are in `fork-me-windows.lua`).
+- Parametrised blueprints (issue #781, `scripts/fork-me-mirror.lua`): the game replaces blueprint parameters only in an
+  entity's own engine fields, never in tags, and tells scripts nothing. So an item, fluid or amount of a block's settings
+  that a player may want as a parameter is mirrored into such a field of the blueprint entity (`KINDS`: display panel
+  records for the buses, an inactive section for the constant combinators) and read back before the build handlers run
+  (`mirror.resolve` in `control.lua`, also for ghosts and on `on_blueprint_settings_pasted`). A new block with filters or
+  amounts in its tag gets its row in `KINDS` when its prototype has a field for it; the mirror is never left on a block in
+  the world. The dialog is the client's: the runtime test (`params.lua`) does the replacement by hand on the blueprint.
 - The hand-over (`scripts/fork-me-handover.lua`): the table list and the fingerprint function must stay equal to
   Gregtorio's `scripts/fork-me-handover.lua`. A new storage table that a Gregtorio save could hold cannot appear any
   more (Gregtorio no longer has ME code), so the list is fixed.
