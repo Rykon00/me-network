@@ -52,6 +52,7 @@ local names = require("scripts.fork-me-names")
 require("scripts.fork-me-stats")
 --- issue #383: a blueprint pasted over ME blocks that stand there already
 local pasteover = require("scripts.fork-me-pasteover")
+local mirror = require("scripts.fork-me-mirror")           -- (issue #781: parametrised blueprints)
 --- issue #670: the shape of ME Cable pasted over cable, and of cable ghosts
 local cableshape = require("scripts.fork-me-cableshape")
 local cableturn = require("scripts.fork-me-cableturn")    -- (issue #673: its own events: cursor, position, rotate/flip keys)
@@ -101,6 +102,8 @@ end
 local function on_built(entity, tags, event)
 	entity = wired.on_built(entity)                           -- (issue #628: an old bus or provider, or its ghost, first)
 	if not entity then return end
+	--- issue #781: what the game replaced in a parametrised blueprint (the mirror in the block's own fields) goes into the tags
+	tags = mirror.resolve(entity, tags)
 	local player = builder(event)
 	fork_net.on_built(entity, event)
 	fork_io.on_built(entity, tags, nil, player)               -- (any other entity: the buses facing it wake)
@@ -182,6 +185,7 @@ script.on_event(defines.events.on_player_alt_selected_area, function(event) memc
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
+	mirror.on_player_setup_blueprint(event)                   -- (issue #781: the mirror of the tags, after them)
 	cableturn.on_player_setup_blueprint(event)                -- (issue #673: the cables stored as north; after the tags)
 end)
 
@@ -206,6 +210,15 @@ end
 script.on_event(defines.events.on_pre_build, function(event)
 	cabledrag.on_pre_build(event)
 	pasteover.on_pre_build(event)
+end)
+--- issue #781: a blueprint pasted over a block that stands there: the game has given the block the blueprint entity's own
+--- fields by now, with the parameters replaced (on_pre_build above saw the tags as they are in the blueprint); when the block
+--- got a mirror, its settings are applied again with what the mirror says
+script.on_event(defines.events.on_blueprint_settings_pasted, function(event)
+	local tags, found = mirror.resolve(event.entity, event.tags)
+	if found and type(tags) == "table" then
+		pasteover.apply(event.entity, tags, event.player_index and game.get_player(event.player_index) or nil)
+	end
 end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded

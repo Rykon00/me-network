@@ -1317,6 +1317,8 @@ RUNTIME_TESTS = (
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
     ("CIRCUITBUS", "Circuit condition of the buses and the interface (issues #412, #628)"),
     ("PANEL639", "Logistic condition and the circuit and logistic network panel (issue #639)"),
+    ("CIRCUITFLT", "Filters of the export and import bus from the circuit (issue #780)"),
+    ("PARAMS", "Parametrised blueprints: the mirror of the settings (issue #781)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),
@@ -2446,7 +2448,9 @@ def bench_config(a, scene, size, variant, profile):
            "ship": (getattr(a, "ship", 0) or 0) if scene == "me" and not variant.get("noent") and not variant.get("long") else 0,
            "outposts": (getattr(a, "outposts", 0) or 0) if scene == "me" and not variant.get("noent") else 0,
            # issue #639: every import and export bus with a circuit condition and a logistic condition (in the check list)
-           "conditions": bool(getattr(a, "conditions", False)) if scene == "me" else None}
+           "conditions": bool(getattr(a, "conditions", False)) if scene == "me" else None,
+           # issue #780: every import and export bus with filters takes them from a constant combinator on its wire
+           "circuit_filters": bool(getattr(a, "circuit_filters", False)) if scene == "me" else None}
     return cfg
 
 
@@ -3137,6 +3141,9 @@ def main():
     p.add_argument("--conditions", action="store_true", help="issue #639: every import and export bus of the ME scene gets a "
                    "circuit condition (no wire) and, where the version has it, a logistic condition that holds, in the logistic "
                    "network of unpowered roboports over the scene: every bus is in the connector's check list")
+    p.add_argument("--circuit-filters", action="store_true", help="issue #780: every import and export bus of the ME scene that "
+                   "has filters gets a constant combinator that sends them, a wire to it and, where the version has it, 'filters "
+                   "from the circuit': every such bus is in the connector's check list, the throughput stays the same")
     p.add_argument("--burst", type=int, default=1000, metavar="N", help="ME blocks built and removed in one tick after the probes (default 1000, 0: none)")
     p.add_argument("--logistic", type=int, default=0, metavar="N", help="issue #506: every ME scene also gets a logistic network of N "
                    "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus and (issue #531) 16 ME Logistic "

@@ -866,6 +866,48 @@ local function add_conditions(b)
 	b.conditions = { buses = #buses, roboports = ports, logistic = logistic }
 end
 
+--- Issue #780 (`circuit_filters`): every import and export bus that has filters gets a constant combinator on its tile
+--- (data.lua, no collision) that sends exactly those filters, a red wire to it and, where the version has it, "filters from the
+--- circuit": every such bus is in the connector's check list and exports what it did before, so the scene's throughput stays
+--- the same and the difference is the mode's. The combinators and the wires are made in both versions.
+local function add_circuit_filters(b)
+	local IO = "gregtorio-me-io"
+	local iface = remote.interfaces[IO]
+	local on = iface ~= nil and iface.set_bus_circuit ~= nil
+	local s = surface()
+	local red = defines.wire_connector_id.circuit_red
+	local n, signals = 0, 0
+	for _, rec in ipairs(b.slots) do
+		for _, e in pairs({ rec.bus, rec.exp, rec.imp }) do
+			if e and e.valid and (e.name == "me-import-bus" or e.name == "me-export-bus") then
+				local filters = (remote.call(IO, "get_bus", e) or {}).filters or {}
+				if #filters > 0 then
+					local k = s.create_entity{ name = "zz-bench-combinator", position = e.position, force = "player" }
+					if not k then fail("circuit filters: no combinator at a bus") return end
+					local cb = k.get_or_create_control_behavior()
+					if cb.sections_count == 0 then cb.add_section() end
+					local sec = cb.get_section(1)
+					for i, key in ipairs(filters) do
+						local value
+						if key:sub(1, 6) == "fluid/" then
+							value = { type = "fluid", name = key:match("^fluid/([^@]+)"), quality = "normal" }
+						else
+							local name, q = key:match("^([^@#]+)@?([^#]*)")
+							value = { type = "item", name = name, quality = (q and q ~= "") and q or "normal" }
+						end
+						sec.set_slot(i, { value = value, min = 1 })
+						signals = signals + 1
+					end
+					k.get_wire_connector(red, true).connect_to(e.get_wire_connector(red, true), false)
+					if on then remote.call(IO, "set_bus_circuit", e, true) end
+					n = n + 1
+				end
+			end
+		end
+	end
+	b.circuit_filters = { buses = n, signals = signals, mode = on }
+end
+
 --- `noent`: every entity of the mod goes (the members, the interfaces' side tanks), nothing is registered any more
 local function strip_me()
 	local n = 0
@@ -1098,6 +1140,7 @@ local function build_me()
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
 	if C.conditions then add_conditions(b) end                                 -- (issue #639)
+	if C.circuit_filters then add_circuit_filters(b) end                       -- (issue #780)
 	--- issue #603: the characters join the refill's queue (where the version has it)
 	if b.refill then
 		local wl = remote.interfaces["gregtorio-me-wireless"]
@@ -1136,6 +1179,7 @@ local function build_me()
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
 		logistic = b.logistic,                                                  -- (issue #506)
 		conditions = b.conditions,                                              -- (issue #639)
+		circuit_filters = b.circuit_filters,                                    -- (issue #780)
 		refill = b.refill and { characters = b.refill.n, access_point = b.refill.ap, queued = b.refill.queued } or nil,   -- (issue #603)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
