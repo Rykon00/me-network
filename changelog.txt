@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.1
+Date: 2026-11-18
   Features:
     - Autocrafting: the steps of a job that use the same machines now share them (issue #769). Before, the first step took every free machine until all its runs were handed out: with iron and copper cast in the same foundries all of them cast iron first, and copper wire and everything made of it waited that long. Now each visit hands out one batch per step in turn, so the end product starts to come as soon as its parts do.
     - The pipette key (Q) works for items in the ME windows too (issue #768): over an item in an ME Terminal, a plan, a pattern or a config slot it puts that item into your cursor as the game's pipette does elsewhere, the stack when you carry it and its ghost when you do not; a click on a config slot then sets it. The game's own pipette does nothing over a slot of a mod's window.
