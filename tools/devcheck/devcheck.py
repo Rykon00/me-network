@@ -1318,6 +1318,7 @@ RUNTIME_TESTS = (
     ("CIRCUITBUS", "Circuit condition of the buses and the interface (issues #412, #628)"),
     ("PANEL639", "Logistic condition and the circuit and logistic network panel (issue #639)"),
     ("CIRCUITFLT", "Filters of the export and import bus from the circuit (issue #780)"),
+    ("PARAMS", "Parametrised blueprints: the mirror of the settings (issue #781)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),

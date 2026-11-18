@@ -171,6 +171,7 @@ local function blueprint_round_trip(s, area, at, inspect)
 	local bp = inv[1]
 	local mapping = bp.create_blueprint{ surface = s, force = "player", area = area } or {}
 	remote.call("gregtorio-me-autocraft", "tag_blueprint", bp, mapping)
+	remote.call("gregtorio-me-mirror", "mirror_blueprint", bp)     -- (issue #781: the mirror of the tags, as the handler does)
 	if inspect then inspect(bp, mapping) end
 	local ghosts = bp.build_blueprint{ surface = s, force = "player", position = at } or {}
 	local built = {}
@@ -1245,6 +1246,8 @@ panel639 = require("panel639")({ me_place = me_place, power = power, me_report =
 --- me-network issue #780: the filters of the export and import bus from the circuit (circuitflt.lua)
 circuitflt780 = require("circuitflt")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #781: parametrised blueprints, the mirror of the settings in the blocks' own fields (params.lua)
+params781 = require("params")({ me_place = me_place, me_report = me_report })
 --- me-network issue #414: the storage cells above 256k and the Singularity cell (bigcells.lua)
 bigcells414 = require("bigcells")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1439,6 +1442,7 @@ local function tests_running()
 	circuitbus412.running(check)
 	panel639.running(check)
 	circuitflt780.running(check)
+	params781.running(check)
 	bigcells414.running(check)
 	bigcpus415.running(check)
 	ptermex416.running(check)
@@ -2460,6 +2464,7 @@ script.on_nth_tick(10, function()
 	circuitbus412.tick()
 	panel639.tick()
 	circuitflt780.tick()
+	params781.tick()
 	bigcells414.tick()
 	bigcpus415.tick()
 	ptermex416.tick()
@@ -5482,6 +5487,7 @@ script.on_init(function()
 	for _, f in pairs(circuitbus412.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(panel639.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(circuitflt780.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(params781.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcells414.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end

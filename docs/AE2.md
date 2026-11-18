@@ -373,6 +373,25 @@ same way. The bus follows a change of the signals within a sixth of a second in 
 checks of the circuit conditions (16 blocks per tick for the whole map, issue #412), so with thousands of such buses a
 change takes longer to arrive and a tick costs no more.
 
+**Parametrised blueprints** (issue #781, asked for by Totue). The game's blueprint parameters work with the filters of the
+ME Import, Export and Storage Bus, with the resource and the threshold of the ME Level Emitter and the ME Advanced Level
+Emitter, and with the filters of the ME Circuit Interface, as they do with an inserter's filter and a combinator's number.
+Build one cell with real items (an assembling machine, an export bus with its filters, a level emitter with its amount), make
+a blueprint of it, open **Parametrise** in the blueprint's window and tick "Parameter" on the item and on the number: each
+time the blueprint is placed, **Parametrised build** asks for the item and the number, and the bus's filter and the emitter's
+resource and threshold are what you chose. Variables, formulas and "ingredient of" are the game's and work as everywhere.
+A blueprint pasted over blocks that stand there sets them the same way; the ghosts' ME windows show the chosen values.
+
+How: the game replaces parameters only in fields of an entity it knows itself, never in a mod's tags, so the mod writes a
+second copy of those settings into the block's own field of the blueprint (a bus is a display panel: its records; an emitter
+and the circuit interface are constant combinators: an inactive section) and reads it back when the block or its ghost is
+built. A block in the world never has that copy, so nothing is shown or sent. Limits: a threshold above 2 147 483 647 (a
+combinator's count is 32 bit) and an emitter on stored energy are not offered as parameters; a fluid filter of one temperature
+keeps the temperature only while the fluid is not replaced; the **ME Interface's rows** and the **ME Level Maintainer's
+rows** are not parametrised (the container and the lamp they are have no field for it); the maintainer's enable condition is
+the lamp's own and was always the game's to parametrise. Blueprints made before this version work as before; made again,
+they get the copy.
+
 ## Wireless: the Wireless ME Terminal
 
 (issues #153, #205 to #211; technology **ME Wireless Terminal**, after ME Upgrade Cards and Battery; design:
