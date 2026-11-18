@@ -350,14 +350,16 @@ local function by_rank(a, b) return rank(a) < rank(b) end
 local function check_filters(h, unit)
 	local e = h.host
 	local set = h.fset
-	if not wired(e) then
+	--- (the engine gives nil without a wire and with a wire that carries nothing: only then the wires are asked for, two more
+	--- calls and two objects; measured 1.2 us and 0.5 KB for the read of one signal, 0.6 us and 0.14 KB for the wires)
+	local sigs = e.get_signals(RED, GREEN)
+	if not sigs and not wired(e) then
 		if set == nil then return false end
 		h.fset, h.fn = nil, nil
 		local f = N.filter_setters[h.kind]
 		if f then f(unit, nil) end
 		return true
 	end
-	local sigs = e.get_signals(RED, GREEN)
 	local n, same = 0, set ~= nil
 	if sigs then
 		for i = 1, #sigs do

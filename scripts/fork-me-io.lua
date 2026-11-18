@@ -2650,7 +2650,7 @@ function M.on_built(entity, tags, source, player, inv)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
 			if t.conly then M.set_bus_craft_only(entity, true) end             -- (issue #426)
-			if t.circuit then M.set_bus_circuit(entity, true) end              -- (issue #780)
+			M.set_bus_circuit(entity, t.circuit == true)        -- (issue #780; a tag without it pasted over a bus switches it off)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, player, inv) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)

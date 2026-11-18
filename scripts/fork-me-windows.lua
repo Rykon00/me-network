@@ -2480,7 +2480,8 @@ refresh_side = function(frame, entity)
 		if line then
 			local shown = {}
 			for n = 1, math.min(#(b.cfilters or {}), b.max or 0) do shown[#shown + 1] = key_tag(b.cfilters[n]) end
-			line.caption = not b.circuit and "" or #shown == 0 and { "fork-me-gui.bus-circuit-none" }
+			--- (nothing while the mode is on without a wire of its own: a ghost's stand-in, the bus's own filters apply)
+			line.caption = not (b.circuit and b.cfilters) and "" or #shown == 0 and { "fork-me-gui.bus-circuit-none" }
 				or b.cmore and { "", { "fork-me-gui.bus-circuit-filters", table.concat(shown, " ") }, " ", { "fork-me-gui.bus-circuit-more", b.cmore } }
 				or { "fork-me-gui.bus-circuit-filters", table.concat(shown, " ") }
 		end
