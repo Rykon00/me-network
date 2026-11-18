@@ -12,6 +12,8 @@
 ---     recipes), the raw materials in cells; the planner and a job start are timed on the deepest items.
 ---   scene "tunnels" (issue #629): 64 ME Molecular Assemblers of one pattern, reached by one provider through ME P2P tunnels
 ---     (`tunnel`) or by 16 providers with four next to each; jobs keep them busy (none with `idle`).
+---   scene "feed" (issue #752): a chain of a fluid crafting step, an item crafting step and a processing step, nine
+---     assembling machines each with recipes of a tenth of a second; one job; the machines' utilisation per stage.
 ---   scene "carry" (issue #633): 40 item and 20 fluid lines, one source and four sinks each, carried by ME P2P tunnels on
 ---     their own (`carry` "tunnels") or by an import bus and four export buses (`carry` "buses").
 ---   scene "inserters": the same number of chest -> inserter -> chest lines (half fast, half bulk inserters).
@@ -3015,6 +3017,152 @@ local function finish(b)
 end
 
 --------------------------------------------------------------------------------
+--- issue #752: the feed scene. A chain of three steps, FEED.PER_STAGE assembling machines 3 each (three next to each of
+--- three pattern providers), all with recipes of a tenth of a second (benchmod's data.lua), so a machine works off what a
+--- job hands it in about a second:
+---   stage 1 "fluid":      a crafting pattern with a fluid ingredient (10 water -> 1 iron plate);
+---   stage 2 "items":      a crafting pattern of items only (1 iron plate -> 1 gear);
+---   stage 3 "processing": a processing pattern that names its recipe (1 gear -> 1 iron stick).
+--- One job for sticks, more than the window can make; the network holds only water. The probes read every machine's
+--- products_finished; the report gives, per stage, the crafts of the window and the machines' utilisation (the crafts over
+--- what their crafting speed makes in that time) and the chain's sticks per second. A stage can never be busier than the
+--- stage before it feeds it, so each stage is also run on its own (`C.feed` "fluid", "items" or "processing" instead of
+--- "chain"): the network then holds that stage's ingredient and the job orders its product; the other stages have nothing
+--- to do. (A table: the main chunk is at Lua's limit of 200 locals.)
+--------------------------------------------------------------------------------
+
+local FEED = { PER_STAGE = 9, ORDER = 40000, WATER = 10,
+	STAGES = { { id = "fluid", recipe = "zz-feed-plate" }, { id = "items", recipe = "zz-feed-gear" },
+		{ id = "processing", recipe = "zz-feed-stick", processing = true } } }
+
+function FEED.build()
+	local b = storage.b
+	research_all(game.forces.player)
+	local force = game.forces.player
+	new_surface(64, 64)
+	b.machines, b.providers, b.job_keys, b.slots, b.cpus, b.feed = {}, {}, {}, {}, {}, {}
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	local width = 24
+	power_row(Y0 - 6, X0 - 22, X0 + width + 2)
+	local last = Y0 + 4 + 9 * #FEED.STAGES
+	for yy = Y0, last do place("me-cable", p1(X0 - 1, yy)) end                     -- the spine
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	local cy = Y0 + 3                                                              -- one CPU: storage and co-processing in a row
+	b.cpus[1] = member(place("me-1024k-crafting-storage", p1(X0 - 2, cy)))
+	for dx = 3, 5 do member(place("me-1024k-crafting-storage", p1(X0 - dx, cy))) end
+	for dx = 6, 9 do member(place("me-crafting-accelerator-16x", p1(X0 - dx, cy))) end
+	local drive = member(place("me-drive", p1(X0 + 1, Y0 + 1)))
+	place("me-cable", p1(X0, Y0 + 1))
+	local providers_of = {}
+	for r, stage in ipairs(FEED.STAGES) do
+		if not prototypes.recipe[stage.recipe] then fail("no recipe " .. stage.recipe) return end
+		force.recipes[stage.recipe].enabled = true
+		local y = Y0 + 7 + 9 * (r - 1)                                             -- the providers' row; the trunk two above
+		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y - 2)) end
+		power_row(y + 4, X0 + 4, X0 + width)
+		local list = {}
+		providers_of[r] = {}
+		for i = 0, 2 do
+			local x = X0 + 4 + 8 * i
+			place("me-cable", p1(x, y - 1))
+			local prov = member(place("me-pattern-provider", p1(x, y)))
+			b.providers[#b.providers + 1] = prov
+			providers_of[r][#providers_of[r] + 1] = prov
+			for _, d in ipairs({ { -2, 0 }, { 2, 0 }, { 0, 2 } }) do
+				local m = place("assembling-machine-3", p1(x + d[1], y + d[2]))
+				if m then
+					list[#list + 1] = m
+					b.machines[#b.machines + 1] = m
+				end
+			end
+		end
+		b.feed[r] = { id = stage.id, recipe = stage.recipe, machines = list }
+	end
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	for r, stage in ipairs(FEED.STAGES) do
+		local proto = prototypes.recipe[stage.recipe]
+		for _, prov in ipairs(providers_of[r]) do
+			if stage.processing then
+				local inv = game.create_inventory(2)
+				inv.insert{ name = "me-blank-pattern", count = 1 }
+				local where, why = remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, { kind = "processing",
+					inputs = { { key = proto.ingredients[1].name, amount = 1 } }, outputs = { { key = proto.products[1].name, amount = 1 } },
+					recipe = stage.recipe })
+				local stack = inv.find_item_stack("me-encoded-pattern")
+				if not (where and stack and remote.call(AC, "insert_pattern", prov, stack)) then
+					fail("processing pattern " .. stage.recipe .. ": " .. tostring(why))
+				end
+				inv.destroy()
+			else
+				give_pattern(prov, stage.recipe)
+			end
+		end
+	end
+	local water = 0
+	if drive then
+		insert_cell(drive, "me-256k-storage-cell", {}, 1)
+		for slot = 2, 4 do
+			local inv = game.create_inventory(1)
+			inv[1].set_stack{ name = "me-16384k-fluid-storage-cell", count = 1 }
+			if not remote.call(NET, "insert_cell", drive, inv[1], slot) then fail("no fluid cell in slot " .. slot) end
+			inv.destroy()
+		end
+		water = remote.call(NET, "store_fluid_in_drive", drive, "water", FEED.ORDER * FEED.WATER * 1.2) or 0
+		if water < FEED.ORDER * FEED.WATER then fail("only " .. water .. " water went into the drive") end
+	end
+	--- one stage on its own: its ingredient in the first cell, its product ordered
+	local only
+	for r, stage in ipairs(FEED.STAGES) do if stage.id == C.feed then only = r end end
+	if only and only > 1 and drive then
+		local ing = prototypes.recipe[FEED.STAGES[only].recipe].ingredients[1].name
+		local got = remote.call(NET, "store_in_drive", drive, ing, FEED.ORDER) or 0
+		if got < FEED.ORDER then fail("only " .. got .. " " .. ing .. " went into the drive") end
+	end
+	if not C.idle then
+		b.job_keys[1] = { anchor = b.anchor, key = prototypes.recipe[FEED.STAGES[only or 3].recipe].products[1].name, amount = FEED.ORDER }
+	end
+	local net = remote.call(NET, "network", b.anchor)
+	log_json("SETUP", { scene = "feed", size = C.size, feed = C.feed or "chain", idle = C.idle or false, providers = #b.providers, machines = #b.machines,
+		members = #members, network_ok = net and net.ok or false, water = water, order = FEED.ORDER,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+function FEED.probe(b)
+	local out = { tick = game.tick, crafted = {} }
+	for r, stage in ipairs(b.feed or {}) do
+		local n = {}
+		for i, m in ipairs(stage.machines) do n[i] = m.valid and m.products_finished or 0 end
+		out.crafted[r] = n
+	end
+	local job = b.jobs and b.jobs[1] and remote.call(AC, "job", b.jobs[1])
+	out.job = job and { status = job.status, done = job.done, total = job.total, fed = job.fed, leases = job.leases } or nil
+	return out
+end
+
+function FEED.report(b, p0, p1)
+	local ticks = p1.tick - p0.tick
+	local out = { seconds = ticks / 60, machines = #b.machines, stages = {}, job0 = p0.job, job1 = p1.job }
+	for r, stage in ipairs(b.feed or {}) do
+		local crafts, working, could = 0, 0, 0
+		local energy = prototypes.recipe[stage.recipe].energy
+		for i, m in ipairs(stage.machines) do
+			local d = (p1.crafted[r][i] or 0) - (p0.crafted[r][i] or 0)
+			crafts = crafts + d
+			if d > 0 then working = working + 1 end
+			if m.valid then could = could + m.crafting_speed / (energy * 60) * ticks end
+		end
+		out.stages[r] = { id = stage.id, machines = #stage.machines, working = working, crafts = crafts,
+			crafts_per_s = crafts / (ticks / 60), utilisation = could > 0 and crafts / could or 0 }
+	end
+	local lastr = out.stages[#out.stages]
+	for _, st in ipairs(out.stages) do if st.id == C.feed then lastr = st end end
+	out.products_per_s = lastr and lastr.crafts_per_s or 0
+	return out
+end
+
+--------------------------------------------------------------------------------
 --- events
 --------------------------------------------------------------------------------
 
@@ -3029,6 +3177,7 @@ script.on_init(function()
 	elseif C.scene == "planner" then build_planner()
 	elseif C.scene == "tunnels" then build_tunnels()                 -- (issue #629)
 	elseif C.scene == "carry" then build_carry()                     -- (issue #633)
+	elseif C.scene == "feed" then FEED.build()                       -- (issue #752)
 	elseif C.scene == "inserters" then build_inserters()
 	else build_robots() end
 end)
@@ -3045,7 +3194,7 @@ local function start_jobs(b)
 	b.jobs = {}
 	local bad = {}
 	for _, j in ipairs(b.job_keys or {}) do
-		local id, why = remote.call(AC, "start", j.anchor, j.key, 5000)
+		local id, why = remote.call(AC, "start", j.anchor, j.key, j.amount or 5000)
 		if id then b.jobs[#b.jobs + 1] = id else bad[#bad + 1] = j.key .. ": " .. tostring(why) end
 	end
 	--- a look at the first fluid import interface (its sides)
@@ -3064,6 +3213,7 @@ local function probe(b)
 	if C.scene == "planner" then return { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} } end
 	if C.scene == "tunnels" then return probe_tunnels(b) end
 	if C.scene == "carry" then return probe_carry(b) end
+	if C.scene == "feed" then return FEED.probe(b) end
 	return probe_native(b)
 end
 
@@ -3072,7 +3222,7 @@ end
 script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 	local b = storage.b
 	local tick = event.tick
-	if tick == C.warmup / 2 and (C.scene == "me" or C.scene == "tunnels") and not C.noent then
+	if tick == C.warmup / 2 and (C.scene == "me" or C.scene == "tunnels" or C.scene == "feed") and not C.noent then
 		start_jobs(b)
 	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
@@ -3092,8 +3242,9 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		elseif C.scene == "planner" then log_json("THROUGHPUT", report_planner(b, b.p0, p1))
 		elseif C.scene == "tunnels" then log_json("THROUGHPUT", report_tunnels(b, b.p0, p1))
 		elseif C.scene == "carry" then log_json("THROUGHPUT", report_carry(b, b.p0, p1))
+		elseif C.scene == "feed" then log_json("THROUGHPUT", FEED.report(b, b.p0, p1))
 		else log_json("THROUGHPUT", report_native(b, b.p0, p1)) end
-		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" or C.scene == "carry" then
+		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" or C.scene == "carry" or C.scene == "feed" then
 			log_json("SERVICE", service_report(b, b.p0, p1))
 		end
 		b.p0 = nil

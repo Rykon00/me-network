@@ -339,6 +339,11 @@ function M.craft_preview(terminal, key, amount)
 	local total, free = autocraft.cpu_summary(net)
 	local out = { ok = false, cpus = total, free = free, reserve = {}, missing = {}, loops = {}, runs = 0, steps = 0 }
 	amount = math.floor(tonumber(amount) or 0)
+	--- (issue #750: the limit of an order shows in the plan line with its number, before the Craft button is pressed)
+	if amount > (autocraft.is_fluid(key) and autocraft.MAX_FLUID_AMOUNT or autocraft.MAX_AMOUNT) then
+		out.reason = "too-many"
+		return out
+	end
 	local plan = amount >= 1 and autocraft.plan(net, key, amount) or nil
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
@@ -555,19 +560,33 @@ function M.sort_captions(frame, p)
 	G.find(frame, "fork_me_kind").caption = { "fork-me-gui.kind-" .. p.kind }
 end
 
-local function build_crafting(tab)
+--- Issue #751: the rows of the Crafting tab's grid of craftable items, by the player's screen: CRAFT_ROWS_MAX where the
+--- window fits with them (a 1080p screen at 100 % and 125 % UI scale), fewer on a smaller screen (720 GUI pixels: 6), never
+--- fewer than the 4 it had. CRAFT_RESERVE is what the window has besides the grid: its title bar, the network line, the
+--- search row, the tab headers, the tab's info line, the pick row, the plan's lines and three rows of the plan's grid.
+--- (issue #770, measured in a client at 150 % UI scale: the window is 461 pixels high besides the grid with a plan of one
+--- row of slots and its CPU line, so 500 leaves room for a second row)
+local CRAFT_ROWS_MIN, CRAFT_ROWS_MAX, CRAFT_RESERVE = 4, 8, 500
+function M.craft_rows(player)
+	return math.floor(G.fit_height(player, CRAFT_RESERVE, CRAFT_ROWS_MAX * 40, CRAFT_ROWS_MIN * 40) / 40)
+end
+
+local function build_crafting(tab, player)
 	G.label(tab, "", WIDTH, nil, "fork_me_craft_info")
-	scroll_table(tab, "fork_me_craft_grid", COLUMNS, 4 * 40 + 8)
+	scroll_table(tab, "fork_me_craft_grid", COLUMNS, M.craft_rows(player) * 40 + 8)
 	tab.add{ type = "line" }
 	local pick = G.row(tab, "fork_me_pick_row")
 	pick.add{ type = "sprite-button", name = "fork_me_pick", style = "slot_button" }
 	pick.add{ type = "label", name = "fork_me_pick_name", caption = { "fork-me-gui.craft-pick" } }
 	pick.add{ type = "empty-widget" }.style.horizontally_stretchable = true
 	pick.add{ type = "label", caption = { "fork-me-gui.amount" } }
-	G.number_field(pick, 1, G.act("term_amount"), 80, false, "fork_me_amount")
+	G.number_field(pick, 1, G.act("term_amount"), 110, false, "fork_me_amount")    -- (issue #771: ten digits, the limit of #750)
 	--- issue #350 (AE2-Unofficial's CPU choice in the confirm screen): automatic, or one of the CPUs that can take it now
-	pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
+	local cpu_pick = pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
 		tooltip = { "fork-me-craft.cpu-pick-tooltip" }, tags = G.act("term_cpu", { ids = {} }) }
+	--- (issue #770: the drop-down grew to its longest entry, a CPU's name with its size and co-processors, and at 150 % UI
+	--- scale pushed the Craft button off a 1080p screen; the list that opens still shows the entries in full)
+	cpu_pick.style.maximal_width = 200
 	pick.add{ type = "button", name = "fork_me_craft", caption = { "fork-me-craft.craft" }, style = "confirm_button",
 		tags = G.act("term_craft") }
 	G.label(tab, "", WIDTH, nil, "fork_me_plan")
@@ -706,7 +725,7 @@ local function open(player, entity)
 	end
 	build_storage(tabs.fork_me_tab_storage)
 	if not chest then
-		build_crafting(tabs.fork_me_tab_crafting)
+		build_crafting(tabs.fork_me_tab_crafting, player)
 		build_jobs(tabs.fork_me_tab_jobs)
 		build_cells(tabs.fork_me_tab_cells)
 	end
@@ -915,6 +934,7 @@ local function refresh_crafting(st, frame, net, index)
 	if st.plan_shown == psig then return end
 	st.plan_shown = psig
 	if p.reason == "bad-amount" then plan_label.caption = { "fork-me-craft.bad-amount" }
+	elseif p.reason == "too-many" then plan_label.caption = { "fork-me-craft.error-too-many", autocraft.MAX_TEXT }
 	elseif p.reason == "no-cpu" then plan_label.caption = { "fork-me-craft.no-cpu" }
 	elseif p.reason == "no-pattern" then plan_label.caption = { "fork-me-craft.error-no-pattern" }
 	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" or p.reason == "cpu-not-allowed" then
@@ -1337,7 +1357,7 @@ G.on("term_craft", function(event, player)
 	elseif why == "cpu-too-small" or why == "no-free-cpu" or why == "cpu-not-allowed" then
 		player.print({ "fork-me-craft.error-" .. why, G.fmt(plan.bytes), G.fmt(plan.biggest or 0) })
 	else
-		player.print({ "fork-me-craft.error-" .. why })
+		player.print({ "fork-me-craft.error-" .. why, autocraft.MAX_TEXT })     -- (issue #750: "too-many" names the limit)
 	end
 	M.refresh(player)
 end)
@@ -1372,6 +1392,10 @@ G.on("term_cell", function(event, player, el)
 end)
 
 remote.add_interface("gregtorio-me-terminal", {
+	--- issue #751 (tests): the rows of the Crafting tab's grid on a screen of `height` pixels at UI scale `scale`
+	craft_rows = function(height, scale)
+		return M.craft_rows({ display_resolution = { width = 1920, height = height }, display_scale = scale })
+	end,
 	--- the lookup of the ME windows (their entity by unit number)
 	entity_by_unit = function(unit) return G.entity_by_unit(unit) end,
 	withdraw = function(terminal, target, name, quality, count) return M.withdraw(terminal, target, name, quality or "normal", count) end,
@@ -1510,6 +1534,28 @@ script.on_event(defines.events.on_gui_inventory_action, function(event)
 	G.on_inventory_action(event)
 end)
 
+--- issue #754: the fluid slot under the mouse (the slots G.slot makes for a fluid raise these), and the pipette key;
+--- issue #768: an item slot the same way (its item and quality are its elem_tooltip's)
+script.on_event({ defines.events.on_gui_hover, defines.events.on_gui_leave }, function(event)
+	local el = event.element
+	if not (el and el.valid) then return end
+	local key = el.tags and el.tags.fork_me_fluid
+	if not key then
+		local tip = el.type == "sprite-button" and el.elem_tooltip or nil
+		if tip and (tip.type == "item" or tip.type == "item-with-quality") and tip.name then
+			local q = tip.quality
+			key = (q and q ~= "normal") and (tip.name .. "@" .. q) or tip.name
+		end
+	end
+	if not key then return end
+	G.hover_fluid(event.player_index, event.name == defines.events.on_gui_hover and key or nil, el)
+end)
+
+script.on_event("fork-me-pipette", function(event)
+	local player = game.get_player(event.player_index)
+	if player then G.pipette(player) end
+end)
+
 script.on_event(defines.events.on_player_left_game, function(event)
 	local player = game.get_player(event.player_index)
 	G.on_left(player)
@@ -1538,6 +1584,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
 	if storage.fork_me_iterm_ui then storage.fork_me_iterm_ui[event.player_index] = nil end      -- (issue #336: the Interface Terminal's)
 	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
+	G.forget_held(event.player_index)                                                            -- (issue #754: the held fluid)
 	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
 	if w and w.players then w.players[event.player_index] = nil end
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)

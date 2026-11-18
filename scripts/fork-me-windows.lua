@@ -148,32 +148,10 @@ local function key_picker(player, act, data, key, with_quality)
 		quality = with_quality and true or false })
 end
 
-do
-	--- the items of the cursor a slot never takes from it (tools: the picker opens instead)
-	local TOOLS = { ["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
-		["selection-tool"] = true, ["copy-paste-tool"] = true, ["spidertron-remote"] = true }
-	local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }   -- (the wire tools of the shortcut bar)
-
-	--- Issue #677 (AE2's ghost slots, a vanilla filter slot): the picker's choice a slot of `spec` (as picker.open takes it)
-	--- gets from what `player` holds in the cursor: { kind = "item", name, quality (nil where the slot takes none), cursor = true }, or nil
-	--- (an empty hand, a tool, a blueprint or a ghost in the cursor, a wire being dragged, a slot that takes no item) for the
-	--- picker. The cursor stays as it is.
-	function M.cursor_choice(player, spec)
-		if not (spec.kinds and spec.kinds.item) then return nil end
-		local stack = player.cursor_stack           -- (a ghost or a library blueprint in the cursor: an empty stack)
-		if not (stack and stack.valid_for_read) or TOOLS[stack.type] or WIRES[stack.name] or player.drag_target then return nil end
-		if not prototypes.item[stack.name] then return nil end
-		return { kind = "item", name = stack.name, quality = spec.quality ~= false and stack.quality.name or nil, cursor = true }
-	end
-end
-
---- Issue #677: a key slot's left click: with an item in the cursor the slot takes it (the picker's callback, as if it was
---- chosen there: what the slot refuses is refused as a choice of the picker), else the picker opens as before
-function M.pick(player, spec)
-	local choice = M.cursor_choice(player, spec)
-	if choice and picker.choose(player, spec, choice) then return end
-	picker.open(player, spec)
-end
+--- Issue #677: a key slot's choice from the cursor and its left click; issue #754: they live in the picker's module (the
+--- pattern terminals use them too), with a ghost in the cursor and the held fluid
+M.cursor_choice = picker.cursor_choice
+M.pick = picker.pick
 
 local function right_click(event) return event.button == defines.mouse_button_type.right end
 
@@ -890,7 +868,7 @@ function M.refresh_logistic_interface(player, frame)
 	local want = {}
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_lif_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
-	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	G.find(frame, "fork_me_lif_status").caption = { "fork-me-gui.logistic-interface-status-" .. d.status }
 	G.find(frame, "fork_me_lif_net").caption = { "", d.lid and { "fork-me-gui.logistic-interface-network", tostring(d.lid) }
 		or { "fork-me-gui.logistic-interface-no-network" }, d.ncollide > 0 and { "", "  ",
@@ -2118,7 +2096,7 @@ function M.refresh_interface(player, frame)
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_if_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_if_kept").caption = d.kept and { "fork-me-gui.interface-rows-kept" } or ""
-	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	refresh_side(frame, entity)                                -- (issue #639: the rows from the circuit too)
 	rebuild(frame, "fork_me_if_config", config_sig(d.config, d.slots), function(box)
 		local t = box.add{ type = "table", column_count = 6 }
@@ -2618,7 +2596,7 @@ function M.refresh_bus(player, frame)
 		end
 	end
 	G.find(frame, "fork_me_bus_mode").caption = mode
-	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft, autocraft.MAX_TEXT } or ""
 	local pulse = G.find(frame, "fork_me_bus_pulse")
 	if pulse then pulse.state = d.pulse or false end
 	local conly = G.find(frame, "fork_me_bus_conly")              -- (issue #426)
@@ -3030,9 +3008,23 @@ remote.add_interface("gregtorio-me-gui", {
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
 			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
-			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
-			position = { x = 0, y = 0 }, cursor_stack = spec.cursor }          -- (issue #677: `cursor`, a LuaItemStack)
+			can_reach_entity = function() return true end, force = game.forces.player, surface = spec.surface or game.surfaces[1],
+			position = { x = 0, y = 0 }, cursor_stack = spec.cursor,           -- (issue #677: `cursor`, a LuaItemStack)
+			cursor_ghost = spec.ghost }                                         -- (issue #754: `ghost` = { name, quality })
+		--- (issue #751: a screen, `screen` = { height, scale }; without one the parts that fit themselves take their largest size)
+		if spec.screen then
+			sp.display_resolution = { width = 1920, height = spec.screen.height }
+			sp.display_scale = spec.screen.scale or 1
+		end
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
+		--- (issue #768: the game's pipette, recorded: { name, quality, allow_ghost }; it leaves a ghost in the cursor)
+		sp.pipetted = {}
+		sp.pipette = function(id, quality, allow_ghost)
+			local name = type(id) == "string" and id or id.name
+			sp.pipetted[#sp.pipetted + 1] = { name = name, quality = quality, allow_ghost = allow_ghost }
+			sp.cursor_ghost = { name = name, quality = quality }
+			return true
+		end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -3042,6 +3034,7 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	stand_in_inventory = function(name) return G.player_inventory(stand_ins[name]) end,
 	stand_in_hand = function(name) return G.hand(stand_ins[name]) end,
+	stand_in_hub = function(name) return G.platform_hub(stand_ins[name]) end,           -- (issue #749)
 	stand_in_drop_buffer = function(name) return G.drop_buffer(stand_ins[name]) end,    -- (issue #542)
 	parked_count = function(player) return G.parked_count(player) end,                  -- (a real player's, issue #542)
 	stand_in_give_back = function(name, stack, entity) G.give_back(stand_ins[name], stack, entity) end,
@@ -3055,7 +3048,9 @@ remote.add_interface("gregtorio-me-gui", {
 		local sp = stand_ins[name]
 		local frame = G.open_window(sp, window, "devcheck", { unit = unit })
 		local el = G.find(frame, "fork_me_inv")
+		local title, help = G.find(frame, "fork_me_pane_title"), G.find(frame, "fork_me_remote_help")
 		return { open = sp.gui.screen.fork_me_window == frame, opened = sp.opened == frame,
+			pane_title = title and title.caption and title.caption[1], pane_help = help and help.caption and help.caption[1],   -- (issue #749)
 			inventory_bound = el ~= nil and el.inventory == G.player_inventory(sp),
 			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
 	end,
@@ -3063,6 +3058,29 @@ remote.add_interface("gregtorio-me-gui", {
 	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
 	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
 	--- buttons (block_slot) by flow name
+	--- issue #753 (tests): the elements of the stand-in's window whose name starts with `prefix`, by name: { enabled, caption,
+	--- tags, tooltip }
+	stand_in_named = function(name, prefix)
+		local frame = G.window_of(stand_ins[name])
+		local out = {}
+		local queue, i = { frame }, 1
+		while queue[i] do
+			for _, c in pairs(queue[i].children) do
+				if type(c.name) == "string" and c.name:sub(1, #prefix) == prefix then
+					out[c.name] = { enabled = c.enabled ~= false, caption = c.caption, tags = c.tags, tooltip = c.tooltip }
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- issue #751 (tests): the largest height of the scroll pane around the element `element` of the stand-in's window
+	stand_in_scroll_height = function(name, element)
+		local frame = G.window_of(stand_ins[name])
+		local el = frame and G.find(frame, element)
+		return el and el.parent and el.parent.style.maximal_height or nil
+	end,
 	stand_in_open_entity = function(name, entity)
 		local sp = stand_ins[name]
 		G.open_entity(sp, entity)
@@ -3174,6 +3192,23 @@ remote.add_interface("gregtorio-me-gui", {
 		return G.run_action({ name = defines.events.on_gui_click, element = el, button = b }, sp, el)
 	end,
 	stand_in_cursor_choice = function(name, spec) return M.cursor_choice(stand_ins[name], spec) end,
+	--- Issue #754 (tests): what G.slot (or, `config`, G.key_button) makes for `key` with `tags`: its hover flag and tags; the
+	--- fluid slot under the mouse of player `index`; the pipette key, the held fluid and whether the title bar of the
+	--- stand-in's window shows it
+	slot_view = function(key, tags, config)
+		local box = stand_in_element{ type = "flow" }
+		local b = config and G.key_button(box, key, tags, "hint") or G.slot(box, key, 1, tags)
+		return { raise_hover_events = b.raise_hover_events, tags = b.tags, sprite = b.sprite }
+	end,
+	held_hover = function(index, key) G.hover_fluid(index, key) end,
+	stand_in_pipette = function(name) return G.pipette(stand_ins[name]) end,
+	stand_in_held = function(name) return G.held_fluid(stand_ins[name]) end,
+	stand_in_pipetted = function(name) return stand_ins[name].pipetted end,               -- (issue #768)
+	stand_in_held_shown = function(name)
+		local frame = G.window_of(stand_ins[name])
+		local label = frame and G.find(frame, "fork_me_held")
+		return label ~= nil and type(label.caption) == "table" and label.caption[1] == "fork-me-gui.held-title"
+	end,
 	--- Issue #639: the circuit and logistic network panel of the stand-in's open window after a refresh: { visible, circuit,
 	--- logistic (its sections are there), names = { [element name] = true }, captions = { [label name] = caption }, states =
 	--- { [checkbox name] = state } }; `act` (optional): first a check box of the panel with that action is set to `state` through

@@ -91,6 +91,29 @@ for i, c in ipairs(CELLS) do
 		tostring(FLUID_TYPES), tostring((bytes - per_type) * UNITS_PER_BYTE) }
 end
 
+--- The old fluid drive items (the chassis with four fluid cells, the fluid in the item's tags `fork_me_fluids`), for saves
+--- only: hidden, no recipe, not placeable. The load replaces each by an ME Drive and its fluid cells holding its fluid
+--- (scripts/fork-me-legacy-drives.lua, issue #777; see the old drive items in prototypes/network.lua).
+--- SAVE MIGRATIONS ARE NOT REMOVED (CONTRIBUTING.md).
+for i, tier in ipairs({ "1k", "4k", "16k", "64k", "256k" }) do
+	local drive = "me-fluid-drive-" .. tier
+	ME.add_item{
+		type = "item-with-tags",
+		name = drive,
+		icon = ICON_FORK .. drive .. ".png",
+		icon_size = 32,
+		subgroup = "fork-me-fluid-drives",
+		order = "z" .. string.format("%02d", i),
+		stack_size = 10,
+		hidden = true,
+		fields = { auto_recycle = false },                -- (no recycling recipe: it would give back a quarter of them)
+		localised_description = { "item-description.fork-me-legacy-drive", { "item-name.me-" .. tier .. "-fluid-storage-cell" } },
+		recipe = false,
+	}
+	net_data.legacy_drives[drive] = { cell = "me-" .. tier .. "-fluid-storage-cell", cells = 4, fluid = true,
+		fluid_tag = "fork_me_fluids", extra = tier == "256k" and { name = "acceleration-card", count = 1 } or nil }
+end
+
 
 
 --------------------------------------------------------------------------------

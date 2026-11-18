@@ -413,6 +413,55 @@ function M.choose(player, spec, choice)
 	return true
 end
 
+do
+	--- the items of the cursor a slot never takes from it (tools: the picker opens instead)
+	local TOOLS = { ["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
+		["selection-tool"] = true, ["copy-paste-tool"] = true, ["spidertron-remote"] = true }
+	local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }   -- (the wire tools of the shortcut bar)
+
+	--- Issue #677 (AE2's ghost slots, a vanilla filter slot): the picker's choice a slot of `spec` (as M.open takes it) gets
+	--- from what `player` holds: { kind = "item", name, quality (nil where the slot takes none), cursor = true } for an item in
+	--- the cursor or (issue #754) a ghost of one, as the game's pipette key leaves it for an item the player does not carry;
+	--- { kind = "fluid", name, temperature, cursor = true } for the held fluid (issue #754, G.held_fluid) when the slot takes
+	--- fluids. Nil (an empty hand, a tool or a blueprint in the cursor, a wire being dragged, a slot that takes neither) for the
+	--- picker. The cursor stays as it is; an item in it lets a held fluid go (the hand has something else now).
+	function M.cursor_choice(player, spec)
+		local kinds = spec.kinds or {}
+		if player.drag_target then return nil end
+		local stack = player.cursor_stack           -- (a ghost or a library blueprint in the cursor: an empty stack)
+		if stack and stack.valid_for_read then
+			G.set_held(player, nil)
+			if not kinds.item or TOOLS[stack.type] or WIRES[stack.name] or not prototypes.item[stack.name] then return nil end
+			return { kind = "item", name = stack.name, quality = spec.quality ~= false and stack.quality.name or nil, cursor = true }
+		end
+		local ghost = player.cursor_ghost
+		if ghost then
+			G.set_held(player, nil)
+			local name = type(ghost.name) == "string" and ghost.name or ghost.name.name
+			local proto = prototypes.item[name]
+			if not kinds.item or not proto or TOOLS[proto.type] then return nil end
+			local q = ghost.quality
+			q = q and (type(q) == "string" and q or q.name) or "normal"
+			return { kind = "item", name = name, quality = spec.quality ~= false and q or nil, cursor = true }
+		end
+		local key = kinds.fluid and G.held_fluid(player)
+		if key then
+			local name, deg = N.split_fluid_key(key)
+			if prototypes.fluid[name] then return { kind = "fluid", name = name, temperature = deg, cursor = true } end
+		end
+		return nil
+	end
+end
+
+--- Issue #677: a key slot's left click: with an item in the cursor (issue #754: or its ghost, or a held fluid) the slot takes
+--- it (the picker's callback, as if it was chosen there: what the slot refuses is refused as a choice of the picker), else
+--- the picker opens as before
+function M.pick(player, spec)
+	local choice = M.cursor_choice(player, spec)
+	if choice and M.choose(player, spec, choice) then return end
+	M.open(player, spec)
+end
+
 function M.close(player)
 	local frame = player.gui.screen[M.NAME]
 	if frame and frame.valid then frame.destroy() end

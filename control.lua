@@ -3,6 +3,8 @@
 
 --- the network core: cable graph, controller, drives and cells, storage API
 local fork_net = require("scripts.fork-me-network")
+--- issue #777: the old drive items of an old save, once per save (save migrations are not removed)
+local legacy_drives = require("scripts.fork-me-legacy-drives")
 --- ME Storage Bus: a chest or cargo wagon, or the fluid segment of a tank, as network storage (its visits run in the
 --- I/O step; the fluid side is scripts/fork-me-fluid-storagebus.lua)
 local fork_sbus = require("scripts.fork-me-storagebus")
@@ -360,30 +362,28 @@ script.on_event(defines.events.on_player_rotated_entity, function(event)
 end)
 
 --- Issue #146: saves from before 0.5.0 are no longer converted (the old drives, controller and interface of before the
---- ME rework, the old fluid blocks of issue #3, the providers of before issue #80 are gone). Issue #690: since 0.7.0 the
---- cut-off is 0.6.0, the version that replaced the old drive items of a save by ME Drives with their cells (issue #689)
---- before their prototypes were removed. Such a save is refused before anything is changed: the engine aborts the load,
---- the file stays as it was. `old`: the mod's version in the save, or nil for the state of a Gregtorio Continued 0.4.x
---- save (the hand-over).
-local CUT_OFF = { 0, 6, 0 }
-local function version_before(version, ref)
+--- ME rework, the old fluid blocks of issue #3, the providers of before issue #80 are gone, and nothing can bring their
+--- entities back: the engine removes them before a script runs). Such a save is refused before anything is changed: the
+--- engine aborts the load, the file stays as it was. `old`: the mod's version in the save, or nil for the state of a
+--- Gregtorio Continued 0.4.x save (the hand-over).
+--- Issue #777: this is the only refusal. 0.7.0 also refused the saves of 0.5.x (issue #690: "load it once with 0.6.0"), which
+--- a player whose other mods need a newer version could not do; they are converted again (scripts/fork-me-legacy-drives.lua).
+--- SAVE MIGRATIONS ARE NOT REMOVED (CONTRIBUTING.md): do not raise this cut-off.
+local CUT_OFF = { 0, 5, 0 }
+local function before_cut_off(version)
 	local parts = {}
 	for n in string.gmatch(version, "%d+") do parts[#parts + 1] = tonumber(n) end
 	for i = 1, 3 do
-		local a, b = parts[i] or 0, ref[i]
+		local a, b = parts[i] or 0, CUT_OFF[i]
 		if a ~= b then return a < b end
 	end
 	return false
 end
-local function before_cut_off(version) return version_before(version, CUT_OFF) end
 local function refuse_old_save(old)
-	--- a save from before 0.5.0 (or a Gregtorio Continued 0.4.x save) needs 0.5.0 first, then 0.6.0
-	local steps = (not old or version_before(old, { 0, 5, 0 }))
-		and ("me-network 0.5.0" .. (old and "" or " (and a Gregtorio Continued version that works with it)") .. ", save it, then load it once with me-network 0.6.0")
-		or "me-network 0.6.0"
 	error("\n\nme-network: this save holds an ME network of " .. (old and ("me-network " .. old) or "Gregtorio Continued 0.4.x")
-		.. ".\nSince 0.7.0 me-network no longer converts saves from before 0.6.0 (issues #146, #690).\n"
-		.. "Load the save once with " .. steps .. ", save it, then update. The save file was not changed.\n", 0)
+		.. ".\nme-network no longer converts saves from before 0.5.0 (issue #146).\n"
+		.. "Load the save once with me-network 0.5.0" .. (old and "" or " (and a Gregtorio Continued version that works with it)")
+		.. ", save it, then update. The save file was not changed.\n", 0)
 end
 local function handover_pending()
 	local iface = remote.interfaces["gregtorio-me-handover"]
@@ -398,6 +398,7 @@ script.on_init(function()
 	wired.migrate()                                           -- (issue #628: old buses and providers, before the graph)
 	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
+	legacy_drives.on_init()                                   -- (issue #777: a new map holds no old drive item)
 	cableshape.migrate()                                      -- (issue #670: ME ghosts of a handed-over save)
 end)
 
@@ -425,6 +426,9 @@ script.on_configuration_changed(function(data)
 	fork_ae2.clean_removed_items()
 	fork_circuit.clean_removed_items()
 	fork_io.clean_removed_items()
+	--- issue #777: the old drive items a save still holds (in the drives' cells, inventories, hands, belts, on the ground)
+	--- become ME Drives with their cells, once per save, before the graph rebuild computes the networks' totals from the cells
+	legacy_drives.convert()
 	--- the underground cables of a save from before 0.5.11 turned to the vanilla underground pipe's rule, then the graph first
 	--- (the only map scan), then the modules that read it
 	fork_net.migrate_underground_direction()
@@ -432,7 +436,6 @@ script.on_configuration_changed(function(data)
 	cableshape.migrate()                                      -- (issue #670: the ME ghosts registered, cable ghosts shaped)
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
 	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil
-	storage.fork_me_legacy_drives = nil                       -- (issue #690: the flag of 0.6.0's conversion of the old drive items)
 	fork_me.on_configuration_changed()
 	fork_fluids.on_configuration_changed()
 	fork_ae2.on_configuration_changed()

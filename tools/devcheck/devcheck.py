@@ -10,8 +10,9 @@
     python tools/devcheck/devcheck.py all --with-mod Krastorio2 [--mods-from DIR]
                                                             # issue #591: with a third-party mod and its required
                                                             # dependencies (check --base-only: without Space Age)
-    python tools/devcheck/devcheck.py migrate --from-ref v0.6.0
+    python tools/devcheck/devcheck.py migrate --from-ref v0.5.11
                                                             # a save of an older version loaded with the working copy
+                                                            # (this one, with its old drive items, is part of `all`)
     python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
                                                             # bases of 100, 1000 and 5000 endpoints (docs/PERFORMANCE.md)
     python tools/devcheck/devcheck.py bench --reference --profile 1000,5000
@@ -23,6 +24,8 @@
                                                             # a run of 30 minutes, reported per 5 minutes
     python tools/devcheck/devcheck.py bench --planner [--with-gregtorio ../Gregtorio]
                                                             # the planner on every recipe of the game as deep trees
+    python tools/devcheck/devcheck.py bench --feed-only          # issue #752: a chain of three pattern steps, the machines'
+                                                            # utilisation per step
     python tools/devcheck/devcheck.py bench --tunnels-only [--idle]
                                                             # issue #629: one provider reaching 64 machines through
                                                             # ME P2P tunnels against 16 providers with 4 neighbours
@@ -59,8 +62,12 @@ MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
 # `runtime` creates its map with this seed, so a run is reproducible; `--seed N` or `--seed random` picks another
 DEFAULT_SEED = 3115102263
-# issues #146, #690: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
-CUT_OFF = (0, 6, 0)
+# issue #146: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that. Issue #777:
+# this cut-off is not raised again (save migrations are not removed, CONTRIBUTING.md)
+CUT_OFF = (0, 5, 0)
+# issue #777: `all` loads a save of this version, the last one whose saves hold the old drive items unconverted (0.6.0
+# converted them), with the working copy: every old item must become an ME Drive with its cells, nothing lost or doubled
+OLD_SAVE_REF = "v0.5.11"
 # (issue #487: Factorio 2.1 adds the built-in mod recycler, which space-age and quality depend on)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails", "recycler"}
 # the Factorio version the mods are written for (info.json factorio_version; the dependency mods are picked by it)
@@ -1290,6 +1297,15 @@ RUNTIME_TESTS = (
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("NATIVEINV", "ME windows with the native inventory (issue #542)"),
     ("WINSOUND", "ME window sounds (issue #545)"),
+    ("BOOKCURSOR", "a blueprint book in the cursor (issue #747)"),
+    ("MODULECHARGE", "ME Wireless Module charged in the grid (issue #748)"),
+    ("PLATFORMHUB", "ME windows on a space platform (issue #749)"),
+    ("CRAFTROWS", "rows of the craftable grid (issue #751)"),
+    ("ORDERLIMIT", "the limit of a crafting order (issue #750)"),
+    ("FEEDING", "machines fed while they work (issue #752)"),
+    ("FAIRSTEPS", "steps of a job share their machines (issue #769)"),
+    ("HELDFLUID", "the pipette key for fluids (issue #754)"),
+    ("PATTERNSCALE", "scaling a processing pattern's amounts (issue #753)"),
     ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
@@ -1355,6 +1371,7 @@ RUNTIME_TESTS = (
 )
 
 
+FEED_MACHINES = 27              # issue #752: the machines of the feed scene (benchmod: nine per step of the chain)
 TUNNEL_MACHINES = 64            # issue #629: the machines of the tunnel scene (benchmod: one provider, or 16 with 4 each)
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
 
@@ -1882,6 +1899,18 @@ def bumped_tree():
 ITEMS_SETTING = "zz-me-network-devcheck-migrate-items"     # (migratemod/settings.lua, issue #503)
 
 
+def old_save(a):
+    """issue #777, part of `all`: a save of OLD_SAVE_REF (me-network 0.5.11, with old drive items in the network, in chests,
+    on the ground, on a belt) loaded with the working copy; with --with-gregtorio loaded with that checkout added. Not with
+    --with-mod (the third-party mod would be added to a save made without it: its own first run, not this mod's update)."""
+    if with_mods(a):
+        print("\n(the old save of issue #777 is not loaded with --with-mod: run `all` or `all --with-gregtorio DIR` for it)")
+        return 0
+    print(f"\n=== a save of {OLD_SAVE_REF} loaded with the working copy (issue #777: save migrations are not removed) ===")
+    return migrate(argparse.Namespace(from_ref=OLD_SAVE_REF, bump=False, removed_items=False, ticks=300, seed=a.seed,
+                                      old_factorio=None, with_gregtorio=a.with_gregtorio))
+
+
 def migrate(a):
     try:
         return migrate_run(a)
@@ -1924,16 +1953,20 @@ def migrate_run(a):
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save (every kind of block): {setup.group(1) if setup else 'no result'}")
     wired_setup = re.search(r"DEVCHECK-MIGRATE-WIRED-SETUP (.*)", log)       # issue #628
+    log_old = log
     print(f"old save, buses and providers with their connectors: {wired_setup.group(1) if wired_setup else 'no result'}")
-    prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
+    # issue #777: `--with-gregtorio DIR` loads the old save with Gregtorio Continued added (it needs a newer me-network than the
+    # old version, so the save is made without it); the helper then checks the old drive items only
+    gregtorio = getattr(a, "with_gregtorio", None)
+    prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True, gregtorio=gregtorio)
     if a.removed_items:                   # one of them removed, one renamed through ME_NETWORK.replace_item
         startup_setting(ITEMS_SETTING, "new")
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
-    # issues #146, #690: a save from before the cut-off must be refused when it loads, with the message that names 0.6.0
+    # issue #146: a save from before the cut-off must be refused when it loads, with the message that names 0.5.0
     old_version = json.loads((old / "info.json").read_text(encoding="utf-8"))["version"]
     if tuple(int(n) for n in old_version.split(".")[:3]) < CUT_OFF:
-        refused = "no longer converts saves from before 0.6.0" in log
+        refused = "no longer converts saves from before 0.5.0" in log
         print(f"old save of {old_version} (before the cut-off {'.'.join(map(str, CUT_OFF))}) loaded with the working copy: "
               + ("refused with the message" if refused and not ran else "NOT REFUSED" if ran else "failed without the message"))
         if not refused:
@@ -1942,6 +1975,25 @@ def migrate_run(a):
         print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
         return 0 if ok else 1
     print(f"old save loaded with the working copy{' (version one patch up: an update, on_configuration_changed runs)' if a.bump else ''}: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
+    # issue #777: the old drive items of a save of 0.5.x (migratemod/legacy.lua), in a version that has them
+    legacy_setup = re.search(r"DEVCHECK-MIGRATE-LEGACY-SETUP (.*)", log_old)
+    legacy = re.search(r"DEVCHECK-MIGRATE-LEGACY (.*)", log)
+    converted = re.search(r"ME-LEGACY-DRIVES (\d+)", log)
+    if legacy_setup or legacy:
+        print(f"old save, the old drive items: {legacy_setup.group(1) if legacy_setup else 'no result'}")
+        print(f"the old drive items after the update: {legacy.group(1) if legacy else 'no result'}"
+              + (f" [{converted.group(1)} old items replaced when the save was loaded]" if converted else " [none replaced at the load]"))
+    legacy_ok = (not legacy_setup and not legacy) or bool(
+        legacy_setup and legacy_setup.group(1).startswith("ok") and legacy and legacy.group(1).startswith("ok") and converted)
+    if gregtorio:
+        fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
+        for f in fails:
+            print("  - " + f)
+        if not ran:
+            print(load_errors(log) or "")
+        ok = bool(ran and setup and setup.group(1).startswith("ok") and legacy_setup and legacy_ok and not fails)
+        print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
+        return 0 if ok else 1
     unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
@@ -1957,7 +2009,8 @@ def migrate_run(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
-        and fluids and fluids.group(1).startswith("ok") and not fails         and wired_setup and wired_setup.group(1).startswith("ok") and wired and wired.group(1).startswith("ok")
+        and fluids and fluids.group(1).startswith("ok") and not fails         and wired_setup and wired_setup.group(1).startswith("ok") and wired and wired.group(1).startswith("ok") \
+        and legacy_ok
     if a.removed_items:
         # issue #503: after the update the network holds the renamed item under its new name (counts added up, quality kept), the
         # removed one nowhere, and every circuit interface (one built after the load too) works; the log names each name once
@@ -2344,6 +2397,8 @@ def variant_name(v):
     parts = []
     if v.get("tunnel") is not None:                 # (issue #629: the tunnel scene's two layouts)
         parts.append("tunnel" if v["tunnel"] else "neighbours")
+    if v.get("feed"):                               # (issue #752: the chain, or one of its steps on its own)
+        parts.append(v["feed"])
     if v.get("carry"):                              # (issue #633: the carry scene's two ways)
         parts.append(v["carry"])
     if v.get("base"):
@@ -2374,6 +2429,8 @@ def bench_config(a, scene, size, variant, profile):
            "tunnel": bool(variant.get("tunnel")) if scene == "tunnels" else None,
            # issue #633: the carry scene's way: "tunnels" (ME P2P tunnels on their own) or "buses" (import and export buses)
            "carry": variant.get("carry") if scene == "carry" else None,
+           # issue #752: the feed scene's chain of three steps, or one step on its own ("fluid", "items", "processing")
+           "feed": variant.get("feed") if scene == "feed" else None,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
@@ -2406,7 +2463,7 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
     out = {"scene": cfg["scene"], "size": cfg["size"],
-           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry") if cfg.get(k) is not None},
+           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry", "feed") if cfg.get(k) is not None},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -2612,7 +2669,7 @@ def bench(a):
     print(results["factorio"])
     problems = []
     plan = []                                              # (scene, size, variant)
-    if not (a.planner_only or a.tunnels_only or a.carry_only):
+    if not (a.planner_only or a.tunnels_only or a.carry_only or a.feed_only):
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
             for entry in sizes:
                 size, base = size_variant(entry)
@@ -2634,6 +2691,9 @@ def bench(a):
         for idle in ([False, True] if a.idle else [False]):
             for tunnel in (True, False):
                 plan.append(("tunnels", TUNNEL_MACHINES, {"tunnel": tunnel, **({"idle": True} if idle else {})}))
+    if a.feed or a.feed_only:                         # (issue #752: the chain of three kinds of pattern steps)
+        for way in ("chain", "fluid", "items", "processing"):
+            plan.append(("feed", FEED_MACHINES, {"feed": way}))
     if a.carry or a.carry_only:                       # (issue #633)
         for way in ("tunnels", "buses"):
             plan.append(("carry", 60, {"carry": way}))
@@ -2761,6 +2821,13 @@ def print_bench(results):
             continue
         if s["scene"] == "planner":
             print(f"  planner: jobs {tp.get('jobs')}; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
+            continue
+        if s["scene"] == "feed":                       # (issue #752)
+            stages = ", ".join(f"{st.get('id')} {fmt(100 * (st.get('utilisation') or 0), 1)} % ({fmt(st.get('crafts_per_s'), 1)}/s, "
+                               f"{st.get('working')} of {st.get('machines')} machines)" for st in tp.get("stages") or [] if st.get("crafts"))
+            job = tp.get("job1") or {}
+            print(f"  {scene_label(s)} {s['size']}: utilisation {stages}; products {fmt(tp.get('products_per_s'), 1)}/s; "
+                  f"job {job.get('status')}, top-ups {job.get('fed')}")
             continue
         if s["scene"] == "carry":                      # (issue #633)
             print(f"  {scene_label(s)}: {tp.get('item_lines')} item and {tp.get('fluid_lines')} fluid lines, items into the sinks "
@@ -3034,8 +3101,10 @@ def main():
     p.add_argument("--mods-from", help="folder with the mod zips that are not in .devcheck/mods yet")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("migrate")
-    p.add_argument("--from-ref", default="v0.6.0", help="the git tag or commit of the old version (default v0.6.0; an older "
-                   "one than the cut-off 0.6.0 must be refused: issues #146, #690)")
+    p.add_argument("--from-ref", default=OLD_SAVE_REF, help=f"the git tag or commit of the old version (default {OLD_SAVE_REF}, the "
+                   "save with the old drive items of issue #777; an older one than the cut-off 0.5.0 must be refused: issue #146)")
+    p.add_argument("--with-gregtorio", metavar="DIR", help="issue #777: load the old save with this Gregtorio Continued checkout "
+                   "added (the save is made without it)")
     p.add_argument("--bump", action="store_true",
                    help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
                         "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "
@@ -3093,6 +3162,11 @@ def main():
     p.add_argument("--carry", action="store_true", help="issue #633: also the carry scene, 40 item and 20 fluid lines (a source, "
                    "four sinks) carried by ME P2P tunnels on their own and by an import bus and four export buses")
     p.add_argument("--carry-only", action="store_true", help="only the carry scene")
+    p.add_argument("--feed", action="store_true", help="issue #752: also the feed scene, a chain of a fluid crafting step, an item "
+                   "crafting step and a processing step with %d fast machines, and each step on its own; reports how busy the machines "
+                   "of each step are"
+                   % FEED_MACHINES)
+    p.add_argument("--feed-only", action="store_true", help="only the feed scene")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
                    "sample must be the same (issue #50)")
@@ -3135,7 +3209,7 @@ def main():
             return check(a)
         if a.cmd == "runtime":
             return runtime(a)
-        return check(a) or runtime(a)
+        return check(a) or runtime(a) or old_save(a)
     finally:
         for name in startup:
             startup_setting(name, None)

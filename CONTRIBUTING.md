@@ -26,6 +26,25 @@ CC BY-NC-SA 3.0. They are built into two zips and no zip contains both. Every or
   to rename one.
 - AE2 code (LGPL-3.0) can be ported into the GPLv3 part: a comment at the function names its source.
 
+## Save migrations stay
+
+**A save migration is never removed again** (issue #777). Whatever converts a save of an older version when it is
+loaded stays in the mod for good: the hidden prototypes that keep old entities and items alive until a script sees
+them, the files in `migrations/`, the conversion code in `on_configuration_changed`, and the test that loads a save of
+that version (`tools/devcheck/devcheck.py migrate`, part of `all`). The same holds for the cut-off in `control.lua`
+(`CUT_OFF`, 0.5.0, issue #146): it is not raised.
+
+Why: 0.6.0 converted the old drive items of a save, 0.7.0 removed that conversion and refused every save from before
+0.6.0 with "load it once with 0.6.0" (issue #690). A dependent mod then required 0.7.0, the game refused to load 0.6.0
+next to it, and a player with a save of 0.5.11 had no way to load it. "Load it once with version X" is not a path a
+player can rely on: other mods pin versions, the portal hands out the newest one, and a save may rest for a year.
+
+- A conversion that is a one-off scan runs in `on_configuration_changed` (or a file in `migrations/`), once per save,
+  marked in `storage`; never in a tick.
+- Removing an entity, item or fluid prototype that a released version could have saved needs a migration that keeps
+  what it held, and that migration then stays too.
+- The hidden leftovers cost a few prototypes and one test run. That is the price, and it is accepted.
+
 ## Workflow
 
 1. Work on a branch, open a pull request into `main`.

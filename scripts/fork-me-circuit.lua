@@ -868,7 +868,7 @@ function M.maintainer_status(entity)
 			return { "fork-me-circuit.maintainer-" .. (net and "logistic-off" or "no-logistic-network") }
 		end
 	end
-	return { "fork-me-circuit.maintainer-" .. st }
+	return { "fork-me-circuit.maintainer-" .. st, autocraft.MAX_TEXT }     -- (issue #750: "too-many" names the limit)
 end
 
 --- Issue #351: a row's status for the window (a LocalisedString), from a row of get_maintainer
@@ -877,7 +877,7 @@ function M.row_status(r)
 	local st = r.status or "no-target"
 	if st == "running" then return { "fork-me-circuit.row-running", r.job or "?" } end
 	if st == "missing" then return { "fork-me-circuit.row-missing" } end
-	return { "fork-me-circuit.maintainer-" .. st }
+	return { "fork-me-circuit.maintainer-" .. st, autocraft.MAX_TEXT }
 end
 
 local COMPARATORS = { ">", "<", "=", ">=", "<=", "!=" }

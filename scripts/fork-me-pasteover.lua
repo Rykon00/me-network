@@ -105,17 +105,27 @@ local function resolve(bp, player)
 	if bp.object_name == "LuaItemStack" then
 		if not bp.valid_for_read then return nil end
 		if bp.is_blueprint_book then
+			--- (issue #747: a book's inventory has as many slots as it has contents, and an empty book still says active
+			--- index 1; a LuaInventory raises "Index out of inventory bounds" for an index past its size)
 			local inv = bp.get_inventory(defines.inventory.item_main)
-			local inner = inv and bp.active_index and inv[bp.active_index]
-			if inner then return resolve(inner, player) end
+			local i = inv and bp.active_index
+			local inner = i and i >= 1 and i <= #inv and inv[i] or nil
+			if inner and inner.valid_for_read then return resolve(inner, player) end
 			return nil
 		end
 		if not (bp.is_blueprint and bp.is_blueprint_setup()) then return nil end
 	elseif bp.object_name == "LuaRecord" then
+		--- A record of a player's blueprint library is a **preview** for the server and for every other player until the
+		--- game has transferred it (in multiplayer: any library blueprint just picked): nothing of it can be read then, a
+		--- read raises "BlueprintRecord cannot be read while it is a preview". Such a record is no blueprint for this mod yet;
+		--- the cursor event comes again when it is there. (Found with a real client in Task-Ingame #765: picking a library
+		--- book stopped the server.)
+		if bp.is_preview then return nil end
 		if bp.type == "blueprint-book" then
-			local i = player and bp.get_active_index(player)
-			local inner = i and bp.contents and bp.contents[i]
-			if inner then return resolve(inner, player) end
+			--- (`contents` is a Lua table: an index past its end is nil; a library book without a player has no active index)
+			local ok, i = pcall(function() return player and bp.get_active_index(player) end)
+			local inner = ok and i and bp.contents and bp.contents[i]
+			if inner and inner.valid then return resolve(inner, player) end
 			return nil
 		end
 		if bp.type ~= "blueprint" or not bp.is_blueprint_setup() then return nil end
@@ -124,7 +134,15 @@ local function resolve(bp, player)
 	end
 	return bp
 end
-M.resolve = resolve                      -- (issue #673: scripts/fork-me-cableturn.lua reads the held blueprint)
+--- (issue #673: scripts/fork-me-cableturn.lua reads the held blueprint.) Never raises: what the cursor holds is the
+--- player's, and a blueprint this mod cannot read (a preview that changed state between the check and the read, a record
+--- another mod made) must not stop the game; it then counts as no blueprint.
+local raw_resolve = resolve
+resolve = function(bp, player)
+	local ok, got = pcall(raw_resolve, bp, player)
+	return ok and got or nil
+end
+M.resolve = resolve
 
 --- The entities and tiles of the blueprint `bp` (from resolve), and whether M.layout places it (not when its placement
 --- follows other rules: rails, which keep a grid of two tiles; absolute snapping).
@@ -209,6 +227,22 @@ function M.note_cables(bp, surface, at, direction, fh, fv, player, entities, til
 	M.cable_hook(surface, entities, place, at)
 end
 
+--- tests: a table standing for a LuaRecord (see the remote function resolves_record)
+function M.record_stand_in(kind)
+	local function raise() error("BlueprintRecord cannot be read while it is a preview.") end
+	local function blueprint(preview, raises)
+		return { object_name = "LuaRecord", valid = true, type = "blueprint", is_preview = preview,
+			is_blueprint_setup = (preview or raises) and raise or function() return true end,
+			cost_to_build = { { name = "me-drive", count = 1 } } }
+	end
+	if kind == "preview" then return blueprint(true) end
+	if kind == "raises" then return blueprint(false, true) end
+	if kind == "blueprint" then return blueprint(false) end
+	local inner = kind == "book-preview-inside" and blueprint(true) or blueprint(false)
+	return { object_name = "LuaRecord", valid = true, type = "blueprint-book", is_preview = kind == "preview-book",
+		get_active_index = kind == "preview-book" and raise or function() return 1 end, contents = { inner }, contents_size = 1 }
+end
+
 --- on_pre_build: a player places the blueprint (or copy) in the cursor
 function M.on_pre_build(event)
 	local player = game.get_player(event.player_index)
@@ -237,6 +271,14 @@ remote.add_interface("gregtorio-me-pasteover", {
 		return out
 	end,
 	paste = function(bp, surface, force, at, direction, fh, fv) return M.paste(bp, surface, force, at, direction, fh, fv) end,
+	--- tests (issue #747): does `bp` (an item stack: a blueprint or a book) stand for a set-up blueprint?
+	resolves = function(bp) return resolve(bp) ~= nil end,
+	--- tests (the library record that is a preview: the harness has no blueprint library): a table standing for a LuaRecord
+	--- of `kind`: "preview" (a blueprint whose every read raises, as the game's does), "preview-book" (a book, the same),
+	--- "raises" (not flagged a preview, but its read raises: the state changed in between), "blueprint" (a set-up one),
+	--- "book" (a book whose active record is a set-up blueprint), "book-preview-inside" (a book whose active record is a
+	--- preview). Returns whether resolve gives a blueprint; an error of resolve comes through as an error.
+	resolves_record = function(kind) return resolve(M.record_stand_in(kind), { index = 1 }) ~= nil end,
 })
 
 return M

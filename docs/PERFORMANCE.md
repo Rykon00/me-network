@@ -4837,3 +4837,118 @@ an order that keeps the parts small. So the splits are **not bundled**: it would
 (parts found late, a network that is wrong until the end of the move) for no measurable gain. The cost of a move is
 spread over every module's build and removal handler, 0.1 ms a block each way, the same as the build burst's (199 ms
 to build and 99 ms to remove 998 blocks in the same scene).
+
+## Machines fed while they work (issue #752)
+
+Issue #557 tops up a machine that still works, but only for crafting patterns of items. A crafting pattern with a fluid
+ingredient (a foundry casting molten metal, a chemical plant) and every processing pattern got their work only when the
+machine was idle, at the job's next step. For a fluid recipe that is worse than the 20 ticks of a step: a hand-over is at
+most what the machine's fluid box holds (`fluid_batch_limit`), a few crafts' worth, so a fast machine ran dry long before
+the next step.
+
+`M.top_up` now also refills the fluid boxes of a crafting lease by their index (as the hand-over fills them, the box
+getting the mean temperature of what it holds and what comes) and adds runs to a processing lease whose machine still
+works (what it made so far is collected and credited to the step first; the lease remembers all it gave, so its end
+counts as before). Every kind of step is stepped early when its machine runs out before the job's next step
+(`M.note_early`, before: crafting steps only). The two new kinds keep to the provider's lock: a provider with a lock mode
+is not topped up (`lease.prov`). No new periodic work: a top-up is part of the visit of the lease that the job's step
+makes anyway, one operation of `job_ops` as before; what grows is the number of early steps of the jobs that need them.
+
+**The scene** (`bench --feed-only`, new): a chain of three steps with nine assembling machines 3 each (three next to each
+of three pattern providers) and recipes of a tenth of a second, so a machine makes 12.5 crafts a second: a crafting
+pattern with a fluid (10 water into a plate), a crafting pattern of items (a plate into a gear), a processing pattern that
+names its recipe (a gear into a stick). One job of 40 000 sticks on a CPU with four 16x accelerators; and each step on
+its own (the network then holds its ingredient). The utilisation is the crafts of the window (3600 ticks) over what the
+machines' crafting speed makes in that time.
+
+Two turns, the version before (`feat/753-pattern-scale`) and this one alternating, three runs each (the throughput is
+the same in every run, it does not depend on the machine's load):
+
+| scene | utilisation before | now | products per second before | now |
+|---|---|---|---|---|
+| step with a fluid, on its own | 56.5 % | 100.0 % | 63.6 | 112.5 |
+| step of items, on its own | 100.0 % | 100.0 % | 112.5 | 112.5 |
+| processing step, on its own | 96.0 % | 100.0 % | 108.0 | 112.5 |
+| the chain: fluid / items / processing | 56.5 / 56.5 / 56.5 % | 100.0 / 100.0 / 99.9 % | 63.5 | 112.4 |
+
+In the chain the two steps behind the fluid step could never be busier than it fed them (7 of their 9 machines worked);
+now all 27 work. The steps behind get their work from the job's pool as the products arrive, so nothing had to change for
+"hand out as soon as one run's worth is there": the chain's last step is at 99.9 %.
+
+Script time per tick in ms (average and p99, the median of three runs; first turn / second turn):
+
+| scene | before, average | now, average | before, p99 | now, p99 |
+|---|---|---|---|---|
+| chain | 0.120 / 0.114 | 0.150 / 0.128 | 1.07 / 1.02 | 1.24 / 0.95 |
+| fluid step | 0.114 / 0.099 | 0.124 / 0.103 | 0.82 / 0.76 | 0.65 / 0.47 |
+| items step (unchanged path) | 0.097 / 0.079 | 0.083 / 0.096 | 0.46 / 0.30 | 0.34 / 0.43 |
+| processing step | 0.083 / 0.077 | 0.082 / 0.092 | 0.47 / 0.44 | 0.36 / 0.42 |
+
+The items step did not change, and its numbers differ by 0.02 ms between the turns: that is the noise of these runs (the
+maintainer's game was running on the machine). The chain's average is 0.02 ms higher in both turns, for 77 % more crafts:
+0.037 ms of script time per craft before, 0.025 ms now (the average times 60 over the three steps' crafts per second). The
+single steps are inside the noise. The job topped its machines up 4261 times in the chain's 3600 ticks (2502 for the
+fluid step alone, 873 for a step of items or a processing step), about 1.2 per tick for 27 machines.
+
+`bench --check feat/753-pattern-scale --sizes 1000 --runs 3` (the busy scene, three rounds in turns):
+
+| | before | #752 |
+|---|---|---|
+| script average / p99 ms | 0.4412 / 2.383 | 0.4379 / 2.335 |
+| provider crafts per second | 15.78 | 15.78 |
+| Lua alloc KB per tick | 31.97 | 32.03 |
+| throughput per kind of endpoint | | identical |
+
+`regressions beyond the noise: 0`. The busy scene's providers have item recipes, which were topped up already; the feed
+scene is the one that shows the change.
+
+**The test** (`feeding.lua`): an assembling machine 3 with the fluid recipe and one with the processing pattern, two jobs
+of 80 at once: 55 % busy for the fluid machine before, 100 % for both now (14 and 6 top-ups), every count exact at the end
+(plates, sticks, 10 water per plate, nothing left in a machine or its fluid box), and a job on a provider with the lock
+"until the result is back" ends without a top-up.
+
+## Steps of a job share their machines (issue #769)
+
+`job_step` handed a job's work out in plan order: for each step, hand-overs until the step had no ingredient or no machine
+left. A step that shares machines with a later one took all of them, and since issue #557 it keeps them (a lease is topped up
+as long as its step has runs). Found in a real game (Task-Ingame #765): eight Space Age foundries with the patterns casting-iron
+and casting-copper, four ME Molecular Assemblers with copper-cable and electronic-circuit, one job of 9000 circuits: every
+foundry cast iron until all 3000 iron runs were handed out (casting-copper at 0 of 4504 the whole time), and every assembler
+made cable (electronic-circuit at 0 of 9000).
+
+Now:
+
+- a visit hands out in **passes**, one hand-over per step and pass, as long as a pass handed something out and operations
+  are left; a step that could not hand out once is not asked again in that visit (the search for a machine is the cost);
+- the step that found no machine and holds the fewest (`job.starve`) comes first in the next visit, and when another step
+  holds two or more machines more than it, among them one it could use, one such lease is not topped up any more
+  (`lease.release`), runs out and ends: the waiting step takes the machine and keeps it by its own top-ups. The shares end up
+  one apart at most, and every machine stays topped up.
+
+No closure and no table per visit (two scratch tables outside `storage`, marked with a stamp of the visit); the counting of
+leases per step runs only in a visit after a step found no machine.
+
+The same game scene after the change: four foundries cast iron and four copper from the first second, the assemblers split
+between cable and circuits (2 and 2, 3 and 1 while cable is short), and circuits are handed out from the start (65 of 9000
+after ten seconds, 630 after a minute; before: 0 until the 13 500 cable runs were handed out).
+
+`bench --check <the commit before> --sizes 1000 --runs 4` (four rounds in turns):
+
+| | before | #769 |
+|---|---|---|
+| script average / p99 ms | 0.3822 / 2.032 | 0.3787 / 2.022 |
+| provider crafts per second | 15.78 | 15.78 |
+| Lua alloc KB per tick | 32.03 | 32.03 |
+| throughput per kind of endpoint | | identical |
+
+`regressions beyond the noise: 0`. A first version built a closure per visit: 32.47 KB per tick, and it was taken out.
+
+The feed scene (`bench --feed-only`, three runs): the chain 100.0 / 100.0 / 99.9 % and 112.4 products per second, each step
+on its own 100.0 %, 4261 / 2502 / 873 / 873 top-ups, all as before (its three steps have machines of their own, so nothing is
+shared there); script average 0.122 ms for the chain (0.116 to 0.133 before). The planner scene and the tunnel scene
+(`--tunnels-only --planner`): no conservation problem, 120.0 crafts per second in both tunnel layouts, as before.
+
+**The test** (`fairsteps.lua`): two ME Molecular Assemblers with five Acceleration Cards, the patterns iron stick and gear
+(the gear takes two sticks), a job of 96 gears: while stick runs are left, gear runs are handed out (16 at tick 50 of the job,
+32 by the time the sticks are all handed out: more than one hand-over, so the gear step holds a machine of its own); the job
+ends with 96 gears and nothing left. On the code before, the gear step got no machine before every stick run was handed out.

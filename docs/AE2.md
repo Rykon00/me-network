@@ -1612,6 +1612,12 @@ an input tunnel on the provider's side, an output tunnel at each machine.
 
 ## Old saves
 
+**A save of ME Network 0.5.0 or later loads with every later version** (0.7.0 was the one exception: it refused saves
+from before 0.6.0; 0.7.1 loads them again). The old ME Drive items of before the rework (one item per tier with four
+cells built in, "Old ME Drive (1k)") that such a save still holds in a chest, an inventory, on a belt or in the network
+are replaced when it loads: each becomes an ME Drive and its four storage cells, an old fluid drive's fluid is in its
+fluid cells, and a message says how many were replaced.
+
 **Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
 Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older, which still contained this network) is refused when it
 loads: the game stops with a message that names the version, and the save file stays as it was. Load it once with
@@ -1720,6 +1726,17 @@ that scrolls when the window would not fit the screen (issue #469: the slots, En
 stay below it).
 Everything else (the two slots, Encode, Load, Clear, fill from a recipe) is the ME Pattern Terminal's.
 
+**The pipette key for fluids** (issue #754): the game's pipette key (Q) over an item shown in a window puts that item into
+your cursor (a ghost of it when you do not carry it), and a config slot takes the item or its ghost from the cursor. A
+fluid cannot be in the cursor, so the pipette key over a fluid in an ME window (the terminal's grid, a plan, a pattern or
+config slot) makes it your **held fluid**: the title bar of every ME window names it, and a click on a slot that takes
+fluids sets it. It stays held from window to window until the pipette key is pressed over anything else or an item comes
+into your hand. The rows of both pattern terminals take an item, a ghost or the held fluid the same way.
+
+Both terminals have the buttons ×2, ×3, ×4 and ÷2, ÷3, ÷4 above the rows of a processing pattern (issue #753): they
+multiply or divide every input and output amount at once, shift + click the outputs only (a machine with productivity).
+A button is off when a row would pass 1 000 000 or an amount does not divide evenly.
+
 * Each player has an editor for each kind of terminal, so the plain terminal never cuts the rows of a big pattern. Rows that
   the other layout does not show stay in the editor but are not encoded.
 * "Fill from a recipe" switches to 32 outputs when the recipe has more than 8 products and at most 8 ingredients; a recipe
@@ -1780,8 +1797,11 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
   its input slots (one stack per ingredient), its output slot and what the job holds allow. While it still works and has
   less than half of that left, the job's step tops it up (the products so far are taken out first and count as done), and
   a machine that would run out or fill its output slot before the job's next step has the job stepped earlier, so a fast
-  machine never waits for the job. Not for recipes with fluids or ingredients with data (they get their batch when the
-  machine is idle, as before).
+  machine never waits for the job. Since issue #752 this also holds for a crafting pattern with a fluid (its fluid boxes
+  are refilled while it works: a box holds only a few crafts' worth, so such a machine stood idle between two steps) and
+  for a processing pattern in a machine (more runs go in while it still works; a chest is filled by the blocking modes'
+  rules as before). A pattern provider with a lock mode hands over once per unlock, so its machines are not topped up.
+  Not for ingredients with data (they get their batch when the machine is idle, as before).
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
@@ -2412,8 +2432,8 @@ fluids (25 to 100 °C) are only made at 25 °C. No recipe of either needs a temp
 ### Old fluid drives
 
 The old fluid drives (before step R2: four fluid cells crafted into an ME Fluid Drive) were converted up to 0.5.0 (see
-"Old saves"). Placing an old fluid drive item builds an ME Drive with its four fluid cells (and its fluid, if it
-carried any).
+"Old saves"). An old fluid drive item that a save still holds becomes an ME Drive and its four fluid cells (with its
+fluid, if it carried any; more cells when four do not hold it) when the save is loaded.
 
 ## What the network costs: /me-stats
 
@@ -2600,7 +2620,7 @@ Other products of a recipe (by-products) are not credited to the plan (they may 
 they simply end in storage. If a resource has several patterns the first one in pattern order
 (provider priority, provider built first, slot) that needs nothing missing is used, else the first. Loops (a resource that needs itself) count as missing and
 are named in the message. Work is capped at 3000 plan nodes / depth 40 (reported as missing);
-amounts up to 100 000 items or 10 000 000 fluid units. Items with tags (cells, fluid drive items) are
+amounts up to 2 147 483 647 items or fluid units per order (issue #750; what a job can really hold is its Crafting CPU's bytes). Items with tags (cells, fluid drive items) are
 never counted as stock, so a job cannot strip their contents.
 
 The result is a list of steps (recipe, runs) in dependency order and the resources taken from

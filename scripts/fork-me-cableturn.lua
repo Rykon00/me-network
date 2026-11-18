@@ -95,6 +95,17 @@ local function holds(bp)
 	return false
 end
 
+--- `src` (an item stack or a record, a blueprint or a book) with the key `k` when its blueprint holds a block of
+--- agnostic(): `k` and true; nil else
+local function held_source(src, k, player)
+	local bp = P.resolve(src, player)
+	if not bp then return nil end
+	--- (the blueprint's cost is a read of it too: a record that became a preview is no held blueprint)
+	local ok, has = pcall(holds, bp)
+	if ok and has then return k, true end
+	return nil
+end
+
 --- the blueprint in the player's cursor when it holds a block of agnostic(): its key (the item number of the blueprint or
 --- book; nil for a library blueprint) and true; nil when the cursor holds no such blueprint
 local function held(player)
@@ -107,10 +118,7 @@ local function held(player)
 		if not (st and st.valid_for_read and (st.is_blueprint or st.is_blueprint_book)) then return nil end
 		src, k = st, st.item_number
 	end
-	local bp = P.resolve(src, player)
-	if not bp then return nil end
-	if holds(bp) then return k, true end
-	return nil
+	return held_source(src, k, player)
 end
 
 --- `list` (entities or ghosts) takes direction `d`; a block marked for deconstruction is left alone (see above). Returns the
@@ -218,6 +226,17 @@ remote.add_interface("gregtorio-me-cableturn", {
 	normalise = function(bp) return M.normalise(bp) end,
 	--- tests: does a blueprint with this content count as held?
 	holds = function(bp) return holds(bp) end,
+	--- tests (issue #747): is the item stack `stack` in a cursor a held blueprint with such a block? (`held` without a player)
+	held_stack = function(stack)
+		if not (stack and stack.valid_for_read and (stack.is_blueprint or stack.is_blueprint_book)) then return false end
+		local _, has = held_source(stack, stack.item_number, nil)
+		return has == true
+	end,
+	--- tests: `held` for a player whose cursor holds a library record (a stand-in of P.record_stand_in's kinds)
+	held_record = function(kind)
+		local _, has = held({ index = 1, cursor_record = P.record_stand_in(kind) })
+		return has == true
+	end,
 	--- tests: the names of the blocks whose direction nothing uses
 	agnostic = function() return (agnostic()) end,
 })

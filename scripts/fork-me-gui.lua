@@ -421,12 +421,15 @@ end
 --- the inventory element bound to the player's inventory (issue #542: the game draws and updates its slots)
 local function build_pane(parent, hint, player)
 	local box = parent.add{ type = "frame", name = "fork_me_pane", style = "inside_shallow_frame_with_padding", direction = "vertical" }
-	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label", tooltip = hint }
+	local hub = M.platform_hub(player) ~= nil          -- (issue #749: on a space platform the pane is the hub's inventory)
+	box.add{ type = "label", name = "fork_me_pane_title", caption = { hub and "fork-me-gui.platform-hub" or "fork-me-gui.character" },
+		style = "caption_label", tooltip = hint }
 	if hint then M.label(box, hint, PANE_COLUMNS * 40) end
 	local remote = M.in_remote_view(player)
 	local inv = M.player_inventory(player)
 	if remote then                                     -- issues #176, #177: what remote view does
-		M.label(box, { inv and "fork-me-gui.remote-help" or "fork-me-gui.remote-no-inventory" }, PANE_COLUMNS * 40, nil, "fork_me_remote_help")
+		M.label(box, { hub and "fork-me-gui.hub-help" or inv and "fork-me-gui.remote-help" or "fork-me-gui.remote-no-inventory" },
+			PANE_COLUMNS * 40, nil, "fork_me_remote_help")
 	end
 	if not inv then return end                         -- (no element: there is nothing to show)
 	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
@@ -477,6 +480,7 @@ function M.open_window(player, name, caption, tags, pane)
 	bar.drag_target = frame
 	bar.style.horizontal_spacing = 8
 	bar.add{ type = "label", name = "fork_me_title", caption = caption, style = "frame_title", ignored_by_interaction = true }
+	bar.add{ type = "label", name = "fork_me_held", caption = "", ignored_by_interaction = true }   -- (issue #754: the held fluid)
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
 	drag.style.horizontally_stretchable = true
 	drag.style.height = 24
@@ -493,7 +497,112 @@ function M.open_window(player, name, caption, tags, pane)
 	frame.auto_center = true
 	player.opened = frame
 	if not rebuilt then player.play_sound{ path = SOUND_OPEN } end
+	M.show_held(player)
 	return frame, content
+end
+
+--------------------------------------------------------------------------------
+--- Issue #754: the held fluid. The game's pipette key puts an item shown in a window into the cursor, and a config slot
+--- takes an item from the cursor (issue #677); a fluid cannot be in the cursor. So the pipette key over a fluid slot of an
+--- ME window (M.slot: the terminal's grid, a plan, a pattern slot, a config slot) holds that fluid for the player, and the
+--- next click on a slot that takes fluids sets it (scripts/fork-me-picker.lua, cursor_choice). It stays held over the
+--- windows (picked in the terminal, set in a bus), shown in the title bar of every ME window, until the pipette key is
+--- pressed over anything else or an item comes into the cursor.
+---   storage.fork_me_held[player_index] = { key = the held fluid's key, hover = the key of the fluid slot under the mouse,
+---                                          el = that slot }
+--------------------------------------------------------------------------------
+
+local function held_of(index, make)
+	local s = storage.fork_me_held
+	if not s then
+		if not make then return nil end
+		s = {}
+		storage.fork_me_held = s
+	end
+	local h = s[index]
+	if not h and make then
+		h = {}
+		s[index] = h
+	end
+	return h
+end
+
+--- the key of the fluid the player holds, or nil
+function M.held_fluid(player)
+	local h = held_of(player.index)
+	return h and h.key or nil
+end
+
+--- the title bar of the player's ME window names the held fluid
+function M.show_held(player)
+	local frame = M.window_of(player)
+	local label = frame and M.find(frame, "fork_me_held")
+	if not label then return end
+	local key = M.held_fluid(player)
+	if key then
+		local text, name = M.fluid_label(key)
+		label.caption = { "fork-me-gui.held-title", prototypes.fluid[name] and ("[fluid=" .. name .. "]") or "", text }
+		label.tooltip = { "fork-me-gui.held-tooltip" }
+	else
+		label.caption = ""
+	end
+end
+
+--- hold `key` (nil: let go); says so when something changed
+function M.set_held(player, key)
+	local h = held_of(player.index, key ~= nil)
+	if not h or h.key == key then return end
+	h.key = key
+	if key then
+		local text, name = M.fluid_label(key)
+		player.create_local_flying_text{ text = { "fork-me-gui.held-fluid", prototypes.fluid[name] and ("[fluid=" .. name .. "]") or "", text },
+			create_at_cursor = true }
+	end
+	M.show_held(player)
+end
+
+--- on_gui_hover / on_gui_leave of a slot M.slot made: what is under the player's mouse, a fluid's key ("fluid/...") or
+--- (issue #768) an item's ("name", "name@quality"); `key` nil: none
+function M.hover_fluid(index, key, el)
+	local h = held_of(index, key ~= nil)
+	if not h then return end
+	if key == nil and el ~= nil and h.el ~= nil and h.el ~= el then return end   -- (a leave of a slot left before: the newer hover stays)
+	h.hover, h.el = key, key and el or nil
+end
+
+--- The pipette key: the fluid of the slot under the mouse is held; over anything else (another element, the world) what was
+--- held is let go. A slot that is gone (its window was closed under the mouse: no leave event) counts as nothing. Returns
+--- the held key.
+--- Issue #768: over an item slot the item goes into the cursor as the game's own pipette puts one there (the stack when
+--- the player carries it, a ghost of it else: LuaPlayer.pipette). The game's pipette does nothing over a slot of a mod's
+--- window (measured with a real key in Task-Ingame #765), so until then only fluids could be picked. With something in the
+--- cursor already the key does nothing here (the game clears the cursor with it). Returns the item's key then.
+function M.pipette(player)
+	local h = held_of(player.index)
+	local key = h and h.hover
+	if key and h.el ~= nil and not h.el.valid then key, h.hover, h.el = nil, nil, nil end
+	local item
+	if key and key:sub(1, 6) ~= "fluid/" then item, key = key, nil end
+	if key then
+		local name = key:match("^fluid/([^@]+)")
+		if not (name and prototypes.fluid[name]) then key = nil end
+	end
+	if key or (h and h.key) then M.set_held(player, key) end
+	if item then
+		local name, q = item:match("^([^@#]+)@?([^#]*)")
+		q = (q and q ~= "") and q or "normal"
+		local stack = player.cursor_stack
+		if prototypes.item[name] and prototypes.quality[q] and not (stack and stack.valid_for_read) and not player.cursor_ghost then
+			local ok, done = pcall(player.pipette, prototypes.item[name], q, true)
+			if not (ok and done) then pcall(function() player.cursor_ghost = { name = name, quality = q } end) end
+		end
+		return item
+	end
+	return key
+end
+
+function M.forget_held(index)
+	if storage.fork_me_held then storage.fork_me_held[index] = nil end
 end
 
 --- `count` items of `stack` to the block through `def.shift` (a part goes through a stack of its own; what the block does not
@@ -720,6 +829,11 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 			local label, name = M.fluid_label(key)
 			if prototypes.fluid[name] then def.sprite = "fluid/" .. name end
 			def.tooltip = { "", label, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+			--- issue #754: the slot tells when the mouse is over it and names its fluid, for the pipette key (the held fluid)
+			def.raise_hover_events = true
+			local with = { fork_me_fluid = key }
+			for k, v in pairs(tags or {}) do with[k] = v end
+			def.tags = with
 		else
 			local name, q = key:match("^([^@#]+)@?([^#]*)")
 			q = (q and q ~= "") and q or "normal"
@@ -727,6 +841,7 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 				def.sprite = "item/" .. name
 				if q ~= "normal" then def.quality = q end    -- (issue #352: the quality's badge)
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
+				def.raise_hover_events = true           -- (issue #768: the pipette key over the slot picks its item)
 				local desc = M.key_description(key)
 				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }
 				else def.tooltip = desc or extra_tooltip end
@@ -850,14 +965,35 @@ function M.in_remote_view(player)
 	return player.controller_type == defines.controllers.remote
 end
 
---- The player's inventory for the windows: their main inventory, else (remote view) their character's, else nil (no
---- character: editor, spectator). Issue #176.
-function M.player_inventory(player)
+--- Issue #749: the inventory of the hub of the space platform the player looks at in remote view, or nil. A player on a
+--- platform is in the remote controller (their character sits in the hub: `player.hub`), and a rocket takes nobody with
+--- items, so the character's inventory is empty there; what a platform has lies in its hub.
+function M.platform_hub(player)
+	if not (player and player.valid and M.in_remote_view(player)) then return nil end
+	local s = player.surface
+	local platform = s and s.valid and s.platform
+	local hub = platform and platform.valid and platform.hub
+	return hub and hub.valid and hub.get_inventory(defines.inventory.hub_main) or nil
+end
+
+--- The player's own inventory: their main inventory, else (remote view) their character's, else nil (no character: editor,
+--- spectator). Issue #176.
+function M.own_inventory(player)
 	if not (player and player.valid) then return nil end
 	local inv = player.get_main_inventory()
 	if inv then return inv end
 	local c = player.character
 	return c and c.valid and c.get_inventory(defines.inventory.character_main) or nil
+end
+
+--- The inventory the windows work with for the player: their main inventory; in remote view of a space platform the
+--- platform hub's (issue #749: the window's block stands there, and so does everything the platform has); else in remote
+--- view their character's; else nil.
+function M.player_inventory(player)
+	if not (player and player.valid) then return nil end
+	local inv = player.get_main_inventory()
+	if inv then return inv end
+	return M.platform_hub(player) or M.own_inventory(player)
 end
 
 --- What a click in a window works with: the cursor stack, the player's inventory (nil when there is none) and whether
@@ -870,7 +1006,8 @@ end
 
 --- the line that tells a player in remote view where a taken item went (issue #177)
 function M.moved_text(player)
-	player.create_local_flying_text{ text = { "fork-me-gui.moved-to-inventory" }, create_at_cursor = true }
+	player.create_local_flying_text{ text = { M.platform_hub(player) and "fork-me-gui.moved-to-hub" or "fork-me-gui.moved-to-inventory" },
+		create_at_cursor = true }
 end
 
 function M.cursor_flags(player, entity)
