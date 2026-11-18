@@ -1612,6 +1612,12 @@ an input tunnel on the provider's side, an output tunnel at each machine.
 
 ## Old saves
 
+**A save of ME Network 0.5.0 or later loads with every later version** (0.7.0 was the one exception: it refused saves
+from before 0.6.0; 0.7.1 loads them again). The old ME Drive items of before the rework (one item per tier with four
+cells built in, "Old ME Drive (1k)") that such a save still holds in a chest, an inventory, on a belt or in the network
+are replaced when it loads: each becomes an ME Drive and its four storage cells, an old fluid drive's fluid is in its
+fluid cells, and a message says how many were replaced.
+
 **Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
 Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older, which still contained this network) is refused when it
 loads: the game stops with a message that names the version, and the save file stays as it was. Load it once with
@@ -2426,8 +2432,8 @@ fluids (25 to 100 °C) are only made at 25 °C. No recipe of either needs a temp
 ### Old fluid drives
 
 The old fluid drives (before step R2: four fluid cells crafted into an ME Fluid Drive) were converted up to 0.5.0 (see
-"Old saves"). Placing an old fluid drive item builds an ME Drive with its four fluid cells (and its fluid, if it
-carried any).
+"Old saves"). An old fluid drive item that a save still holds becomes an ME Drive and its four fluid cells (with its
+fluid, if it carried any; more cells when four do not hold it) when the save is loaded.
 
 ## What the network costs: /me-stats
 

@@ -84,8 +84,12 @@
   server (RCON on a free port of 127.0.0.1 per run, issue #612) and checks that the schedule after the load is the unbroken run's: anything that
   decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.6.0` (every kind of block, loaded without `on_configuration_changed` while
-  the version number is the same; `--bump` with it) loads a save of an older version with the working copy (since issue
-  #690 a save from before 0.6.0 is refused: `--from-ref v0.5.11` checks the refusal) (for changes to saved state or to prototypes that saves hold). Since issue #487
+  the version number is the same; `--bump` with it) loads a save of an older version with the working copy (for changes to
+  saved state or to prototypes that saves hold). `all` ends with `migrate` from `v0.5.11` (issue #777: a save with the old
+  drive items in the network, chests, on the ground and a belt; every one must become an ME Drive with its cells, with
+  `--with-gregtorio` loaded with Gregtorio added). **Save migrations are never removed** (CONTRIBUTING.md, "Save
+  migrations stay"): the hidden old prototypes, `scripts/fork-me-legacy-drives.lua`, the files in `migrations/` and that
+  test stay, and the cut-off 0.5.0 (issue #146; a save from before it is refused) is not raised. Since issue #487
   the mod is for Factorio 2.1 (`FACTORIO_VERSION` in `devcheck.py`): a version up to 0.5.5 is for 2.0, so its save is made
   in an unpacked Factorio 2.0 (`migrate --from-ref v0.5.5 --old-factorio DIR`) and `bench --check <2.0 ref>` takes
   `--ref-factorio DIR`; the helper mods run in both (`benchmod/compat.lua`). `check` fails for a prototype key Factorio

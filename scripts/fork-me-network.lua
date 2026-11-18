@@ -61,7 +61,7 @@ local md_cache
 local function mod_data()
 	if not md_cache then
 		local md = prototypes.mod_data["fork-me-network"]
-		md_cache = md and md.data or { cells = {}, drive_slots = 10, names = {} }
+		md_cache = md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {} }
 	end
 	return md_cache
 end
@@ -1184,6 +1184,18 @@ local function alias_key(key)
 end
 M.alias_key = alias_key
 
+--- Issue #777: the old drive items of before issue #68 (mod-data `legacy_drives`: me-drive-<tier>, me-fluid-drive-<tier>; hidden
+--- prototypes kept for saves). The load replaces every one a save holds (scripts/fork-me-legacy-drives.lua); one inside a cell
+--- that lay outside a drive then (a cell in a chest, in an ME IO Port, stored in another cell) is replaced here, when that
+--- cell is read: its key becomes the keys of M.legacy_products. Returns the old item's name and quality, or nil. (Every old
+--- name has "drive-" behind "me-": one plain find for any other key.)
+local function legacy_key(key)
+	if key:find("drive-", 4, true) == nil or key:byte(1) ~= 109 then return nil end
+	local name, q = parse_key(key)
+	if (mod_data().legacy_drives or {})[name] then return name, q end
+	return nil
+end
+
 --- the cell's contents as a fresh record (from the tags of a cell item); unknown items are dropped
 local function cell_from_tags(name, tags)
 	local cell = new_cell(name)
@@ -1198,9 +1210,23 @@ local function cell_from_tags(name, tags)
 	for key, count in pairs(stored.items or {}) do
 		if type(key) == "string" and type(count) == "number" and count > 0 then
 			local k = alias_key(key)                      -- a replaced item counts as its replacement (issue #3)
-			if not counts[k] then keys[#keys + 1] = k end
-			counts[k] = (counts[k] or 0) + count
-			if stored.data and stored.data[key] then data[k] = stored.data[key] end
+			local old, old_q = legacy_key(k)
+			if old then
+				--- issue #777: an old drive item counts as its ME Drive, its cells (with its fluid) and its card; the cell may
+				--- hold more than its bytes or types for it (nothing is lost, it takes nothing more until it is below again)
+				local d = stored.data and stored.data[key]
+				for _, def in ipairs(M.legacy_products(old, math.floor(count), old_q, type(d) == "table" and d.tags or nil)) do
+					local dk = def.tags and key_of(def.name, def.quality, helpers.table_to_json({ tags = def.tags }))
+						or key_of(def.name, def.quality)
+					if not counts[dk] then keys[#keys + 1] = dk end
+					counts[dk] = (counts[dk] or 0) + def.count
+					if def.tags then data[dk] = { tags = def.tags } end
+				end
+			else
+				if not counts[k] then keys[#keys + 1] = k end
+				counts[k] = (counts[k] or 0) + count
+				if stored.data and stored.data[key] then data[k] = stored.data[key] end
+			end
 		end
 	end
 	table.sort(keys)
@@ -4586,6 +4612,33 @@ function M.fluid_cells(cell_name, contents)
 	return out
 end
 
+--- Issue #777: the stack definitions that replace `count` old drive items `name` (mod-data `legacy_drives`) of quality
+--- `quality`: the ME Drives (of that quality), per old item its four cells and its extra card (the Acceleration Card of a 256k
+--- drive, if the game has that item). `tags`: the tags of an old fluid drive item, whose fluid (`fork_me_fluids`) goes into
+--- its cells, more cells where four do not hold it. An empty list for any other name.
+function M.legacy_products(name, count, quality, tags)
+	local info = (mod_data().legacy_drives or {})[name]
+	if not info or count < 1 then return {} end
+	local out = { { name = mod_data().names.drive, count = count, quality = quality } }
+	local fluid = info.fluid and type(tags) == "table" and type(tags[info.fluid_tag]) == "table" and tags[info.fluid_tag]
+	local empty = info.cells * count
+	if fluid then
+		local contents = {}
+		for fname, amount in pairs(fluid) do
+			if type(fname) == "string" and type(amount) == "number" then contents[fname] = amount end
+		end
+		local cells = M.fluid_cells(info.cell, contents)
+		for _ = 1, count do
+			for _, def in ipairs(cells) do out[#out + 1] = def end
+		end
+		empty = math.max(0, info.cells - #cells) * count
+	end
+	if empty > 0 then out[#out + 1] = { name = info.cell, count = empty } end
+	local extra = info.extra
+	if extra and item_exists(extra.name) then out[#out + 1] = { name = extra.name, count = extra.count * count } end
+	return out
+end
+
 --------------------------------------------------------------------------------
 --- drive priority and cell partitions (R3; the drive and cell windows, blueprints and settings paste use these)
 --------------------------------------------------------------------------------
@@ -5754,6 +5807,101 @@ function M.clean_removed_items()
 		if items then cell.items, cell.data, cell.full = items, data, nil end
 		cell.partition = M.live_set(cell.partition)
 	end
+end
+
+--- Issue #777 (first: #689, 0.6.0): the old drive items (before issue #68) that the cells of drives and ME Chests hold are
+--- replaced by M.legacy_products, before the graph rebuild of on_configuration_changed computes every network's totals and index
+--- from the cells. The products go into the same drive's item cells where there is room (an empty cell as its plain key, a cell
+--- with contents as a key with its tags, as M.storable keys them); the rest is returned with the drive's place:
+--- { { surface, position, defs } }. Returns the number of old items replaced and that list.
+function M.convert_legacy_drive_keys()
+	local s = state()
+	local found, spills = 0, {}
+	local units = {}
+	for unit in pairs(s.drives) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local d = s.drives[unit]
+		local defs = {}
+		local has
+		for slot = 1, drive_slots() do
+			local cell = d.slots[slot]
+			for key in pairs(cell and cell.items or {}) do
+				if legacy_key(key) then has = true break end
+			end
+			if has then break end
+		end
+		--- (a drive in a network: its cells leave the network's totals and index while they change, and come back after)
+		local net = has and drive_net(s, unit)
+		local counted = {}
+		if net then
+			for slot = 1, drive_slots() do
+				local cid = unit .. ":" .. slot
+				if d.slots[slot] and net.cells[cid] == d.slots[slot] then
+					net_cell(net, cid, d.slots[slot], -1)
+					counted[slot] = true
+				end
+			end
+		end
+		for slot = 1, has and drive_slots() or 0 do
+			local cell = d.slots[slot]
+			local spec = cell and cell_spec(cell.name)
+			if spec and not fluid_cell(spec) and not spec.creative then
+				local keys = {}
+				for key in pairs(cell.items) do
+					if legacy_key(key) then keys[#keys + 1] = key end
+				end
+				table.sort(keys)
+				for _, key in ipairs(keys) do
+					local n = math.floor(cell.items[key])
+					local data = cell.data and cell.data[key]
+					local name, q = parse_key(key)
+					cell_add(cell, spec, key, -cell.items[key])
+					if cell.data then cell.data[key] = nil end
+					for _, def in ipairs(M.legacy_products(name, n, q, type(data) == "table" and data.tags or nil)) do
+						defs[#defs + 1] = def
+					end
+					found = found + n
+				end
+			end
+		end
+		if #defs > 0 then
+			s.dirty[unit] = true
+			local rest = {}
+			for _, def in ipairs(defs) do
+				local key = def.tags and key_of(def.name, def.quality, helpers.table_to_json({ tags = def.tags }))
+					or key_of(def.name, def.quality)
+				local left = def.count
+				for slot = 1, drive_slots() do
+					local cell = d.slots[slot]
+					local spec = cell and cell_spec(cell.name)
+					if left <= 0 then break end
+					if spec and item_exists(def.name) then
+						local n = math.min(left, math.floor(cell_room(cell, spec, key)))
+						if n > 0 then
+							cell_add(cell, spec, key, n)
+							if def.tags then cell.data[key] = { tags = def.tags } end
+							left = left - n
+						end
+					end
+				end
+				if left > 0 then
+					local copy = {}
+					for k, v in pairs(def) do copy[k] = v end
+					copy.count = left
+					rest[#rest + 1] = copy
+				end
+			end
+			if #rest > 0 then
+				local e = d.entity
+				local surface = e and e.valid and e.surface or (d.surface and game.surfaces[d.surface])
+				local position = e and e.valid and e.position or d.position
+				if surface and position then spills[#spills + 1] = { surface = surface, position = position, defs = rest } end
+			end
+		end
+		for slot in pairs(counted) do net_cell(net, unit .. ":" .. slot, d.slots[slot], 1) end
+	end
+	return found, spills
 end
 
 --- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same

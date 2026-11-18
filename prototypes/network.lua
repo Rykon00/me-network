@@ -93,7 +93,7 @@ local ROWS = {
 	"fork-me-capacity-speed-cards", -- the capacity and speed cards
 	"fork-me-wireless",             -- the wireless access point, booster, terminal, module and the charger
 	"fork-me-components",           -- the storage housing and the storage components
-	"fork-me-fluid-drives",         -- (empty since issue #690 removed the old fluid drive items; kept for other mods)
+	"fork-me-fluid-drives",         -- (only the hidden old fluid drive items)
 }
 for i, name in ipairs(ROWS) do
 	data:extend({ { type = "item-subgroup", name = name, group = ME.GROUP, order = string.format("%02d", i) } })
@@ -197,6 +197,33 @@ for i, c in ipairs(CELLS) do
 	cell_data[cell] = { tier = c.tier, bytes = bytes, per_type = per_type, types = MAX_TYPES }
 	item.localised_description = { "item-description.fork-me-storage-cell", c.tier, tostring(bytes),
 		tostring(MAX_TYPES), tostring((bytes - per_type) * 8) }
+end
+
+--- The old drive items of before issue #68 (one item per tier: the chassis with four cells built in), for saves only: hidden,
+--- no recipe, not placeable. A save of 0.5.x may hold them in inventories (0.5.0 left them there); without these prototypes
+--- the engine would delete them when the save is loaded, before any script sees them. The load replaces each by an ME Drive
+--- with its cells (scripts/fork-me-legacy-drives.lua, issue #777). 0.7.0 had removed them (issue #690) and refused such saves.
+--- SAVE MIGRATIONS ARE NOT REMOVED (CONTRIBUTING.md): these prototypes and that conversion stay.
+--- `extra`: the part of the old 256k recipe that is given back, if that item exists (Gregtorio's Acceleration Card).
+local OLD_CELLS_PER_DRIVE = 4
+local legacy_drives = {}
+for i, tier in ipairs({ "1k", "4k", "16k", "64k", "256k" }) do
+	local old = "me-drive-" .. tier
+	ME.add_item{
+		type = "item",
+		name = old,
+		icon = ICON_PATH .. "fork/" .. old .. ".png",
+		icon_size = 32,
+		subgroup = "fork-me-drives",
+		order = "z" .. string.format("%02d", i),
+		stack_size = 10,
+		hidden = true,
+		fields = { auto_recycle = false },                -- (no recycling recipe: it would give back a quarter of them)
+		localised_description = { "item-description.fork-me-legacy-drive", { "item-name.me-" .. tier .. "-storage-cell" } },
+		recipe = false,
+	}
+	legacy_drives[old] = { cell = "me-" .. tier .. "-storage-cell", cells = OLD_CELLS_PER_DRIVE,
+		extra = tier == "256k" and { name = "acceleration-card", count = 1 } or nil }
 end
 
 --- Issue #414: AE2-Unofficial's Singularity cell (ItemExtremeStorageCell "Singularity": one type, Long.MAX_VALUE / 16 bytes,
@@ -1014,6 +1041,7 @@ data:extend({ {
 	name = "fork-me-network",
 	data = {
 		cells = cell_data,
+		legacy_drives = legacy_drives,                        -- (the old drive items: scripts/fork-me-legacy-drives.lua)
 		drive_slots = DRIVE_SLOTS,
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
@@ -1305,12 +1333,4 @@ do
 			scale = 0.5, flags = { "icon" } }
 	end
 	data:extend(list)
-end
-
---- Issue #690: the old drive items of before issue #68 (me-drive-<tier>, me-fluid-drive-<tier>) are gone. 0.6.0 replaced every one
---- a save held by an ME Drive with its cells (issue #689), and saves of older versions are refused (control.lua, CUT_OFF). What
---- the network may still store of them (an old item inside a loose cell, which 0.6.0 did not open) counts as an ME Drive.
-for _, tier in ipairs({ "1k", "4k", "16k", "64k", "256k" }) do
-	ME.replace_item("me-drive-" .. tier, DRIVE)
-	ME.replace_item("me-fluid-drive-" .. tier, DRIVE)
 end
