@@ -5005,3 +5005,32 @@ green are added; twelve signals on nine filters apply in the order a vanilla ins
 its own filters; without a wire and without the mode the bus's own filter works; a blueprint copy, a settings paste and a
 clone keep the mode; the import bus takes only what its wire names and nothing while it names nothing; an export bus wired to
 an assembling machine that reads its ingredients exports exactly those.
+
+## Parametrised blueprints: the mirror (issue #781)
+
+No tick, no queue, no state: `scripts/fork-me-mirror.lua` works when a blueprint is made (one `get_blueprint_entities` and,
+when the blueprint holds a mirrored ME block, one `set_blueprint_entities`) and when an entity is built (`mirror.resolve`
+before the build handlers: one table lookup by name for anything that is not a bus, a level emitter or a circuit interface;
+for those one `get_control_behavior` and, only when a mirror is there, the read of its records or sections and their
+removal). A block in the world never keeps the mirror, so the engine has nothing more to update.
+
+`bench --check <the commit before> --sizes 1000` (three rounds in turns; the build burst builds 1000 ME blocks in one tick,
+import and storage buses among them, each through `mirror.resolve`):
+
+| | before | #781 |
+|---|---|---|
+| script avg / p99 ms | 0.321 / 1.80 | 0.321 / 1.83 |
+| burst build / remove ms | 86.1 / 80.6 | 87.2 / 79.6 |
+| Lua alloc KB per tick | 32.03 | 32.03 |
+| items/s | 33 270 | 33 270 |
+
+`regressions beyond the noise: 0`.
+
+**The test** (`params.lua`): the mirror in the blueprint (a bus's filters as display panel records, a level emitter's row as
+an inactive section 2, an advanced emitter's rows 1 and 3 as sections 2 and 4, the circuit interface's filters as slots, none
+for a threshold above 32 bits); the game's replacement done by hand on the blueprint (iron plate to gear, 100 to 250), built
+as ghosts with the build event (the ghosts' tags resolved, their mirror gone) and built at once: the blocks have the replaced
+filters, resources and thresholds, what was not replaced is kept (the other filters, a fluid filter's temperature, the modes),
+no block keeps a record with an icon or a second section; nothing replaced gives the settings as they were; a blueprint
+without the mirror is built from its tags. Every blueprint round trip of the other tests runs through the mirror too. The
+dialog itself was checked in a client (issue #781): ghosts and blocks pasted over got the chosen item and number.
