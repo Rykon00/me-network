@@ -19,7 +19,8 @@ The player guide is `docs/AE2.md`, the design record `docs/ME-REWORK.md`, the da
 
 **Old saves:** since 0.5.1 a save is converted only from ME Network 0.5.0 on (issue #146). A save of an older version
 (ME Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older) is refused with a message when it loads; load it
-once with ME Network 0.5.0, save it, then update (`docs/AE2.md`, "Old saves").
+once with ME Network 0.5.0, save it, then update (`docs/AE2.md`, "Old saves"). A save of 0.5.0 or later loads with
+every later version: **save migrations are never removed** (issue #777, `CONTRIBUTING.md`).
 
 ## Layout
 
@@ -112,7 +113,7 @@ python tools/dev_link.py                        # once: the working copy (and th
 python tools/devcheck/devcheck.py setup         # once (see tools/devcheck/README.md)
 python tools/devcheck/devcheck.py all           # before every pull request: RESULT: OK
 python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
-python tools/devcheck/devcheck.py migrate --from-ref v0.5.0   # a save of an older version (changes to saved state)
+python tools/devcheck/devcheck.py migrate --from-ref v0.5.11  # a save of an older version (changes to saved state)
 python tools/devcheck/devcheck.py bench         # script time, throughput and latencies at 100, 1000 and 5000 endpoints
 ```
 

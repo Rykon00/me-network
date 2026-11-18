@@ -3209,8 +3209,9 @@ pattern migration of issue #80 (`migrate_providers`, `migrate_job`) and the old 
 
 **Kept:** the old drive items (`me-drive-<tier>`, `me-fluid-drive-<tier>`, hidden): 0.5.0 never converted them in
 inventories, so a 0.5.0 save may still hold them; placing one gives an ME Drive with its cells (and its fluid). Issue
-#689: 0.6.0 replaced every one a save held by an ME Drive with its cells; issue #690: 0.7.0 removed them (and refuses
-saves from before 0.6.0; a stored key of one counts as `me-drive`). The item
+#689: 0.6.0 replaced every one a save held by an ME Drive with its cells; issue #690: 0.7.0 removed them and refused
+saves from before 0.6.0; issue #777: 0.7.1 brought them back for good (hidden, not placeable) with the conversion, see
+"Old drive items" below. The item
 names of the old fluid blocks stay in the mod-data `fork-me-fluids` (`unified.items`) for the alias of stored keys (a
 cell's tags or a pattern that still names one counts it as the unified item) and in `ME_NETWORK.removed` (a recipe of
 another mod that makes one would stop the game from loading now: `data-final-fixes.lua` drops it). A stray item of an
@@ -3224,7 +3225,23 @@ calls `error()` with a message that names the version and says to load the save 
 save file is untouched. A Gregtorio Continued 0.4.x save has no me-network version: its state waits in Gregtorio for
 the hand-over (`gregtorio-me-handover.pending`), so `on_init` (and `on_configuration_changed`) refuse it the same way.
 
-**Test:** `devcheck.py migrate --from-ref v0.5.0` (the default) converts as before; a ref before the cut-off makes a
+**Old drive items (issue #777, 0.7.1).** Save migrations are not removed (CONTRIBUTING.md). 0.7.0's cut-off 0.6.0
+left players of Gregtorio Continued (which requires me-network 0.7.0) with no version that loads a 0.5.x save: the game
+does not load 0.6.0 next to it. So the ten old item prototypes are back, hidden, without a recipe and without a
+`place_result`, only so that the engine keeps the items of such a save until a script runs.
+`scripts/fork-me-legacy-drives.lua` replaces every one in `on_configuration_changed`, once per save
+(`storage.fork_me_legacy_drives == 2`; a save of 0.6.x or 0.7.0 is scanned once more too, 0.6.0 did not open loose cells): in the cells
+of the drives and ME Chests (`M.convert_legacy_drive_keys`, before the graph rebuild), in the inventories of entities and
+players, cursors, inserter hands, on belts, on the ground and in the mod's script inventories. Each becomes an ME Drive of
+its quality, its four cells (a fluid drive's fluid in fluid cells, more than four when needed) and the Acceleration Card
+of a 256k drive when the game has that item (`M.legacy_products`). An old item inside a cell that lies outside a drive is
+replaced when that cell is read (`cell_from_tags`: the key becomes the products' keys; the cell may be over its bytes for
+it). Not a file in `migrations/`: a Lua migration runs before `on_configuration_changed`, so before the refusal of issue
+#146, the hand-over, the wired hosts (#628) and the cleaning of removed keys (#503), whose results the conversion writes
+into. No `on_built` branch: the items cannot be placed. The cut-off is 0.5.0 again and is not raised.
+Test: `devcheck.py migrate` (default `v0.5.11`, `migratemod/legacy.lua`), the last stage of `all`.
+
+**Test:** `devcheck.py migrate --from-ref v0.5.0` converts as before; a ref before the cut-off makes a
 save with nothing in it and must be refused with the message (the helper `migratemod` lost the 0.1.0 scenario, the jobs
 on legacy CPUs of 0.2.0 and the 3x3 assemblers of issue #131). Gregtorio's own `devcheck.py migrate` from old Gregtorio
 versions needs the intermediate load with me-network 0.5.0 (a Gregtorio follow-up).

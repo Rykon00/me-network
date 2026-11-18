@@ -28,8 +28,8 @@
 --- Checks the import and export totals, a fluid cell taken out (its fluid in the tags), stored in the network and
 --- put back, the drive mined by robots (cells with their fluid in the storage chest) and rebuilt, full cells, a
 --- reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both. ME fluid cells
---- (fluid_cell_test): a mixed drive, tags, capacity, the terminal with fluids, the fluid buses, old fluid drive
---- items placed. The migration of old Gregtorio saves is tested by Gregtorio's devcheck (migrate).
+--- (fluid_cell_test): a mixed drive, tags, capacity, the terminal with fluids, the fluid buses, the old drive
+--- items of a save replaced (issue #777). The migration of old Gregtorio saves is tested by Gregtorio's devcheck (migrate).
 --- Issue #38: the level maintainer (one job at a time, stops at N, circuit amount and condition), crafting
 --- CPU tiers (two jobs at once), the circuit interface (network contents on the wire) and the settings of
 --- maintainers, circuit and fluid interfaces in blueprints, settings paste and clones (setup_issue38_tests).
@@ -2931,7 +2931,8 @@ end
 --- of the machine grid: a drive with an item cell and a fluid cell (each takes only its kind), a fluid cell taken
 --- out with its fluid in the tags and put back, the capacity of a fluid cell, the terminal's grid with fluids
 --- (search, no taking by hand), the fluid import bus emptying a tank and the fluid export bus filling one, and
---- old fluid drive items with fluid in their tags placed as ME Drives (four cells, more when needed).
+--- the old drive items a save holds (issue #777: in a chest, on the ground, in the network, inside a loose cell) replaced
+--- by ME Drives with their cells, a fluid drive's fluid in fluid cells (four, more when needed).
 --------------------------------------------------------------------------------
 
 local FX, FY = 200, 160
@@ -3017,8 +3018,66 @@ function fluid_cell_test()
 		"export bus: moved " .. moved .. ", tank " .. t2.get_fluid_count("water") .. ", network " .. water())
 	local bf = remote.call(IO, "get_bus", eb)
 	expect(bf and serpent.line(bf.filters) == serpent.line({ "fluid/water" }), "fluid bus filters " .. serpent.line(bf))
+	--- issue #777 (first #689): the conversion of a save's old drive items: in a chest, on the ground, in the network. (The load
+	--- of a real save of 0.5.11 is `devcheck.py migrate`, part of `all`; here the same conversion runs on a map of this version.)
+	local chest = s.create_entity{ name = "iron-chest", position = { FX + 20.5, FY + 6.5 }, force = "player" }
+	local ci = chest.get_inventory(defines.inventory.chest)
+	ci[1].set_stack{ name = "me-drive-1k", count = 2 }
+	ci[2].set_stack{ name = "me-fluid-drive-1k", count = 1 }
+	ci[2].tags = { fork_me_fluids = { water = 40000 } }
+	ci[3].set_stack{ name = "me-drive-256k", count = 1 }
+	local gpos = { FX + 24.5, FY + 6.5 }
+	s.create_entity{ name = "item-on-ground", position = gpos, stack = { name = "me-drive-4k", count = 1 } }
+	local net_drives = remote.call(NET, "count", t, "me-drive")
+	local net_cells = remote.call(NET, "count", t, "me-1k-storage-cell")
+	expect(remote.call(NET, "insert", t, "me-drive-1k", 1) == 1, "an old drive item not stored in the network")
+	local converted = remote.call("gregtorio-me-legacy-drives", "convert")
+	expect(converted == 6, "old drive items converted: " .. tostring(converted) .. " (expected 6)")
+	local cc = {}
+	for i = 1, #ci do
+		if ci[i].valid_for_read then cc[ci[i].name] = (cc[ci[i].name] or 0) + ci[i].count end
+	end
+	expect(ci[1].valid_for_read and ci[1].name == "me-drive" and ci[1].count == 2, "the drive in the old item's slot: " .. serpent.line(cc))
+	expect(cc["me-drive"] == 4 and cc["me-1k-storage-cell"] == 8 and cc["me-256k-storage-cell"] == 4
+		and (cc["me-1k-fluid-storage-cell"] or 0) >= 5 and not cc["me-drive-1k"] and not cc["me-fluid-drive-1k"]
+		and not cc["me-drive-256k"] and (not prototypes.item["acceleration-card"] or cc["acceleration-card"] == 1),
+		"chest after the conversion: " .. serpent.line(cc))
+	local fluid_total = 0
+	for i = 1, #ci do
+		local st = ci[i]
+		if st.valid_for_read and st.name == "me-1k-fluid-storage-cell" then
+			local stored = st.tags and st.tags.fork_me_cell
+			for _, v in pairs(stored and stored.items or {}) do fluid_total = fluid_total + v end
+		end
+	end
+	expect(near(fluid_total, 40000), "the old fluid drive's fluid in its cells: " .. fluid_total)
+	local gc = {}
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do
+		gc[g.stack.name] = (gc[g.stack.name] or 0) + g.stack.count
+	end
+	expect(gc["me-drive"] == 1 and gc["me-4k-storage-cell"] == 4 and not gc["me-drive-4k"], "ground after the conversion: " .. serpent.line(gc))
+	expect(remote.call(NET, "count", t, "me-drive-1k") == 0 and remote.call(NET, "count", t, "me-drive") == net_drives + 1
+		and remote.call(NET, "count", t, "me-1k-storage-cell") == net_cells + 4,
+		"network after the conversion: drives " .. remote.call(NET, "count", t, "me-drive") .. ", cells "
+		.. remote.call(NET, "count", t, "me-1k-storage-cell") .. ", old " .. remote.call(NET, "count", t, "me-drive-1k"))
+	expect(remote.call("gregtorio-me-legacy-drives", "convert") == 0, "a second conversion found old items")
+	--- an old item inside a cell that lies outside a drive is replaced when the cell is read: put into a drive, its key is the
+	--- ME Drive and its four cells (the cell holds more types than before and nothing is lost)
+	local ld = s.create_entity{ name = "me-drive", position = { FX + 22.5, FY + 10.5 }, force = "player", raise_built = true }
+	ci.clear()
+	ci[1].set_stack{ name = "me-1k-storage-cell", count = 1 }
+	ci[1].tags = { fork_me_cell = { items = { ["me-drive-16k"] = 3, ["iron-plate"] = 7 } } }
+	expect(remote.call(NET, "insert_cell", ld, ci[1], 1) == 1, "the loose cell with an old item did not go into a drive")
+	local li = remote.call(NET, "drive", ld)
+	local lc = li and li[1] and li[1].items or {}
+	expect(lc["me-drive"] == 3 and lc["me-16k-storage-cell"] == 12 and lc["iron-plate"] == 7 and not lc["me-drive-16k"],
+		"the loose cell's old item when the cell is read: " .. serpent.line(lc))
+	ld.destroy({ raise_destroy = true })
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = { FX + 22.5, FY + 10.5 }, radius = 3 }) do g.destroy() end
+	chest.destroy()
+	for _, g in pairs(s.find_entities_filtered{ name = "item-on-ground", position = gpos, radius = 3 }) do g.destroy() end
 	inv.destroy()
-	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses")
+	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses, old drive items replaced")
 end
 
 --- Issue #68 step R3: cell partitions and drive priorities (insertion and extraction order), drive settings
@@ -3698,7 +3757,7 @@ end
 --- into the input inventory, the fluid into an input box), an import bus on such a machine (the output inventory and
 --- an output box; the input box is left alone); a storage bus that faces a chest, then a tank (it becomes the fluid
 --- side), then a cable; mixed filters; the old fluid blocks and the old entities of before the ME rework are gone
---- (issue #146), and so are the old drive items (issue #690).
+--- (issue #146); the old drive items are hidden items for saves only (issue #777).
 --------------------------------------------------------------------------------
 
 local UX, UY = 300, 240
@@ -3892,7 +3951,7 @@ function unified_test()
 	si = remote.call("gregtorio-me-storagebus", "info", sb)
 	expect(si and si.status == "me-target" and si.side == "item" and fluid("lubricant") == 0, "rotated onto the cable " .. serpent.line(si))
 
-	--- the old fluid blocks are gone (issue #146): no entity, no item; the old drive items too (issue #690)
+	--- the old fluid blocks are gone (issue #146): no entity, no item
 	for _, old_name in pairs({ "me-fluid-interface", "me-fluid-import-bus", "me-fluid-export-bus", "me-fluid-storage-bus" }) do
 		expect(prototypes.entity[old_name] == nil and prototypes.item[old_name] == nil, old_name .. " still exists")
 		expect(prototypes.recipe[old_name] == nil, "the recipe " .. old_name .. " exists")
@@ -3901,9 +3960,19 @@ function unified_test()
 		local p = prototypes.entity[old_name]
 		expect(p == nil, "the old entity " .. old_name .. " still exists")
 	end
-	--- issue #690: the old drive items are gone as well
+	--- issue #777: the old drive items stay as prototypes for saves (the engine would delete them at the load otherwise): hidden,
+	--- not placeable, made by no recipe
 	for _, old_name in pairs({ "me-drive-1k", "me-drive-256k", "me-fluid-drive-1k", "me-fluid-drive-256k" }) do
-		expect(prototypes.item[old_name] == nil, "the old drive item " .. old_name .. " still exists")
+		local p = prototypes.item[old_name]
+		expect(p and p.hidden and p.place_result == nil, "the old drive item " .. old_name .. " (hidden, not placeable): "
+			.. serpent.line(p and { p.hidden, p.place_result and p.place_result.name }))
+		local made
+		for rname, r in pairs(prototypes.recipe) do
+			for _, pr in pairs(r.products) do
+				if pr.type == "item" and pr.name == old_name then made = rname end
+			end
+		end
+		expect(made == nil, "a recipe makes the old drive item " .. old_name .. ": " .. tostring(made))
 	end
 	for _, eff in pairs(prototypes.technology["me-fluid-storage"].effects) do
 		expect(not (eff.recipe and eff.recipe:find("^me%-fluid%-") and not eff.recipe:find("cell")), "me-fluid-storage unlocks " .. tostring(eff.recipe))

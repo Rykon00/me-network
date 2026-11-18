@@ -13,6 +13,11 @@ local LIF = "gregtorio-me-logistic-interface"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
 --- me-network issue #628: the old buses and providers become the wired blocks (wired.lua)
 local WIRED = require("wired")
+--- me-network issue #777: the old drive items of a save of 0.5.x become ME Drives with their cells (legacy.lua)
+local LEGACY = require("legacy")
+--- (`all --with-gregtorio`: the old save is loaded with Gregtorio Continued added; the helper's other checks are written for
+--- the vanilla recipes and run without it)
+local GREGTORIO = script.active_mods["gregtorio-continued"] ~= nil
 --- me-network issue #503: the stage of the helper's test items (settings.lua, data.lua)
 local ITEMS = settings.startup["zz-me-network-devcheck-migrate-items"].value
 
@@ -635,12 +640,25 @@ script.on_init(function()
 	setup_unified(s)
 	local fails, what = WIRED.setup(s)
 	L("WIRED-SETUP", (#fails == 0 and "ok" or "failed") .. " (" .. what .. ")" .. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
+	--- me-network issue #777: the old drive items, in a version that has them
+	if LEGACY.has_old_items() then
+		local lfails, lwhat = LEGACY.setup(s)
+		storage.mig.legacy = true
+		L("LEGACY-SETUP", (#lfails == 0 and "ok" or "failed") .. " (" .. lwhat .. ")" .. (#lfails > 0 and (": " .. table.concat(lfails, "; ")) or ""))
+	end
 end)
 
 script.on_nth_tick(10, function()
 	local st = storage.mig
 	if st and st.unified then
 		st.start = st.start or game.tick
+		if GREGTORIO then
+			if st.legacy and not st.legacy_done and game.tick >= st.start + 150 then
+				st.legacy_done = true
+				LEGACY.check()
+			end
+			return
+		end
 		if st.ticked and not st.wired_done and game.tick >= st.start + 150 then st.wired_done = WIRED.check(st) end
 		if st.ticked or game.tick < st.start + 150 then return end
 		st.ticked = true
@@ -648,6 +666,7 @@ script.on_nth_tick(10, function()
 		st.wired_done = WIRED.check(st)
 		if st.items and ITEMS == "new" then check_items(st) end
 		if st.lif then check_lif(st) end
+		if st.legacy then LEGACY.check() end
 		local after = fluid_totals(game.surfaces[1])
 		local ok, diff = same_totals(st.before, after)
 		if not ok then L("FAIL", "fluid differs: " .. diff) end
