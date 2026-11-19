@@ -47,6 +47,10 @@ data:extend({
 	int("me-network-bus-fluid-per-second", "g", 4000, 1, 10000000),
 	int("me-network-idle-limit", "h", 300, 15, 3600),
 	int("me-network-storage-bus-idle-limit", "i", 120, 15, 3600),
+	--- the import bus and the storage bus take an item out of a chest from its stacks in turns, not from the first slot on
+	--- (N.remove_even); off: one removal by count, the cheapest
+	{ type = "bool-setting", name = "me-network-bus-take-evenly", setting_type = "runtime-global", order = "j",
+		default_value = true },
 })
 
 --- Issue #680: the power use of the ME blocks, startup settings in kW (the defaults are the numbers of before). The data stage

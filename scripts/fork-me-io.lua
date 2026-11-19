@@ -1613,6 +1613,7 @@ local function import_items(rec, net, t, cap, info)
 	local unit = rec.entity.unit_number
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	local B = N.bound(inv)                                    -- (its methods: issue #115)
+	local even = Sched.setting("bus_even")
 	for _, c in pairs(B.get_contents()) do
 		if import_hit(rec, all, gf, set, c.name, c.quality) then
 			held = held + c.count
@@ -1620,8 +1621,13 @@ local function import_items(rec, net, t, cap, info)
 			if moved < cap then
 				local q = c.quality or "normal"
 				if by_count(c.name, q) then
-					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, q, math.min(c.count, cap - moved)
-					local removed = B.remove(Q_REMOVE)
+					local removed
+					if even then                                 -- from its stacks in turns, not from the top left
+						removed = N.remove_even(inv, c.name, q, math.min(c.count, cap - moved), rec, false, c.count)
+					else
+						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, q, math.min(c.count, cap - moved)
+						removed = B.remove(Q_REMOVE)
+					end
 					if removed > 0 then
 						local stored = N.insert(net, c.name, q, removed)
 						if stored < removed then                  -- the network is full: the rest goes back
@@ -1647,8 +1653,18 @@ local function import_items(rec, net, t, cap, info)
 		end
 	end
 	if stacks then
-		for i = 1, #inv do
-			if moved >= cap then break end
+		--- the stacks that go one by one (data, damage, spoilage): with the even setting the walk starts where the last one
+		--- stopped (`rec.even_stack`), so the slots take turns instead of the first ones always going first
+		local size = #inv
+		local start = even and rec.even_stack or 1
+		if start > size then start = 1 end
+		for j = 0, size - 1 do
+			if moved >= cap then
+				if even then rec.even_stack = (start + j - 1) % size + 1 end
+				break
+			end
+			local i = start + j
+			if i > size then i = i - size end
 			local stack = inv[i]
 			if stack.valid_for_read and import_hit(rec, all, gf, set, stack.name, stack.quality.name)
 				and not by_count(stack.name, stack.quality.name) then

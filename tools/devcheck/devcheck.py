@@ -1352,6 +1352,7 @@ RUNTIME_TESTS = (
     ("STICKY", "ME Sticky Card (issue #193)"),
     ("CHEST", "ME Chest (issue #229)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
+    ("EVENLY", "import and storage bus take evenly from the stacks"),
     ("LSBUS", "ME logistic storage bus (issue #506)"),
     ("LIF", "ME logistic interface (issue #531)"),
     ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
@@ -2185,7 +2186,10 @@ def runtime_settings(values):
         pass
     glob = {k: v for k, v in (root.get("runtime-global") or {}).items() if not k.startswith(NAME + "-")}
     for k, v in values.items():
-        glob[k] = {"value": ("int", 6, int(v))}
+        if str(v).lower() in ("true", "false"):        # (a bool setting: me-network-bus-take-evenly)
+            glob[k] = {"value": str(v).lower() == "true"}
+        else:
+            glob[k] = {"value": ("int", 6, int(v))}
     root.setdefault("startup", {})
     root["runtime-global"] = glob
     root.setdefault("runtime-per-user", {})
@@ -2458,7 +2462,7 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
     """the map of one scene, made with `mod_dir` (None: the working copy); returns (result skeleton, error)"""
     prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio,
                  with_mods=getattr(a, "with_mod", None) or ())
-    runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
+    runtime_settings({k: v for k, v in (x.split("=", 1) for x in a.set or [])})
     log, err = create_map(mapfile, *seed_args(a))
     setup = bench_json(log, "SETUP")
     build = re.search(r"DEVCHECK-BENCH-BUILD (.*)", log)
@@ -2480,7 +2484,7 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
                  with_mods=getattr(a, "with_mod", None) or ())
     # (issue #487: mod-settings.dat in the version of the Factorio of this run: the 2.0 reference of --ref-factorio does
     # not read the file a 2.1 run wrote)
-    runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
+    runtime_settings({k: v for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
         + (GHOST_WAIT if cfg.get("ghosts") else 0) + (CABLE_GHOST_TICKS if cfg.get("cable_ghosts") else 0) \

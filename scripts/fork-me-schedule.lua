@@ -65,10 +65,11 @@ local SETTINGS = {
 	bus_fluid = "me-network-bus-fluid-per-second",
 	idle = "me-network-idle-limit",
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
+	bus_even = "me-network-bus-take-evenly",
 }
 M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, logistic_storage_bus = 1, logistic_storage_bus_max = 2,
 	logistic_interface = 2, logistic_interface_max = 8, logistic_interface_auto = 20, logistic_demand = 2, logistic_interface_stacks = 1, logistic_construction = 10, wireless_refill = 1, wireless_refill_max = 4, io_port = 2, io_port_max = 8, p2p = 2, p2p_max = 8, maintainer = 4, maintainer_max = 12,
-	circuit = 10, jobs = 1, jobs_max = 2, job_ops = 1024, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
+	circuit = 10, jobs = 1, jobs_max = 2, job_ops = 1024, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120, bus_even = true }
 local values
 
 function M.setting(key)
@@ -76,7 +77,7 @@ function M.setting(key)
 		values = {}
 		for k, name in pairs(SETTINGS) do
 			local s = settings.global[name]
-			values[k] = s and s.value or M.DEFAULTS[k]
+			if s then values[k] = s.value else values[k] = M.DEFAULTS[k] end   -- (a bool setting may be false)
 		end
 	end
 	return values[key]
