@@ -272,19 +272,24 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if walked(name) then return N.remove_whole(inv, name, q, count) end
+		local even = Sched.setting("bus_even")              -- (from the stacks in turns, not from the top left)
+		if walked(name) then
+			if even then return N.remove_even(inv, name, q, count, rec, true) end
+			return N.remove_whole(inv, name, q, count)
+		end
 		if placeable(name) then
 			--- issue #84: the whole stacks only; a damaged one stays. The bus then shows only the whole ones (`rec.dmg`, until
 			--- a visit finds no damaged stack of the key any more): the count of the engine cannot tell them apart and would
 			--- show items that cannot be handed out. A walk of the stacks is paid for by an extraction and by a bus that has
 			--- found damage, never by a visit of a bus without
-			local got = N.remove_whole(inv, name, q, count)
+			local got = even and N.remove_even(inv, name, q, count, rec, true) or N.remove_whole(inv, name, q, count)
 			if got < count and inv.get_item_count{ name = name, quality = q } > 0 then
 				rec.dmg = rec.dmg or {}
 				rec.dmg[key] = true
 			end
 			return got
 		end
+		if even then return N.remove_even(inv, name, q, count, rec, false) end
 		Q.name, Q.quality, Q.count = name, q, count
 		return N.bound(inv).remove(Q)
 	end,
@@ -1046,6 +1051,11 @@ remote.add_interface("gregtorio-me-storagebus", {
 			rereading = rec.rereading == true, rr = rec.rr }
 	end,
 	--- one visit now (what the I/O step does)
+	--- the map setting "Buses take evenly from the stacks" (the runtime test: only the mod that made a setting may change it)
+	set_take_evenly = function(on)
+		settings.global["me-network-bus-take-evenly"] = { value = on == true }
+		Sched.on_setting_changed()
+	end,
 	visit = function(entity)
 		local rec = rec_of(entity)
 		if rec then M.visit(rec) end

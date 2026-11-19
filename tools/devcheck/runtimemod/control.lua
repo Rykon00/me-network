@@ -1170,6 +1170,9 @@ remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_r
 --- me-network issue #155: the storage bus's filter mode (sbusmode.lua)
 sbusmode155 = require("sbusmode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- the import and storage bus take from the stacks of a chest in turns (evenly.lua)
+evenly = require("evenly")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #506: the ME Logistic Storage Bus (lsbus.lua)
 lsbus506 = require("lsbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1472,6 +1475,7 @@ local function tests_running()
 	togglebus355.running(check)
 	markeddecon.running(check)
 	sbusmode155.running(check)
+	evenly.running(check)
 	lsbus506.running(check)
 	lif531.running(check)
 	lifauto537.running(check)
@@ -2494,6 +2498,7 @@ script.on_nth_tick(10, function()
 	togglebus355.tick()
 	markeddecon.tick()
 	sbusmode155.tick()
+	evenly.tick()
 	lsbus506.tick()
 	lif531.tick()
 	lifauto537.tick()
@@ -5517,6 +5522,7 @@ script.on_init(function()
 	for _, f in pairs(togglebus355.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(markeddecon.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(evenly.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end

@@ -5034,3 +5034,35 @@ filters, resources and thresholds, what was not replaced is kept (the other filt
 no block keeps a record with an icon or a second section; nothing replaced gives the settings as they were; a blueprint
 without the mirror is built from its tags. Every blueprint round trip of the other tests runs through the mirror too. The
 dialog itself was checked in a client (issue #781): ghosts and blocks pasted over got the chosen item and number.
+
+## Buses take evenly from the stacks (N.remove_even)
+
+The ME Import Bus and the ME Storage Bus took an item out of a chest with one `LuaInventory.remove` (or `N.remove_whole`'s
+walk from slot 1), which empties the slots one by one from the top left. `N.remove_even` takes it from the stacks in turns:
+from the slot cursor of the bus (`rec.even_at`) the next 4 stacks of the key (more when they hold less than the visit
+takes), an equal share from each, and the cursor moves behind the last one that gave something. The stacks that go one by
+one through `N.insert_partial` (spoiling items, tools, items that can be damaged) start where the last visit stopped
+(`rec.even_stack`). The map setting `me-network-bus-take-evenly` (on by default) switches both back to the old removal.
+
+Cost: a removal reads the slots from the cursor up to the fourth stack of the key (on a chest of one item about 4 slots:
+`valid_for_read`, name and quality per slot) and writes each stack that gives; a visit that takes all of a key is still one
+`remove`, an inventory of one slot (a furnace's output) too. A first version walked all slots of the chest per removal:
+`bench --check origin/main --sizes 1000` gave 0.399 against 0.591 ms script average in its first round, so the walk is
+bounded by the window.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; a shared cloud machine, so the noise is large):
+
+| | main | even (on) | even (off, `--set me-network-bus-take-evenly=false`) |
+|---|---|---|---|
+| 1000: script avg / p99 ms | 0.466 / 2.65 | 0.481 / 2.70 | |
+| 5000: script avg / p99 ms | 1.114 / 3.94 | 1.149 / 3.88 | 1.186 / 4.20 (main 1.108 / 3.87 in that run) |
+| 5000: Lua alloc KB per tick | 53.15 | 53.48 | |
+| 5000: items/s | 165 100 | 165 100 | |
+
+With the setting off the code path is the old one, and it measured higher than with the setting on: the differences are
+the machine's noise, not the removal. Throughput is identical per kind of endpoint.
+
+**The test** (`evenly.lua`): a storage bus on a chest with four stacks of iron in scattered slots, the network takes 40: each
+stack gives 10; two more and two more: the one item more goes round; eight stacks and two removals of 20: every stack gave 5
+(the window); transport belts (whole stacks): an equal share each; an import bus visit over three stacks of copper leaves
+them within one item of each other; with the setting off the stacks do not go down together.
