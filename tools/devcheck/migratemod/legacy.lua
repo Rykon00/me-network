@@ -35,8 +35,12 @@ local function place(s, fails, name, x, y, extra)
 	return e
 end
 
---- does this version have the old drive items?
+--- does a save of this version hold the old drive items unconverted? Only 0.5.x: 0.6.0 converted them itself, 0.7.0 had no
+--- such items, and since 0.7.1 the items exist again only so that an old save's can be converted (a map started there
+--- holds none and is marked as converted, so old items put into it would stay: `migrate --from-ref v0.7.2` failed on that)
 function M.has_old_items()
+	local major, minor = (script.active_mods["me-network"] or ""):match("^(%d+)%.(%d+)")
+	if not (major and tonumber(major) == 0 and tonumber(minor) < 6) then return false end
 	return prototypes.item["me-drive-1k"] ~= nil and prototypes.item["me-fluid-drive-1k"] ~= nil
 end
 

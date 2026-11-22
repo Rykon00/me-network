@@ -3869,6 +3869,81 @@ function M.remove_whole(inv, name, quality, count)
 	return count - left
 end
 
+--- Take up to `count` items of `name` and `quality` out of an inventory spread over its stacks of them in turns, not
+--- from the first slot on: the import bus and the storage bus (a chest that holds an item in several stacks keeps them
+--- at about the same height instead of emptying the slots one by one from the top left). The walk starts at the slot
+--- cursor `rec.even_at` and takes the next EVEN_WINDOW stacks of the key (more when they hold less than `count`); each
+--- gives an equal share, what a stack cannot give is shared by the others, and the cursor moves to the slot after the
+--- last stack that gave something, so the next removal starts with the stacks behind it and over a few removals every
+--- stack goes down by about the same. The window keeps a removal at a few slot reads on a full chest (a walk of all 48
+--- slots of a steel chest per visit cost the benchmark half its script time again). `whole`: only the whole stacks count
+--- (M.plain_stack, as M.remove_whole). `have`, when the caller knows it: the plain items of the key in the inventory (all
+--- of them wanted: one removal by count, no walk). One write per stack that gives something; the scratch lists are
+--- module-level (no table per call). Returns the count removed.
+do                                                       -- (a block: the main chunk is at its limit of locals)
+local EVEN_WINDOW = 4
+local EVEN_STACK, EVEN_HAD, EVEN_LEFT, EVEN_SLOT = {}, {}, {}, {}
+function M.remove_even(inv, name, quality, count, rec, whole, have)
+	if count <= 0 then return 0 end
+	local size = #inv
+	if size <= 1 or (have and not whole and have <= count) then
+		if whole then return M.remove_whole(inv, name, quality, count) end
+		return inv.remove{ name = name, quality = quality, count = count }
+	end
+	local start = rec.even_at or 1
+	if start > size then start = 1 end
+	local n, total = 0, 0
+	for j = 0, size - 1 do
+		local i = start + j
+		if i > size then i = i - size end
+		local stack = inv[i]
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality
+			and (not whole or M.plain_stack(stack, stack.prototype)) then
+			n = n + 1
+			local c = stack.count
+			EVEN_STACK[n], EVEN_HAD[n], EVEN_LEFT[n], EVEN_SLOT[n] = stack, c, c, i
+			total = total + c
+			if n >= EVEN_WINDOW and total >= count then break end
+		end
+	end
+	if n == 0 then return 0 end
+	local want = count < total and count or total
+	local left, active = want, n
+	while left > 0 and active > 0 do
+		local share = math.floor(left / active)
+		local extra = left - share * active
+		active = 0
+		for k = 1, n do
+			local h = EVEN_LEFT[k]
+			if h > 0 then
+				local take = share
+				if extra > 0 then
+					take = take + 1
+					extra = extra - 1
+				end
+				if take > h then take = h end
+				h = h - take
+				EVEN_LEFT[k] = h
+				left = left - take
+				if h > 0 then active = active + 1 end
+				if left <= 0 then break end
+			end
+		end
+	end
+	local last = EVEN_SLOT[1]
+	for k = 1, n do
+		local stack, h = EVEN_STACK[k], EVEN_LEFT[k]
+		if h ~= EVEN_HAD[k] then
+			if h <= 0 then stack.clear() else stack.count = h end
+			last = EVEN_SLOT[k]                           -- (the last stack in the walk that gave something)
+		end
+		EVEN_STACK[k], EVEN_HAD[k], EVEN_LEFT[k], EVEN_SLOT[k] = nil, nil, nil, nil
+	end
+	rec.even_at = last < size and last + 1 or 1
+	return want - left
+end
+end
+
 --- { key -> count } of the items of a worn type, of the items that can be damaged (issue #84) and of the items with tags or a
 --- label (issue #479), in the stacks of an inventory that stand for their plain key (one pass; M.plain_stack: a stack whose top
 --- item is used or damaged, or that carries tags, a label or a description, counts as none)

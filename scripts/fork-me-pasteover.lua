@@ -30,6 +30,9 @@ M.TAGS = { "fork_me_interface", "fork_me_bus", "fork_me_storage_bus", "fork_me_p
 --- function(entity, tags, player) per entity name: the settings of `tags` onto an existing block (control.lua fills it)
 M.appliers = {}
 M.apply = nil                            -- function(entity, tags, player): the default applier (control.lua)
+--- issue #790: function(tags, direction, flip_horizontal, flip_vertical) -> tags per entity name: the settings per side of
+--- a block without a direction turn with the blueprint (control.lua sets the table of scripts/fork-me-bpturn.lua)
+M.turners = {}
 
 local function has_tag(tags)
 	if type(tags) ~= "table" then return false end
@@ -185,7 +188,8 @@ local function apply_tagged(entities, tiles, tagged, surface, force, at, directi
 		if found and found.valid and facing then
 			local f = M.appliers[be.name] or M.apply
 			if f then
-				f(found, be.tags, player)
+				local turner = M.turners[be.name]                  -- (issue #790)
+				f(found, turner and turner(be.tags, direction, fh, fv) or be.tags, player)
 				n = n + 1
 			end
 		end

@@ -463,6 +463,8 @@ confirm key), right click empties the row; no virtual signal can be chosen.
   gets only what is left after them (its fluid side says "ME Interfaces of a higher priority lack it"). What an
   interface already holds stays in it. Interfaces of the same priority share what there is in the order they are
   visited.
+* A blueprint placed rotated or flipped turns the sides with it (issue #790: the interface itself has no direction, so the
+  mod turns the side settings; not for a blueprint that another mod's script builds).
 * The rows, sides and the priority are kept in blueprints and copied with the entity settings (shift right click, shift left
   click) and by cloning. Interfaces of older saves: every filtered slot becomes a config row of one stack (several
   slots with the same item add up), the first time the interface works after the update; the slot filters are
@@ -472,6 +474,13 @@ confirm key), right click empties the row; no virtual signal can be chosen.
 side). Open one to set up to 9 filters, items and fluids mixed (the window also shows the entity it faces and
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
+
+**How an ME Import Bus empties a chest**: an item that lies in several stacks is taken from the stacks in turns, a few
+at a time (the next four from where the last visit stopped, an equal share from each), so the stacks go down together
+instead of the chest emptying slot by slot from the top left. Items that go stack by stack (spoiling items, tools,
+items that can be damaged) are taken in turns: each visit starts at the slot after the one where the last stopped. The map
+setting **Buses take evenly from the stacks** (on by default) switches both off: then the game's removal by count, a little
+cheaper with very many buses on big chests. The ME Storage Bus does the same when the network takes from its chest.
 
 **How far an ME Export Bus fills** (issue #382): a chest as far as it has room; a machine (an assembling machine, a furnace,
 a lab) gets a stack of each filtered item in its input, topped up again as it uses them. When the machine's recipe needs
@@ -559,6 +568,8 @@ like any bus, and that inventory becomes storage of the network. Facing a **stor
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
   first, so nothing is ever duplicated or promised from an empty chest.
+* **Taking out of the chest** goes over the stacks of the item in turns, as the ME Import Bus does (see "How an ME Import
+  Bus empties a chest"; the map setting **Buses take evenly from the stacks**).
 * **A chest that refills** (an infinity chest, an inserter feeding it): when the network takes the last of an item type
   out of the chest, the bus looks at it again 5 ticks later, so the next stack is in the network (and the terminal) a
   fraction of a second after you took the first. Only for a bus that is not due within those 5 ticks, and bounded: a
