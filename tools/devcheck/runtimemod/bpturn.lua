@@ -20,6 +20,9 @@
 ---   item placed by hand onto the turned ghost must not turn it again); a placement of an earlier tick turns nothing (checked
 ---   one tick later); a blueprint a script builds (no on_pre_build) keeps the sides of its own frame (the limit of the issue);
 ---   a turn of an interface tag without sides and of a tag in the older spelling ([side] = value).
+--- * issue #795: a ghost of an interface that lies under the paste gets the blueprint entity's tags from the game, which
+---   raises on_blueprint_settings_pasted for it: its tags turn there (fed through the remote `pasted`), not for an
+---   unturned paste, another player's, a later tick's, or a ghost left without tags.
 --- Loaded by control.lua: require("bpturn")(H) returns { setup, tick, running }.
 
 local IO, AC, PO, BT = "gregtorio-me-io", "gregtorio-me-autocraft", "gregtorio-me-pasteover", "gregtorio-me-bpturn"
@@ -258,6 +261,42 @@ return function(H)
 		same("both flips against half a turn", tag_sides(remote.call(IO, "turn_interface_tags", be_tags, D.north, true, true)),
 			tag_sides(remote.call(IO, "turn_interface_tags", be_tags, D.south, false, false)))
 		same("an eighth turn", tag_sides(remote.call(IO, "turn_interface_tags", be_tags, D.northeast, false, false)), SOURCE)
+		--- issue #795: a ghost that lies under the paste. The game gives it the blueprint entity's tags and raises
+		--- on_blueprint_settings_pasted (no build event): the tags turn there, as for a ghost the placement builds
+		local function ghost_under()
+			return s.create_entity{ name = "entity-ghost", inner_name = IFACE, position = { -60.5, -50.5 }, force = "player",
+				tags = be_tags }
+		end
+		for _, w in ipairs({ { D.east, false, false }, { D.north, true, false }, { D.north, false, true }, { D.east, true, false } }) do
+			local what = name_of(w[1], w[2], w[3]) .. ", pasted over a ghost"
+			local og = ghost_under()
+			remote.call(BT, "note", PLAYER, w[1], w[2], w[3])
+			remote.call(BT, "pasted", og, PLAYER)
+			same(what, tag_sides(og.tags), expected(SOURCE, w[1], w[2], w[3]))
+			local it = (og.tags or {}).fork_me_interface or {}
+			if not (type(it.config) == "table" and #it.config == 3 and it.priority == 3) then
+				bad(what .. ": the ghost's tag lost its rows or its priority: " .. serpent.line(it))
+			end
+			og.destroy()
+		end
+		--- (an unturned paste, the paste of another player, a ghost the paste left without tags and a built block: nothing turns)
+		local og = ghost_under()
+		remote.call(BT, "note", PLAYER, D.north, false, false)
+		remote.call(BT, "pasted", og, PLAYER)
+		same("an unturned blueprint pasted over a ghost", tag_sides(og.tags), SOURCE)
+		remote.call(BT, "note", PLAYER, D.east, false, false)
+		remote.call(BT, "pasted", og, PLAYER + 1)
+		same("a ghost pasted over by another player than the one who turned", tag_sides(og.tags), SOURCE)
+		og.tags = nil
+		remote.call(BT, "pasted", og, PLAYER)
+		if og.tags ~= nil then bad("a ghost without tags got tags from a paste: " .. serpent.line(og.tags)) end
+		og.destroy()
+		local standing = s.create_entity{ name = IFACE, position = { -60.5, -54.5 }, force = "player", raise_built = true }
+		remote.call(IO, "set_interface_config", standing, { [2] = { type = "fluid", name = "water", amount = 2000 },
+			[3] = { type = "fluid", name = fluid, amount = 1000 } }, SOURCE)
+		remote.call(BT, "pasted", standing, PLAYER)
+		same("a built interface in the settings-pasted event (the paste over it is pasteover's)",
+			remote.call(IO, "get_interface_sides", standing), SOURCE)
 		--- a placement of this tick, looked at in the next one (T.tick): it turns nothing then
 		remote.call(BT, "note", PLAYER, D.east, false, false)
 		local late = ghost_at({ x = -60.5, y = -40.5 }, D.north)
@@ -276,6 +315,10 @@ return function(H)
 		local problems = st.problems
 		local g = st.late
 		if g and g.valid then
+			remote.call(BT, "pasted", g, PLAYER)                 -- (issue #795: a paste event of a later tick)
+			if show(tag_sides(g.tags)) ~= show(SOURCE) then
+				problems[#problems + 1] = "a ghost pasted over a tick after the placement was turned: " .. show(tag_sides(g.tags))
+			end
 			remote.call(BT, "built", g, nil, PLAYER)
 			if show(tag_sides(g.tags)) ~= show(SOURCE) then
 				problems[#problems + 1] = "a ghost built a tick after the placement was turned: " .. show(tag_sides(g.tags))
@@ -290,7 +333,8 @@ return function(H)
 		me_report("BPTURN", "ME Interface sides turned with a blueprint (issue #790)", problems,
 			tostring(st.n) .. " placements (4 directions, each plain, with H, with V and with both): the sides in the ghost's tags,"
 				.. " of the interface built from the ghost, of one built at once and of one pasted over are the blueprint's, flipped"
-				.. " and then turned; a hand build, a later tick and a script's blueprint turn nothing")
+				.. " and then turned; a hand build, a later tick and a script's blueprint turn nothing; a ghost under the paste"
+				.. " turns with it (issue #795)")
 	end
 
 	function T.running(check) check(storage.bpturn790 and storage.bpturn790.done, "ME Interface sides turned with a blueprint (issue #790)") end
