@@ -244,3 +244,16 @@ for name, def in pairs(ZZ_DEVCHECK_STANDIN_RECIPES or {}) do
 	end
 	if keep then data.raw.recipe[name] = table.deepcopy(def) end
 end
+
+--- Issue #793: Gregtorio's Substation powers a 64x64 area and reaches 64 tiles with its wires since its 0.5.12 (Gregtorio
+--- #820). The test scenes stand tens of tiles apart, each with a substation and a power source of its own, and several of
+--- them cut their source and check that the network goes dark: with that reach the substations of neighbouring scenes wire
+--- up and feed each other, so a network kept its power after the cut. The tests are about the ME blocks, not about the
+--- pole: the substation keeps the base game's numbers on the test map, whatever a mod gave it.
+do
+	local substation = data.raw["electric-pole"] and data.raw["electric-pole"]["substation"]
+	if substation then
+		substation.supply_area_distance = math.min(substation.supply_area_distance or 9, 9)
+		substation.maximum_wire_distance = math.min(substation.maximum_wire_distance or 18, 18)
+	end
+end
