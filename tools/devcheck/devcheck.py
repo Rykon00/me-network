@@ -1362,6 +1362,7 @@ RUNTIME_TESTS = (
     ("HIGHLIGHT", "the network highlighted on hover (issue #699)"),
     ("TURNBLOCKS", "Turned blueprints over ME blocks whose direction does not show (issue #674)"),
     ("BPTURN", "ME Interface sides turned with a blueprint (issue #790)"),
+    ("UNDO", "Undo keeps an ME block's settings (issue #796)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
