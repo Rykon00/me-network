@@ -54,6 +54,7 @@ require("scripts.fork-me-stats")
 local pasteover = require("scripts.fork-me-pasteover")
 local mirror = require("scripts.fork-me-mirror")           -- (issue #781: parametrised blueprints)
 local bpturn = require("scripts.fork-me-bpturn")           -- (issue #790: the settings per side turn with a blueprint)
+local undo = require("scripts.fork-me-undo")               -- (issue #796: undo keeps a block's settings)
 --- issue #670: the shape of ME Cable pasted over cable, and of cable ghosts
 local cableshape = require("scripts.fork-me-cableshape")
 local cableturn = require("scripts.fork-me-cableturn")    -- (issue #673: its own events: cursor, position, rotate/flip keys)
@@ -214,6 +215,9 @@ end
 --- free ground (bpturn, from on_pre_build to the build events of the tick) and pasted over an interface (pasteover)
 bpturn.turners["me-network-interface"] = fork_io.turn_interface_tags
 pasteover.turners = bpturn.turners
+--- issue #796: undo of a removed block gives a ghost with the tags a blueprint of the block would carry
+undo.tag = function(bp, mapping) fork_ae2.tag_blueprint(bp, mapping) end
+undo.kind = fork_net.kind_of
 --- (tests: a build as on_built_entity of player `index` brings it)
 bpturn.build = function(entity, tags, index)
 	on_built(entity, tags, { name = defines.events.on_built_entity, entity = entity, tags = tags, player_index = index })
@@ -249,6 +253,8 @@ for _, t in pairs({ "simple-entity-with-force", "display-panel", "storage-tank",
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end
 local function on_mined(event)
+	--- issue #796: the settings of a block a player mines, for its undo record (before the modules forget them)
+	if event.name == defines.events.on_player_mined_entity then undo.on_removed(event.entity, event.player_index) end
 	fork_fluids.on_mined_event(event)
 	fork_io.on_removed(event.entity, event.buffer or true)      -- (issue #110: a bus's cards go into the buffer)
 	fork_sbus.on_removed(event.entity, event.buffer)
@@ -303,6 +309,7 @@ end
 script.on_event(defines.events.on_marked_for_deconstruction, function(event)
 	local entity = event.entity
 	if not (entity and entity.valid and fork_net.kind_of(entity.name)) then return end
+	undo.on_removed(entity, event.player_index)               -- (issue #796: the undo record is made at the mark)
 	fork_io.on_marked(entity)                                 -- (an ME Interface's side fluid into the network first)
 	fork_net.set_marked(entity, true)
 end, REMOVED_FILTER)
@@ -361,6 +368,7 @@ local function on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
 	cableshape.on_tick(tick)                                  -- (issue #670: queued ghosts shaped, the cables under a paste)
+	undo.on_tick(tick)                                        -- (issue #796: the undo records of the tick before get their tags)
 	fork_net.highlight.on_tick()                              -- (issue #699: a highlight that still spreads)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
