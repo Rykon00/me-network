@@ -463,6 +463,8 @@ confirm key), right click empties the row; no virtual signal can be chosen.
   gets only what is left after them (its fluid side says "ME Interfaces of a higher priority lack it"). What an
   interface already holds stays in it. Interfaces of the same priority share what there is in the order they are
   visited.
+* A blueprint placed rotated or flipped turns the sides with it (issue #790: the interface itself has no direction, so the
+  mod turns the side settings; not for a blueprint that another mod's script builds).
 * The rows, sides and the priority are kept in blueprints and copied with the entity settings (shift right click, shift left
   click) and by cloning. Interfaces of older saves: every filtered slot becomes a config row of one stack (several
   slots with the same item add up), the first time the interface works after the update; the slot filters are

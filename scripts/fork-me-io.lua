@@ -1381,6 +1381,50 @@ function M.interface_tag(config, sides, priority, cards, circuit)
 		priority = priority and priority ~= 0 and priority or nil, cards = cards, circuit = circuit or nil }   -- (issue #412)
 end
 
+--- Issue #790: the side (1 north .. 4 west) that a side of the blueprint's own frame lands on when the blueprint is placed
+--- with `direction` (defines.direction, 16 steps) and the flips (H: east and west change places, V: north and south).
+--- Flipped first, then turned, as the positions are (pasteover.layout).
+local function turned_side(d, direction, fh, fv)
+	local D = (d - 1) * 4
+	if fh then D = (16 - D) % 16 end
+	if fv then D = (24 - D) % 16 end
+	return math.floor(((D + (direction or 0)) % 16) / 4) + 1
+end
+
+--- Issue #790: the tags of a blueprint entity with the interface's sides turned as the blueprint is placed. The ME Interface
+--- is a container, so the game moves it with a turned blueprint but has nothing to turn, and it never looks into tags: the
+--- sides in the tag are the ones of the blueprint's own frame. Returns a copy (the sides as sides_tag writes them, in
+--- their order), or the tags themselves when nothing turns.
+function M.turn_interface_tags(tags, direction, fh, fv)
+	local t = type(tags) == "table" and tags[IFACE_TAG]
+	if type(t) ~= "table" or type(t.sides) ~= "table" then return tags end
+	direction = math.floor(((tonumber(direction) or 0) % 16) / 4) * 4
+	fh, fv = fh and true or false, fv and true or false
+	if direction == 0 and fh == fv then
+		if not fh then return tags end
+		direction, fh, fv = 8, false, false            -- (both flips are half a turn)
+	end
+	local sides = {}
+	for k, v in pairs(t.sides) do                     -- (both spellings clean_sides reads: { side, row | off } and [side] = value)
+		local d = type(v) == "table" and tonumber(v.side) or tonumber(k)
+		if d and SIDES[d] then
+			local e = {}
+			if type(v) == "table" then for key, value in pairs(v) do e[key] = value end
+			elseif v == "off" then e.off = true
+			else e.row = tonumber(v) end
+			e.side = turned_side(d, direction, fh, fv)
+			sides[#sides + 1] = e
+		end
+	end
+	table.sort(sides, function(a, b) return a.side < b.side end)
+	local out, tag = {}, {}
+	for k, v in pairs(tags) do out[k] = v end
+	for k, v in pairs(t) do tag[k] = v end
+	tag.sides = sides
+	out[IFACE_TAG] = tag
+	return out
+end
+
 --- the interface's state for its window: { config, sides, status, contents = { { key, count } }, fluids = { [1..4] =
 --- { setting, status, name, amount, temperature, connected, segment } }, slots, volume }. `segment` (issue #311): what the
 --- side's fluid segment (its tank and the pipes without a pump between) holds of the tank's fluid, read only here (the
@@ -3073,6 +3117,8 @@ remote.add_interface("gregtorio-me-io", {
 	set_interface_key = function(entity, i, key, amount) return M.set_interface_key(entity, i, key, amount) end,
 	set_interface_side = function(entity, side, value) return M.set_interface_side(entity, side, value) end,
 	get_interface_sides = function(entity) return M.get_interface_sides(entity) end,
+	--- tests (issue #790): the tags of a blueprint entity as a blueprint placed with `direction` and the flips gives them
+	turn_interface_tags = function(tags, direction, fh, fv) return M.turn_interface_tags(tags, direction, fh, fv) end,
 	get_interface = function(entity) return M.get_interface(entity) end,
 	--- issue #17: the interface's priority
 	get_interface_priority = function(entity) return M.get_interface_priority(entity) end,
