@@ -231,6 +231,8 @@ script.on_event(defines.events.on_blueprint_settings_pasted, function(event)
 	if found and type(tags) == "table" then
 		pasteover.apply(event.entity, tags, event.player_index and game.get_player(event.player_index) or nil)
 	end
+	--- issue #795: a ghost under the paste has the blueprint entity's tags by now, unturned (no build event comes for it)
+	bpturn.on_settings_pasted(event)
 end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded

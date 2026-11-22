@@ -13,6 +13,10 @@
 ---     turned settings; an instant build (editor, cheat mode) gets the turned tags directly.
 ---   * A paste over a block that stands there makes no build event: scripts/fork-me-pasteover.lua turns the tags through
 ---     the same turners (control.lua hands it this module's table).
+---   * Issue #795: a paste over a **ghost** of the block makes no build event either. The game replaces the ghost's tags with
+---     the blueprint entity's (with none when it has none) and then raises on_blueprint_settings_pasted for the ghost, in the
+---     tick of the on_pre_build (measured in a client, 2.1.24): M.on_settings_pasted turns the ghost's tags there. A drag
+---     with the button held runs into this by itself, when two placements of a tick fall onto the same tile.
 ---   * Not turned: a blueprint a script builds (LuaItemStack.build_blueprint raises no on_pre_build: the turn is unknown),
 ---     clones, and the tags a ghost's ME window writes (they are the world's sides already).
 --- State: storage.fork_me_bpturn (lazy): per player index { tick, d, fh, fv } of the blueprint placed in that tick.
@@ -80,7 +84,26 @@ function M.on_built(entity, tags, event)
 	return turned
 end
 
+--- on_blueprint_settings_pasted (issue #795): a ghost that lies where a player's turned blueprint was placed in this tick
+--- has the blueprint entity's tags now, in the blueprint's own frame: they turn like the tags of a ghost the placement
+--- builds. (A built block under the paste is scripts/fork-me-pasteover.lua's.)
+function M.on_settings_pasted(event)
+	local s = storage.fork_me_bpturn
+	local e = s and event.player_index and s[event.player_index]
+	if not e or e.tick ~= game.tick then return end
+	local entity = event.entity
+	if not (entity and entity.valid and entity.type == "entity-ghost") then return end
+	local turner = M.turners[entity.ghost_name]
+	if not turner then return end
+	local tags = entity.tags
+	if type(tags) ~= "table" then return end
+	local turned = turner(tags, e.d, e.fh, e.fv)
+	if turned ~= tags then entity.tags = turned end
+end
+
 remote.add_interface("gregtorio-me-bpturn", {
+	--- tests: on_blueprint_settings_pasted for `entity` (a ghost the game gave a blueprint entity's tags) by player `index`
+	pasted = function(entity, index) M.on_settings_pasted({ entity = entity, player_index = index }) end,
 	--- tests (the harness has no player, and LuaItemStack.build_blueprint raises no on_pre_build): the placement of player
 	--- `index` as on_pre_build remembers it for a blueprint in the cursor
 	note = function(index, direction, fh, fv) note(index, direction, fh, fv) end,
