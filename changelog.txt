@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.3
+Date: 2026-11-22
   Changes:
     - ME Import Bus and ME Storage Bus: an item that lies in several stacks of a chest is now taken from the stacks in turns, a few at a time and an equal share from each, instead of from the first slot (top left) on. The stacks go down together instead of the chest emptying slot by slot. Items that go stack by stack (spoiling items, tools, items that can be damaged) are taken in turns, each visit starting where the last stopped. A new map setting "Buses take evenly from the stacks" (on by default) switches back to the old removal, which is a little cheaper with very many buses on big chests.
   Bugfixes:
