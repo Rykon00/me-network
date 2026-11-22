@@ -2,6 +2,8 @@
 Version: 0.7.3
   Changes:
     - ME Import Bus and ME Storage Bus: an item that lies in several stacks of a chest is now taken from the stacks in turns, a few at a time and an equal share from each, instead of from the first slot (top left) on. The stacks go down together instead of the chest emptying slot by slot. Items that go stack by stack (spoiling items, tools, items that can be damaged) are taken in turns, each visit starting where the last stopped. A new map setting "Buses take evenly from the stacks" (on by default) switches back to the old removal, which is a little cheaper with very many buses on big chests.
+  Bugfixes:
+    - ME Interface: the fluid sides now turn with a blueprint that is placed rotated (R, Shift + R) or flipped (H, V) (issue #790). The interface was moved with the blueprint, but each of its sides kept the setting of the side it had before the turn, so a side that should export a fluid pointed at nothing or at the pipe it should import from. This holds for a blueprint, a book, the blueprint library, copy and paste (Ctrl + C, Ctrl + V) and cut, for ghosts that robots build, and for a paste over an interface that stands there already. Interfaces built wrong by an earlier version stay as they are: set their sides again in the window. Not covered: blueprints that another mod's script builds (the game does not tell how they are placed).
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.2
 Date: 2026-11-18

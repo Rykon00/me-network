@@ -1194,6 +1194,8 @@ highlight699 = require("highlight")({ me_report = me_report })
 --- me-network issue #674: turned blueprints over ME blocks whose direction does not show (turnblocks.lua)
 turnblocks674 = require("turnblocks")({ me_report = me_report, me_place = me_place, cable_row = cable_row, power = power,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #790: the fluid sides of an ME Interface turn with a turned or flipped blueprint (bpturn.lua)
+bpturn790 = require("bpturn")({ me_report = me_report })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1484,6 +1486,7 @@ local function tests_running()
 	cableshape670.running(check)
 	highlight699.running(check)
 	turnblocks674.running(check)
+	bpturn790.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -2507,6 +2510,7 @@ script.on_nth_tick(10, function()
 	cableshape670.tick()
 	highlight699.tick()
 	turnblocks674.tick()
+	bpturn790.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -5532,6 +5536,7 @@ script.on_init(function()
 	for _, f in pairs(highlight699.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(modulecharge748.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(turnblocks674.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(bpturn790.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wrefill603.setup(s)) do fails[#fails + 1] = f end
