@@ -3000,6 +3000,20 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_clear_slot = function(entity, index) return M.workbench_clear_slot(entity, index) end,
 	picker_groups = function(kinds) return picker.group_names(kinds) end,
 	picker_entries = function(kinds, filter, group, index) return picker.entries(kinds, filter, group, index) end,
+	--- issue #800: the group a picker opens on (the preset's, the remembered one when listed, the first), what is
+	--- remembered for a player (`group` given: remember it first; `forget`: clear it first), and the grid's item buttons
+	--- with the quality they show, in a stand-in of the picker's frame with `tags`, after a click on quality `chosen`
+	picker_initial_group = function(kinds, preset, last) return picker.initial_group(kinds, preset, last) end,
+	picker_remembered = function(index, group, forget)
+		if group then picker.remember(index, group) end
+		if forget then picker.forget_player(index) end
+		return picker.remembered(index)
+	end,
+	picker_grid_view = function(tags, chosen)
+		local frame = stand_in_element{ type = "frame", tags = tags }
+		frame.add{ type = "scroll-pane", name = "fork_me_pk_body" }
+		return picker.grid_view(frame, chosen)
+	end,
 	--- issue #295: a player's translated names as if they had arrived (the harness has no player), and what they hold
 	names_set = function(index, names) Names.set_names(index, names) end,
 	names_of = function(index) return Names.names_of(index) end,

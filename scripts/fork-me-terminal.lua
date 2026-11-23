@@ -1590,6 +1590,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)
 	VC.forget_player(event.player_index)                                                         -- (issue #440: wireless view cells)
 	if N.highlight then N.highlight.clear(event.player_index) end                                -- (issue #699: the highlight)
+	picker.forget_player(event.player_index)                                                     -- (issue #800: the picker's last group)
 end)
 
 return M
