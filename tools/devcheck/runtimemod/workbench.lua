@@ -569,6 +569,69 @@ return function(H)
 		expect(#groups >= 2 and not gset["signals"], "the picker's groups " .. line(groups))
 		local g1 = remote.call(GUI, "picker_entries", both, nil, groups[1])
 		expect(#g1 > 0 and #g1 < #all, "the entries of one group")
+		--- issue #800: the group a picker opens on: the preset's, else the remembered one when the picker lists it, else the
+		--- first; what is remembered is per player and a removed player's entry is cleared
+		do
+			local function initial(kinds, preset, last) return remote.call(GUI, "picker_initial_group", kinds, preset, last) end
+			local plate = prototypes.item["iron-plate"].group.name
+			local water = prototypes.fluid["water"].group.name
+			local other                                      -- (a listed group that is neither the first nor the iron plate's)
+			for _, g in ipairs(groups) do
+				if g ~= groups[1] and g ~= plate then other = g break end
+			end
+			expect(other ~= nil, "a third group for the test: " .. line(groups))
+			expect(initial(both, { kind = "item", name = "iron-plate" }, other) == plate and plate ~= other,
+				"a preset opens on its group, not the remembered one: " .. tostring(initial(both, { kind = "item", name = "iron-plate" }, other)))
+			expect(initial(both, { kind = "fluid", name = "water" }, other) == water, "a fluid preset opens on its group")
+			expect(initial(both, nil, other) == other, "no preset: the remembered group: " .. tostring(initial(both, nil, other)))
+			expect(initial(both, nil, "zz-no-such-group") == groups[1] and initial(both, nil, "signals") == groups[1],
+				"a remembered group the picker does not list: the first group")
+			expect(initial(both, nil, nil) == groups[1], "nothing remembered: the first group")
+			--- a preset the picker cannot take (its kind is not allowed, an unknown name) counts as none
+			expect(initial(items_only, { kind = "fluid", name = "water" }, other) == other
+				and initial(both, { kind = "item", name = "zz-no-such-item" }, nil) == groups[1], "a preset that is not allowed or unknown")
+			--- a fluid-only picker: a remembered group without a fluid is not listed there
+			local fgroups = remote.call(GUI, "picker_groups", fluids_only)
+			local fset, itemish = {}, nil
+			for _, g in ipairs(fgroups) do fset[g] = true end
+			for _, g in ipairs(groups) do
+				if not fset[g] then itemish = g break end
+			end
+			if itemish then
+				expect(initial(fluids_only, nil, itemish) == fgroups[1] and initial(both, nil, itemish) == itemish,
+					"a fluid-only picker does not open on a group without fluids")
+			end
+			local function mem(index, group, forget) return remote.call(GUI, "picker_remembered", index, group, forget) end
+			expect(mem(9800) == nil and mem(9801) == nil, "nothing is remembered at first")
+			expect(mem(9800, other) == other and mem(9801) == nil and mem(9801, plate) == plate and mem(9800) == other,
+				"the remembered group is each player's own")
+			expect(mem(9800, nil, true) == nil and mem(9801) == plate, "a removed player's group is cleared, the other's stays")
+			expect(mem(9801, nil, true) == nil and mem(9802, nil, true) == nil, "clearing a player without an entry")
+			--- the grid's item buttons show the chosen quality (not normal, not the fluids, not in a picker without quality)
+			local function view(tags, chosen) return remote.call(GUI, "picker_grid_view", tags, chosen) or {} end
+			local function tags(extra)
+				local t = { kinds = both, filter = "", quality = "normal", group = water, data = {} }
+				for k, v in pairs(extra or {}) do t[k] = v end
+				return t
+			end
+			local function only(counts, key) return counts and next(counts) == key and next(counts, key) == nil and counts[key] > 0 end
+			local plain = view(tags())
+			expect(only(plain.fluid, "none") and (next(plain.item) == nil or only(plain.item, "none")), "normal quality: no badge " .. line(plain))
+			if q then
+				local pg = view(tags({ group = plate }))
+				expect(only(pg.item, "none"), "normal quality: no badge on the items " .. line(pg))
+				local preset = view(tags({ group = plate, quality = q }))
+				expect(only(preset.item, q), "a preset's quality on the item buttons " .. line(preset))
+				local clicked = view(tags({ group = plate }), q)
+				expect(only(clicked.item, q), "a click on a quality shows it on the item buttons " .. line(clicked))
+				local back = view(tags({ group = plate, quality = q }), "normal")
+				expect(only(back.item, "none"), "a click on normal takes the badge away " .. line(back))
+				local mixed = view(tags({ filter = "water" }), q)
+				expect(only(mixed.fluid, "none") and (next(mixed.item) == nil or only(mixed.item, q)), "fluids never show a quality " .. line(mixed))
+				local noq = view(tags({ group = plate, plain = true, quality = q }), q)
+				expect(only(noq.item, "none"), "a picker without quality shows none " .. line(noq))
+			end
+		end
 		local qs = remote.call(GUI, "workbench_qualities")
 		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
 		--- issue #291: the quality buttons wrap: the game's five in one row, 30 (Infinite Quality Tiers) in rows of 10, or of 5

@@ -1497,8 +1497,11 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   rows scroll in a box two rows high, so the picker keeps its size with Infinite Quality Tiers too: issue #380) and the **green
   check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
   GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
-  slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
-  (with quality) and fluids are listed, no virtual signal and no other signal.
+  slot opens it with its element and quality chosen (on its tab, the list scrolled to it), so both can be changed; right
+  click empties a slot. For an empty slot it opens on the **tab you used last** (issue #800: the tab you clicked or the
+  group of what you confirmed, each player's own, kept in the save; a picker that does not list that group starts on
+  its first tab). The item buttons show the chosen quality in their corner. Only items (with quality) and fluids are
+  listed, no virtual signal and no other signal.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
   **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
