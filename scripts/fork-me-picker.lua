@@ -745,11 +745,18 @@ end)
 --- Issue #803: the game's quality keys (custom inputs linked to "cycle-quality-up" / "cycle-quality-down", Alt + mouse
 --- wheel by default, not consumed: the game's own cycling goes on) step the quality of the shown picker. A picker that
 --- Escape hid does not count.
+--- Issue #804: with no picker shown the keys go to `M.on_quality_key(player, delta)` when a module set it (the ME
+--- Terminal's quality filter; it requires this module, so it registers here instead of the other way round).
+M.on_quality_key = nil
 for name, delta in pairs({ ["fork-me-picker-quality-up"] = 1, ["fork-me-picker-quality-down"] = -1 }) do
 	script.on_event(name, function(event)
 		local player = game.get_player(event.player_index)
 		local frame = player and picker_of(player)
-		if frame and frame.visible then M.step_quality(frame, delta) end
+		if frame and frame.visible then
+			M.step_quality(frame, delta)
+		elseif player and M.on_quality_key then
+			M.on_quality_key(player, delta)
+		end
 	end)
 end
 
