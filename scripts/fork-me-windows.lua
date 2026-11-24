@@ -3033,6 +3033,30 @@ remote.add_interface("gregtorio-me-gui", {
 		local bottom = frame.add{ type = "flow", name = "bottom" }
 		return picker.quality_view(frame, bottom, names, temperature, chosen)
 	end,
+	--- issue #803: one step of the quality keys: the pure step, and the step in a stand-in of the picker's frame with `tags`
+	--- and a quality row of `n` qualities (as picker_quality_view makes them; `n` 0: no row). Returns { to = the step's
+	--- answer, quality = the frame's afterwards, toggled (names), scrolled = the quality scrolled to (a row in a pane) }.
+	picker_cycle_quality = function(qualities, current, delta) return picker.cycle_quality(qualities, current, delta) end,
+	picker_cycle_view = function(n, tags, delta, temperature)
+		local names = picker.qualities()
+		for i = #names + 1, n do names[i] = "zz-devcheck-quality-" .. i end
+		while #names > n do names[#names] = nil end
+		local frame = stand_in_element{ type = "frame", tags = tags }
+		local bottom = frame.add{ type = "flow", name = "bottom" }
+		local out = { toggled = {} }
+		local row
+		if n > 0 then
+			local pane
+			row, pane = picker.add_quality_row(bottom, names, temperature)
+			if pane then pane.scroll_to_element = function(b) out.scrolled = b.tags.quality end end
+		end
+		out.to = picker.step_quality(frame, delta)
+		out.quality = frame.tags.quality
+		for _, b in ipairs(row and row.children or {}) do
+			if b.toggled then out.toggled[#out.toggled + 1] = b.tags.quality end
+		end
+		return out
+	end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,

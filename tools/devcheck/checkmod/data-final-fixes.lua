@@ -316,7 +316,14 @@ for name, spec in pairs(PASTE.KEYS) do
 		end
 	end
 end
-for _, key in pairs(PASTE.INPUTS) do
+--- the linked keys: the paste keys and (issue #803) the picker's quality keys, each following a control of the game
+--- without taking it away from the game
+local LINKED = {
+	{ name = "fork-me-picker-quality-up", control = "cycle-quality-up" },
+	{ name = "fork-me-picker-quality-down", control = "cycle-quality-down" },
+}
+for _, key in pairs(PASTE.INPUTS) do LINKED[#LINKED + 1] = key end
+for _, key in ipairs(LINKED) do
 	local ci = data.raw["custom-input"][key.name]
 	if not ci then
 		paste_rows[#paste_rows + 1] = "missing	" .. key.name .. "	no such custom input"
