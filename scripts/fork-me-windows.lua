@@ -3435,6 +3435,20 @@ remote.add_interface("gregtorio-me-gui", {
 		end
 		return out
 	end,
+	--- issue #804: one step of the quality keys in the quality drop-down of a row built for the filter `quality`, with an
+	--- empty cursor or not: { to = the step's answer, selected_index = the drop-down's afterwards, name = its quality (nil:
+	--- "Any quality") }; nil without a drop-down (a game with one quality)
+	terminal_quality_step = function(quality, delta, cursor_empty)
+		local frame = stand_in_element{ type = "frame" }
+		local top = terminal.build_top(frame, { filter = "", quality = quality })
+		for _, c in ipairs(top.children) do
+			if c.name == "fork_me_quality" then
+				local to = terminal.step_quality_filter(c, delta, cursor_empty)
+				return { to = to, selected_index = c.selected_index, name = c.tags.names[c.selected_index - 1] }
+			end
+		end
+		return nil
+	end,
 	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
 	windows = function() return G.window_list() end,

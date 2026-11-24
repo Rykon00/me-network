@@ -5,6 +5,7 @@ Version: 0.7.4
     - Picker: with a slot that already holds something, the list now scrolls to the chosen item or fluid when the picker opens.
     - Picker: the item buttons now show the chosen quality in their corner, as the game's own picker does, and follow a click on another quality.
     - Picker: the game's "Increase quality" and "Decrease quality" keys (Alt + mouse wheel by default, or your own binding) now change the chosen quality (issue #803), one step per notch in the order of the quality row, as they do in the game's own pickers. The row stops at its ends, and with many qualities (Infinite Quality Tiers) the chosen one scrolls into view. Nothing happens in a picker without a quality row or while a fluid is chosen; the game's own cycling everywhere else is untouched.
+    - ME Terminal: the same keys step the quality filter next to the search (issue #804) while the terminal window is open and no picker is shown: from "Any quality" up through the qualities and back, stopping at both ends. Only with an empty cursor: with an item in hand the keys change that item's quality, as everywhere in the game, and leave the filter alone.
 ---------------------------------------------------------------------------------------------------
 Version: 0.7.3
 Date: 2026-11-22

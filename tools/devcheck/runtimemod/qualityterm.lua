@@ -139,7 +139,28 @@ return function(H)
 		for _, c in ipairs(remote.call(GUI, "terminal_top_view", { cmp = "!=", name = "rare" })) do   -- (issue #520)
 			if c.name == "fork_me_qcmp" then expect(tostring(c.selected_index), "6", "the comparator drop-down for ≠") end
 		end
-		me_report("QUALITYTERM", "ME Terminal quality filter", problems, "filter, sorts, kept lists and the row checked")
+		--- issue #804: the game's quality keys step the quality drop-down (entry 1 "Any quality", then the qualities): up and
+		--- down, it stops at both ends, and nothing with something in the cursor (the game changes that one's quality)
+		do
+			local visible = remote.call(GUI, "workbench_qualities")
+			local n = #visible
+			local function step(name, delta, empty)
+				local v = remote.call(GUI, "terminal_quality_step", name and { cmp = "=", name = name } or nil, delta, empty)
+				return v and (tostring(v.to) .. " " .. tostring(v.selected_index) .. " " .. tostring(v.name)) or "no drop-down"
+			end
+			if n >= 2 then
+				expect(step(nil, 1, true), "2 2 " .. visible[1], "a step up from Any quality")
+				expect(step(visible[1], -1, true), "1 1 nil", "a step down to Any quality")
+				expect(step(visible[1], 1, true), "3 3 " .. visible[2], "a step up")
+				expect(step(visible[n], -1, true), n .. " " .. n .. " " .. visible[n - 1], "a step down")
+				expect(step(visible[n], 1, true), "nil " .. (n + 1) .. " " .. visible[n], "the upper end")
+				expect(step(nil, -1, true), "nil 1 nil", "the lower end")
+				expect(step(visible[1], 5, true), "3 3 " .. visible[2], "one step per event")
+				expect(step(visible[1], 1, false), "nil 2 " .. visible[1], "something in the cursor: no step up")
+				expect(step(visible[2], -1, false), "nil 3 " .. visible[2], "something in the cursor: no step down")
+			end
+		end
+		me_report("QUALITYTERM", "ME Terminal quality filter", problems, "filter, sorts, kept lists, the row and the quality keys checked")
 	end
 
 	function T.running(check) check(storage.qualityterm514 and storage.qualityterm514.done, "ME Terminal quality filter") end
