@@ -660,6 +660,57 @@ return function(H)
 				"120 qualities" .. (temp and " next to the temperature field" or "") .. ": " .. line({ v.parent, v.pane, v.columns,
 				#(v.buttons or {}), v.toggled }))
 		end
+		--- issue #803: the game's quality keys step the chosen quality in the picker. The pure step: up and down, it stops at
+		--- both ends, a quality the list does not hold gives the first, one quality or none changes nothing.
+		do
+			local function step(list, current, delta) return remote.call(GUI, "picker_cycle_quality", list, current, delta) end
+			local five = { "normal", "uncommon", "rare", "epic", "legendary" }
+			expect(step(five, "normal", 1) == "uncommon" and step(five, "rare", 1) == "epic" and step(five, "epic", 1) == "legendary",
+				"a step up: " .. line({ step(five, "normal", 1), step(five, "rare", 1), step(five, "epic", 1) }))
+			expect(step(five, "legendary", -1) == "epic" and step(five, "rare", -1) == "uncommon" and step(five, "uncommon", -1) == "normal",
+				"a step down: " .. line({ step(five, "legendary", -1), step(five, "rare", -1), step(five, "uncommon", -1) }))
+			expect(step(five, "legendary", 1) == "legendary" and step(five, "normal", -1) == "normal",
+				"it stops at the ends: " .. line({ step(five, "legendary", 1), step(five, "normal", -1) }))
+			expect(step(five, "rare", 5) == "epic" and step(five, "rare", -3) == "uncommon" and step(five, "rare", 0) == "rare",
+				"one step per event, whatever the number: " .. line({ step(five, "rare", 5), step(five, "rare", -3), step(five, "rare", 0) }))
+			expect(step(five, "zz-no-such-quality", 1) == "normal" and step(five, "zz-no-such-quality", -1) == "normal"
+				and step(five, nil, 1) == "normal", "an unknown quality gives the first: " .. line({ step(five, "zz-no-such-quality", 1),
+				step(five, "zz-no-such-quality", -1), step(five, nil, 1) }))
+			expect(step({ "normal" }, "normal", 1) == "normal" and step({ "normal" }, "normal", -1) == "normal"
+				and step({ "normal" }, "rare", 1) == "normal", "one quality only")
+			expect(step({}, "normal", 1) == "normal" and step({}, nil, -1) == nil, "no quality at all")
+			--- the step in the picker's frame: the tags and the marked button follow; nothing in a picker without quality or
+			--- without a row, with a fluid chosen and at the ends; a row in a scroll pane scrolls to the new button
+			local names = {}
+			for i, name in ipairs(qs) do names[i] = name end
+			for i = #names + 1, 120 do names[i] = "zz-devcheck-quality-" .. i end
+			local function cyc(n, extra, delta, temp)
+				local t = { kinds = both, filter = "", quality = names[1], data = {} }
+				for k, v in pairs(extra or {}) do t[k] = v end
+				return remote.call(GUI, "picker_cycle_view", n, t, delta, temp) or {}
+			end
+			local up = cyc(5, nil, 1)
+			expect(up.to == names[2] and up.quality == names[2] and line(up.toggled) == line({ names[2] }) and up.scrolled == nil,
+				"a step up in the picker: " .. line(up))
+			local item = cyc(5, { kind = "item", name = "iron-plate", quality = names[3] }, -1)
+			expect(item.to == names[2] and item.quality == names[2] and line(item.toggled) == line({ names[2] }),
+				"a step down with an item chosen: " .. line(item))
+			local top, low = cyc(5, { quality = names[5] }, 1), cyc(5, nil, -1)
+			expect(top.to == nil and top.quality == names[5] and low.to == nil and low.quality == names[1],
+				"the ends of the row: " .. line({ top, low }))
+			local fluid = cyc(5, { kind = "fluid", name = "water" }, 1)
+			expect(fluid.to == nil and fluid.quality == names[1], "a fluid is chosen: nothing " .. line(fluid))
+			local noq, norow = cyc(5, { plain = true }, 1), cyc(0, nil, 1)
+			expect(noq.to == nil and noq.quality == names[1] and norow.to == nil and norow.quality == names[1],
+				"a picker without quality or without a row: nothing " .. line({ noq, norow }))
+			for _, temp in ipairs({ false, true }) do
+				local far = cyc(120, { quality = names[60] }, 1, temp)
+				expect(far.to == names[61] and far.scrolled == names[61] and line(far.toggled) == line({ names[61] }),
+					"a row in a scroll pane scrolls to the new quality: " .. line(far))
+				local stay = cyc(120, { quality = names[120] }, 1, temp)
+				expect(stay.to == nil and stay.scrolled == nil, "the end of a scrolling row: " .. line(stay))
+			end
+		end
 
 		--- an empty workbench: one free slot, both kinds offered
 		local sl = slots()

@@ -74,6 +74,21 @@ function M.qualities()
 	return out
 end
 
+--- Issue #803: the quality one step from `current` in `qualities` (names, lowest first, as the quality row lists them):
+--- up for a positive `delta`, down for a negative one. It stops at both ends (no wrap); a `current` the list does not
+--- hold (a hidden quality, none) gives the first one; an empty list gives `current` back. Pure.
+function M.cycle_quality(qualities, current, delta)
+	local n = #qualities
+	if n == 0 then return current end
+	local at
+	for i, name in ipairs(qualities) do
+		if name == current then at = i break end
+	end
+	if not at then return qualities[1] end
+	local step = delta > 0 and 1 or delta < 0 and -1 or 0
+	return qualities[math.max(1, math.min(n, at + step))]
+end
+
 --- Issue #291: the quality buttons wrap in a table. With a mod that adds many qualities (Infinite Quality Tiers) one row of
 --- them ran past the picker and the screen. As many columns as fit in the bottom row at the picker's width (COLUMNS
 --- entries: 424 px) next to the label and the check (10 tool buttons of 30 px), or next to the temperature field as well
@@ -461,6 +476,30 @@ function M.open(player, spec)
 	return true
 end
 
+--- Issue #803: the game's "Increase quality" / "Decrease quality" key in the picker `frame`: the chosen quality moves one
+--- step in the quality row (its buttons are the list: M.qualities() in M.open), as a click on that button would, and the
+--- button scrolls into view when the row is in a scroll pane (issue #380). Nothing happens in a picker without a quality
+--- row (a place that takes none, a game with one quality), while a fluid is chosen (the buttons are disabled then) and at
+--- the ends of the row. Returns the new quality, nil when nothing changed.
+function M.step_quality(frame, delta)
+	local t = frame.tags
+	local row = G.find(frame, "fork_me_pk_q")
+	if t.plain or t.kind == "fluid" or not row then return nil end
+	local names, buttons = {}, {}
+	for i, b in ipairs(row.children) do
+		names[i] = b.tags.quality
+		buttons[names[i]] = b
+	end
+	local to = M.cycle_quality(names, t.quality, delta)
+	if to == nil or to == t.quality then return nil end
+	set_tags(frame, { quality = to })
+	show_quality(frame)                                             -- (issue #800: the item buttons show it)
+	sync(frame)
+	local pane = G.find(frame, "fork_me_pk_q_pane")
+	if pane and buttons[to] then pane.scroll_to_element(buttons[to], "in-view") end
+	return to
+end
+
 --- Issue #380 (tests: the harness has no player): the quality row built into `frame`, a stand-in of the picker's frame made
 --- by the caller (its tags as M.open sets them, a flow `bottom` in it), then a click on quality `chosen` as the button's
 --- handler takes it. Returns { columns, buttons (names in order), pane = the pane's maximal height or nil, toggled (names) }.
@@ -702,6 +741,17 @@ script.on_event("fork-me-picker-confirm", function(event)
 	end
 	M.confirm(player)
 end)
+
+--- Issue #803: the game's quality keys (custom inputs linked to "cycle-quality-up" / "cycle-quality-down", Alt + mouse
+--- wheel by default, not consumed: the game's own cycling goes on) step the quality of the shown picker. A picker that
+--- Escape hid does not count.
+for name, delta in pairs({ ["fork-me-picker-quality-up"] = 1, ["fork-me-picker-quality-down"] = -1 }) do
+	script.on_event(name, function(event)
+		local player = game.get_player(event.player_index)
+		local frame = player and picker_of(player)
+		if frame and frame.visible then M.step_quality(frame, delta) end
+	end)
+end
 
 --- Focus the search field of the player's open ME picker, else of the open ME window (the Terminal's), and select its
 --- text so that typing replaces the old search (issue #148). Returns true when a field was focused. The picker sits on
