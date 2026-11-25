@@ -1888,6 +1888,12 @@ local function open_circuit(player, entity)
 	G.label(content, { "fork-me-circuit.circuit-help" }, WIDTH)
 	content.add{ type = "switch", switch_state = d.enabled and "right" or "left", left_label_caption = { "fork-me-gui.off" },
 		right_label_caption = { "fork-me-gui.on" }, tags = G.act("circ_on") }
+	--- issue #809: the output mode, the network's contents (left) or what its failed crafting starts lack (right)
+	content.add{ type = "switch", name = "fork_me_circ_mode", switch_state = d.mode == "missing" and "right" or "left",
+		left_label_caption = { "fork-me-circuit.circuit-mode-contents" },
+		left_label_tooltip = { "fork-me-circuit.circuit-mode-contents-tooltip" },
+		right_label_caption = { "fork-me-circuit.circuit-mode-missing" },
+		right_label_tooltip = { "fork-me-circuit.circuit-mode-missing-tooltip" }, tags = G.act("circ_mode") }
 	content.add{ type = "flow", name = "fork_me_circ_filters", direction = "vertical" }
 	G.label(content, "", WIDTH, nil, "fork_me_circ_status")
 	M.refresh_circuit(player, G.window_of(player))
@@ -1903,8 +1909,13 @@ function M.refresh_circuit(player, frame)
 			G.key_button(t, d.filters[i], G.act("circ_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 		end
 	end)
+	local mode = G.find(frame, "fork_me_circ_mode")            -- (issue #809: a paste may have changed it)
+	local side = d.mode == "missing" and "right" or "left"
+	if mode and mode.switch_state ~= side then mode.switch_state = side end
 	local status = G.find(frame, "fork_me_circ_status")
 	if not d.network then status.caption = { "fork-me-circuit.circuit-no-network" }
+	elseif d.mode == "missing" then
+		status.caption = d.signals > 0 and { "fork-me-circuit.circuit-missing", d.signals } or { "fork-me-circuit.circuit-missing-none" }
 	elseif #d.filters == 0 then status.caption = { "fork-me-circuit.circuit-all", d.signals }
 	else status.caption = { "fork-me-circuit.circuit-filtered", d.signals } end
 	return true
@@ -1937,6 +1948,15 @@ G.on("circ_on", function(event, player, el)
 	if event.name ~= defines.events.on_gui_switch_state_changed then return end
 	local entity = window_entity(player)
 	if entity then circuit.set_circuit_enabled(entity, el.switch_state == "right") end
+end)
+
+--- issue #809: the output mode
+G.on("circ_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_switch_state_changed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	circuit.set_circuit_mode(entity, el.switch_state == "right" and "missing" or "contents")
+	G.refresh_one(player)
 end)
 
 --------------------------------------------------------------------------------
@@ -3325,6 +3345,31 @@ remote.add_interface("gregtorio-me-gui", {
 		end)
 		out.circuit, out.logistic = out.names.fork_me_side_circuit == true, out.names.fork_me_side_logistic == true
 		return out
+	end,
+	--- Issue #809 (tests): the switch of the stand-in's open window whose action is `act` set to `state` ("left", "right")
+	--- through its handler, as a click does; then its state after a refresh. False when there is no such switch.
+	stand_in_switch = function(name, act, state)
+		local sp = stand_ins[name]
+		local function find()
+			local frame = G.window_of(sp)
+			local queue, i = { frame }, 1
+			while frame and queue[i] do
+				for _, c in pairs(queue[i].children) do
+					if c.type == "switch" and (c.tags or {}).fork_me_act == act then return c end
+					queue[#queue + 1] = c
+				end
+				i = i + 1
+			end
+		end
+		local el = find()
+		if not el then return false end
+		if state then
+			el.switch_state = state
+			G.run_action({ name = defines.events.on_gui_switch_state_changed, element = el }, sp, el)
+		end
+		G.refresh_one(sp)
+		el = find()
+		return el and el.switch_state or false
 	end,
 	--- Issue #651: the caption of the element `element` of the stand-in's open window after a refresh (nil: no such element)
 	stand_in_caption = function(name, element)
