@@ -481,7 +481,11 @@ end
 --- button scrolls into view when the row is in a scroll pane (issue #380). Nothing happens in a picker without a quality
 --- row (a place that takes none, a game with one quality), while a fluid is chosen (the buttons are disabled then) and at
 --- the ends of the row. Returns the new quality, nil when nothing changed.
-function M.step_quality(frame, delta)
+--- Issue #812: only with an empty cursor (`cursor_empty`; nil counts as empty): the keys are not taken from the game, which
+--- changes the quality of the stack or ghost the cursor holds, and one notch must not change that and the picker (the rule
+--- of the ME Terminal's filter, issue #804). A fluid held with the pipette key is no cursor item.
+function M.step_quality(frame, delta, cursor_empty)
+	if cursor_empty == false then return nil end
 	local t = frame.tags
 	local row = G.find(frame, "fork_me_pk_q")
 	if t.plain or t.kind == "fluid" or not row then return nil end
@@ -744,7 +748,8 @@ end)
 
 --- Issue #803: the game's quality keys (custom inputs linked to "cycle-quality-up" / "cycle-quality-down", Alt + mouse
 --- wheel by default, not consumed: the game's own cycling goes on) step the quality of the shown picker. A picker that
---- Escape hid does not count.
+--- Escape hid does not count. Issue #812: with something in the cursor the shown picker stays as it is (the key is the
+--- game's then), and the terminal's filter behind it is not stepped either.
 --- Issue #804: with no picker shown the keys go to `M.on_quality_key(player, delta)` when a module set it (the ME
 --- Terminal's quality filter; it requires this module, so it registers here instead of the other way round).
 M.on_quality_key = nil
@@ -753,7 +758,7 @@ for name, delta in pairs({ ["fork-me-picker-quality-up"] = 1, ["fork-me-picker-q
 		local player = game.get_player(event.player_index)
 		local frame = player and picker_of(player)
 		if frame and frame.visible then
-			M.step_quality(frame, delta)
+			M.step_quality(frame, delta, player.is_cursor_empty())
 		elseif player and M.on_quality_key then
 			M.on_quality_key(player, delta)
 		end
