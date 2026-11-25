@@ -398,6 +398,8 @@ local function check_unified(st)
 	local ci = at("me-circuit-interface", 38.5, 2.5)
 	local cinfo = ci and remote.call("gregtorio-me-circuit", "get_circuit", ci)
 	expect(cinfo and cinfo.signals and cinfo.signals > 0, "circuit interface: " .. serpent.line(cinfo))
+	--- me-network issue #809: a record of before has no mode: the contents
+	expect(cinfo and cinfo.mode == "contents", "an old circuit interface's mode: " .. tostring(cinfo and cinfo.mode))
 	local maint = at("me-level-maintainer", 40.5, 2.5)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
