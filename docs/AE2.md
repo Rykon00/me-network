@@ -248,7 +248,8 @@ Needs a working network and no pole: the controller draws its power (8 kW). The 
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
 name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
 tabs (issue #514, only in a game with qualities: a comparator **>**, **<**, **=**, **≥**, **≤** or **≠** (as in the
-game's own filters, issue #520) and **Any quality** or a quality;
+game's own filters, issue #520) and **Any quality** or a quality; the game's "Increase quality" / "Decrease quality"
+keys step it while no picker is shown and the cursor is empty, issue #804;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
@@ -1500,7 +1501,11 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   slot opens it with its element and quality chosen (on its tab, the list scrolled to it), so both can be changed; right
   click empties a slot. For an empty slot it opens on the **tab you used last** (issue #800: the tab you clicked or the
   group of what you confirmed, each player's own, kept in the save; a picker that does not list that group starts on
-  its first tab). The item buttons show the chosen quality in their corner. Only items (with quality) and fluids are
+  its first tab). The item buttons show the chosen quality in their corner. The game's **"Increase quality"** and
+  **"Decrease quality"** keys (Alt + mouse wheel by default, issue #803) move the chosen quality one step along the row
+  and stop at its ends, as in the game's own pickers; nothing happens while a fluid is chosen or in a picker without a
+  quality row. With an item or a ghost in the cursor the keys change that one, as everywhere in the game, and the
+  picker stays as it is (issue #812). Only items (with quality) and fluids are
   listed, no virtual signal and no other signal.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),

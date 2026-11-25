@@ -684,10 +684,10 @@ return function(H)
 			local names = {}
 			for i, name in ipairs(qs) do names[i] = name end
 			for i = #names + 1, 120 do names[i] = "zz-devcheck-quality-" .. i end
-			local function cyc(n, extra, delta, temp)
+			local function cyc(n, extra, delta, temp, cursor_empty)
 				local t = { kinds = both, filter = "", quality = names[1], data = {} }
 				for k, v in pairs(extra or {}) do t[k] = v end
-				return remote.call(GUI, "picker_cycle_view", n, t, delta, temp) or {}
+				return remote.call(GUI, "picker_cycle_view", n, t, delta, temp, cursor_empty) or {}
 			end
 			local up = cyc(5, nil, 1)
 			expect(up.to == names[2] and up.quality == names[2] and line(up.toggled) == line({ names[2] }) and up.scrolled == nil,
@@ -698,6 +698,13 @@ return function(H)
 			local top, low = cyc(5, { quality = names[5] }, 1), cyc(5, nil, -1)
 			expect(top.to == nil and top.quality == names[5] and low.to == nil and low.quality == names[1],
 				"the ends of the row: " .. line({ top, low }))
+			--- issue #812: with something in the cursor the key is the game's (it changes that stack): the picker stays, up
+			--- and down, with and without a choice; an empty cursor (said or not) steps
+			local held, held_item = cyc(5, nil, 1, nil, false), cyc(5, { kind = "item", name = "iron-plate", quality = names[3] }, -1, nil, false)
+			expect(held.to == nil and held.quality == names[1] and held_item.to == nil
+				and held_item.quality == names[3], "a key with something in the cursor: nothing " .. line({ held, held_item }))
+			local free = cyc(5, nil, 1, nil, true)
+			expect(free.to == names[2] and free.quality == names[2], "a key with an empty cursor: a step " .. line(free))
 			local fluid = cyc(5, { kind = "fluid", name = "water" }, 1)
 			expect(fluid.to == nil and fluid.quality == names[1], "a fluid is chosen: nothing " .. line(fluid))
 			local noq, norow = cyc(5, { plain = true }, 1), cyc(0, nil, 1)

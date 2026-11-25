@@ -3056,8 +3056,9 @@ remote.add_interface("gregtorio-me-gui", {
 	--- issue #803: one step of the quality keys: the pure step, and the step in a stand-in of the picker's frame with `tags`
 	--- and a quality row of `n` qualities (as picker_quality_view makes them; `n` 0: no row). Returns { to = the step's
 	--- answer, quality = the frame's afterwards, toggled (names), scrolled = the quality scrolled to (a row in a pane) }.
+	--- Issue #812: `cursor_empty` false is a key pressed with something in the cursor (nil: an empty cursor).
 	picker_cycle_quality = function(qualities, current, delta) return picker.cycle_quality(qualities, current, delta) end,
-	picker_cycle_view = function(n, tags, delta, temperature)
+	picker_cycle_view = function(n, tags, delta, temperature, cursor_empty)
 		local names = picker.qualities()
 		for i = #names + 1, n do names[i] = "zz-devcheck-quality-" .. i end
 		while #names > n do names[#names] = nil end
@@ -3070,7 +3071,7 @@ remote.add_interface("gregtorio-me-gui", {
 			row, pane = picker.add_quality_row(bottom, names, temperature)
 			if pane then pane.scroll_to_element = function(b) out.scrolled = b.tags.quality end end
 		end
-		out.to = picker.step_quality(frame, delta)
+		out.to = picker.step_quality(frame, delta, cursor_empty)
 		out.quality = frame.tags.quality
 		for _, b in ipairs(row and row.children or {}) do
 			if b.toggled then out.toggled[#out.toggled + 1] = b.tags.quality end
