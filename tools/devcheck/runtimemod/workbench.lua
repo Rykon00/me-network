@@ -569,6 +569,69 @@ return function(H)
 		expect(#groups >= 2 and not gset["signals"], "the picker's groups " .. line(groups))
 		local g1 = remote.call(GUI, "picker_entries", both, nil, groups[1])
 		expect(#g1 > 0 and #g1 < #all, "the entries of one group")
+		--- issue #800: the group a picker opens on: the preset's, else the remembered one when the picker lists it, else the
+		--- first; what is remembered is per player and a removed player's entry is cleared
+		do
+			local function initial(kinds, preset, last) return remote.call(GUI, "picker_initial_group", kinds, preset, last) end
+			local plate = prototypes.item["iron-plate"].group.name
+			local water = prototypes.fluid["water"].group.name
+			local other                                      -- (a listed group that is neither the first nor the iron plate's)
+			for _, g in ipairs(groups) do
+				if g ~= groups[1] and g ~= plate then other = g break end
+			end
+			expect(other ~= nil, "a third group for the test: " .. line(groups))
+			expect(initial(both, { kind = "item", name = "iron-plate" }, other) == plate and plate ~= other,
+				"a preset opens on its group, not the remembered one: " .. tostring(initial(both, { kind = "item", name = "iron-plate" }, other)))
+			expect(initial(both, { kind = "fluid", name = "water" }, other) == water, "a fluid preset opens on its group")
+			expect(initial(both, nil, other) == other, "no preset: the remembered group: " .. tostring(initial(both, nil, other)))
+			expect(initial(both, nil, "zz-no-such-group") == groups[1] and initial(both, nil, "signals") == groups[1],
+				"a remembered group the picker does not list: the first group")
+			expect(initial(both, nil, nil) == groups[1], "nothing remembered: the first group")
+			--- a preset the picker cannot take (its kind is not allowed, an unknown name) counts as none
+			expect(initial(items_only, { kind = "fluid", name = "water" }, other) == other
+				and initial(both, { kind = "item", name = "zz-no-such-item" }, nil) == groups[1], "a preset that is not allowed or unknown")
+			--- a fluid-only picker: a remembered group without a fluid is not listed there
+			local fgroups = remote.call(GUI, "picker_groups", fluids_only)
+			local fset, itemish = {}, nil
+			for _, g in ipairs(fgroups) do fset[g] = true end
+			for _, g in ipairs(groups) do
+				if not fset[g] then itemish = g break end
+			end
+			if itemish then
+				expect(initial(fluids_only, nil, itemish) == fgroups[1] and initial(both, nil, itemish) == itemish,
+					"a fluid-only picker does not open on a group without fluids")
+			end
+			local function mem(index, group, forget) return remote.call(GUI, "picker_remembered", index, group, forget) end
+			expect(mem(9800) == nil and mem(9801) == nil, "nothing is remembered at first")
+			expect(mem(9800, other) == other and mem(9801) == nil and mem(9801, plate) == plate and mem(9800) == other,
+				"the remembered group is each player's own")
+			expect(mem(9800, nil, true) == nil and mem(9801) == plate, "a removed player's group is cleared, the other's stays")
+			expect(mem(9801, nil, true) == nil and mem(9802, nil, true) == nil, "clearing a player without an entry")
+			--- the grid's item buttons show the chosen quality (not normal, not the fluids, not in a picker without quality)
+			local function view(tags, chosen) return remote.call(GUI, "picker_grid_view", tags, chosen) or {} end
+			local function tags(extra)
+				local t = { kinds = both, filter = "", quality = "normal", group = water, data = {} }
+				for k, v in pairs(extra or {}) do t[k] = v end
+				return t
+			end
+			local function only(counts, key) return counts and next(counts) == key and next(counts, key) == nil and counts[key] > 0 end
+			local plain = view(tags())
+			expect(only(plain.fluid, "none") and (next(plain.item) == nil or only(plain.item, "none")), "normal quality: no badge " .. line(plain))
+			if q then
+				local pg = view(tags({ group = plate }))
+				expect(only(pg.item, "none"), "normal quality: no badge on the items " .. line(pg))
+				local preset = view(tags({ group = plate, quality = q }))
+				expect(only(preset.item, q), "a preset's quality on the item buttons " .. line(preset))
+				local clicked = view(tags({ group = plate }), q)
+				expect(only(clicked.item, q), "a click on a quality shows it on the item buttons " .. line(clicked))
+				local back = view(tags({ group = plate, quality = q }), "normal")
+				expect(only(back.item, "none"), "a click on normal takes the badge away " .. line(back))
+				local mixed = view(tags({ filter = "water" }), q)
+				expect(only(mixed.fluid, "none") and (next(mixed.item) == nil or only(mixed.item, q)), "fluids never show a quality " .. line(mixed))
+				local noq = view(tags({ group = plate, plain = true, quality = q }), q)
+				expect(only(noq.item, "none"), "a picker without quality shows none " .. line(noq))
+			end
+		end
 		local qs = remote.call(GUI, "workbench_qualities")
 		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
 		--- issue #291: the quality buttons wrap: the game's five in one row, 30 (Infinite Quality Tiers) in rows of 10, or of 5
@@ -596,6 +659,64 @@ return function(H)
 				and line(v.toggled) == line({ "zz-devcheck-quality-117" }),
 				"120 qualities" .. (temp and " next to the temperature field" or "") .. ": " .. line({ v.parent, v.pane, v.columns,
 				#(v.buttons or {}), v.toggled }))
+		end
+		--- issue #803: the game's quality keys step the chosen quality in the picker. The pure step: up and down, it stops at
+		--- both ends, a quality the list does not hold gives the first, one quality or none changes nothing.
+		do
+			local function step(list, current, delta) return remote.call(GUI, "picker_cycle_quality", list, current, delta) end
+			local five = { "normal", "uncommon", "rare", "epic", "legendary" }
+			expect(step(five, "normal", 1) == "uncommon" and step(five, "rare", 1) == "epic" and step(five, "epic", 1) == "legendary",
+				"a step up: " .. line({ step(five, "normal", 1), step(five, "rare", 1), step(five, "epic", 1) }))
+			expect(step(five, "legendary", -1) == "epic" and step(five, "rare", -1) == "uncommon" and step(five, "uncommon", -1) == "normal",
+				"a step down: " .. line({ step(five, "legendary", -1), step(five, "rare", -1), step(five, "uncommon", -1) }))
+			expect(step(five, "legendary", 1) == "legendary" and step(five, "normal", -1) == "normal",
+				"it stops at the ends: " .. line({ step(five, "legendary", 1), step(five, "normal", -1) }))
+			expect(step(five, "rare", 5) == "epic" and step(five, "rare", -3) == "uncommon" and step(five, "rare", 0) == "rare",
+				"one step per event, whatever the number: " .. line({ step(five, "rare", 5), step(five, "rare", -3), step(five, "rare", 0) }))
+			expect(step(five, "zz-no-such-quality", 1) == "normal" and step(five, "zz-no-such-quality", -1) == "normal"
+				and step(five, nil, 1) == "normal", "an unknown quality gives the first: " .. line({ step(five, "zz-no-such-quality", 1),
+				step(five, "zz-no-such-quality", -1), step(five, nil, 1) }))
+			expect(step({ "normal" }, "normal", 1) == "normal" and step({ "normal" }, "normal", -1) == "normal"
+				and step({ "normal" }, "rare", 1) == "normal", "one quality only")
+			expect(step({}, "normal", 1) == "normal" and step({}, nil, -1) == nil, "no quality at all")
+			--- the step in the picker's frame: the tags and the marked button follow; nothing in a picker without quality or
+			--- without a row, with a fluid chosen and at the ends; a row in a scroll pane scrolls to the new button
+			local names = {}
+			for i, name in ipairs(qs) do names[i] = name end
+			for i = #names + 1, 120 do names[i] = "zz-devcheck-quality-" .. i end
+			local function cyc(n, extra, delta, temp, cursor_empty)
+				local t = { kinds = both, filter = "", quality = names[1], data = {} }
+				for k, v in pairs(extra or {}) do t[k] = v end
+				return remote.call(GUI, "picker_cycle_view", n, t, delta, temp, cursor_empty) or {}
+			end
+			local up = cyc(5, nil, 1)
+			expect(up.to == names[2] and up.quality == names[2] and line(up.toggled) == line({ names[2] }) and up.scrolled == nil,
+				"a step up in the picker: " .. line(up))
+			local item = cyc(5, { kind = "item", name = "iron-plate", quality = names[3] }, -1)
+			expect(item.to == names[2] and item.quality == names[2] and line(item.toggled) == line({ names[2] }),
+				"a step down with an item chosen: " .. line(item))
+			local top, low = cyc(5, { quality = names[5] }, 1), cyc(5, nil, -1)
+			expect(top.to == nil and top.quality == names[5] and low.to == nil and low.quality == names[1],
+				"the ends of the row: " .. line({ top, low }))
+			--- issue #812: with something in the cursor the key is the game's (it changes that stack): the picker stays, up
+			--- and down, with and without a choice; an empty cursor (said or not) steps
+			local held, held_item = cyc(5, nil, 1, nil, false), cyc(5, { kind = "item", name = "iron-plate", quality = names[3] }, -1, nil, false)
+			expect(held.to == nil and held.quality == names[1] and held_item.to == nil
+				and held_item.quality == names[3], "a key with something in the cursor: nothing " .. line({ held, held_item }))
+			local free = cyc(5, nil, 1, nil, true)
+			expect(free.to == names[2] and free.quality == names[2], "a key with an empty cursor: a step " .. line(free))
+			local fluid = cyc(5, { kind = "fluid", name = "water" }, 1)
+			expect(fluid.to == nil and fluid.quality == names[1], "a fluid is chosen: nothing " .. line(fluid))
+			local noq, norow = cyc(5, { plain = true }, 1), cyc(0, nil, 1)
+			expect(noq.to == nil and noq.quality == names[1] and norow.to == nil and norow.quality == names[1],
+				"a picker without quality or without a row: nothing " .. line({ noq, norow }))
+			for _, temp in ipairs({ false, true }) do
+				local far = cyc(120, { quality = names[60] }, 1, temp)
+				expect(far.to == names[61] and far.scrolled == names[61] and line(far.toggled) == line({ names[61] }),
+					"a row in a scroll pane scrolls to the new quality: " .. line(far))
+				local stay = cyc(120, { quality = names[120] }, 1, temp)
+				expect(stay.to == nil and stay.scrolled == nil, "the end of a scrolling row: " .. line(stay))
+			end
 		end
 
 		--- an empty workbench: one free slot, both kinds offered

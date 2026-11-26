@@ -1888,6 +1888,12 @@ local function open_circuit(player, entity)
 	G.label(content, { "fork-me-circuit.circuit-help" }, WIDTH)
 	content.add{ type = "switch", switch_state = d.enabled and "right" or "left", left_label_caption = { "fork-me-gui.off" },
 		right_label_caption = { "fork-me-gui.on" }, tags = G.act("circ_on") }
+	--- issue #809: the output mode, the network's contents (left) or what its failed crafting starts lack (right)
+	content.add{ type = "switch", name = "fork_me_circ_mode", switch_state = d.mode == "missing" and "right" or "left",
+		left_label_caption = { "fork-me-circuit.circuit-mode-contents" },
+		left_label_tooltip = { "fork-me-circuit.circuit-mode-contents-tooltip" },
+		right_label_caption = { "fork-me-circuit.circuit-mode-missing" },
+		right_label_tooltip = { "fork-me-circuit.circuit-mode-missing-tooltip" }, tags = G.act("circ_mode") }
 	content.add{ type = "flow", name = "fork_me_circ_filters", direction = "vertical" }
 	G.label(content, "", WIDTH, nil, "fork_me_circ_status")
 	M.refresh_circuit(player, G.window_of(player))
@@ -1903,8 +1909,13 @@ function M.refresh_circuit(player, frame)
 			G.key_button(t, d.filters[i], G.act("circ_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 		end
 	end)
+	local mode = G.find(frame, "fork_me_circ_mode")            -- (issue #809: a paste may have changed it)
+	local side = d.mode == "missing" and "right" or "left"
+	if mode and mode.switch_state ~= side then mode.switch_state = side end
 	local status = G.find(frame, "fork_me_circ_status")
 	if not d.network then status.caption = { "fork-me-circuit.circuit-no-network" }
+	elseif d.mode == "missing" then
+		status.caption = d.signals > 0 and { "fork-me-circuit.circuit-missing", d.signals } or { "fork-me-circuit.circuit-missing-none" }
 	elseif #d.filters == 0 then status.caption = { "fork-me-circuit.circuit-all", d.signals }
 	else status.caption = { "fork-me-circuit.circuit-filtered", d.signals } end
 	return true
@@ -1937,6 +1948,15 @@ G.on("circ_on", function(event, player, el)
 	if event.name ~= defines.events.on_gui_switch_state_changed then return end
 	local entity = window_entity(player)
 	if entity then circuit.set_circuit_enabled(entity, el.switch_state == "right") end
+end)
+
+--- issue #809: the output mode
+G.on("circ_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_switch_state_changed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	circuit.set_circuit_mode(entity, el.switch_state == "right" and "missing" or "contents")
+	G.refresh_one(player)
 end)
 
 --------------------------------------------------------------------------------
@@ -3000,6 +3020,20 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_clear_slot = function(entity, index) return M.workbench_clear_slot(entity, index) end,
 	picker_groups = function(kinds) return picker.group_names(kinds) end,
 	picker_entries = function(kinds, filter, group, index) return picker.entries(kinds, filter, group, index) end,
+	--- issue #800: the group a picker opens on (the preset's, the remembered one when listed, the first), what is
+	--- remembered for a player (`group` given: remember it first; `forget`: clear it first), and the grid's item buttons
+	--- with the quality they show, in a stand-in of the picker's frame with `tags`, after a click on quality `chosen`
+	picker_initial_group = function(kinds, preset, last) return picker.initial_group(kinds, preset, last) end,
+	picker_remembered = function(index, group, forget)
+		if group then picker.remember(index, group) end
+		if forget then picker.forget_player(index) end
+		return picker.remembered(index)
+	end,
+	picker_grid_view = function(tags, chosen)
+		local frame = stand_in_element{ type = "frame", tags = tags }
+		frame.add{ type = "scroll-pane", name = "fork_me_pk_body" }
+		return picker.grid_view(frame, chosen)
+	end,
 	--- issue #295: a player's translated names as if they had arrived (the harness has no player), and what they hold
 	names_set = function(index, names) Names.set_names(index, names) end,
 	names_of = function(index) return Names.names_of(index) end,
@@ -3018,6 +3052,31 @@ remote.add_interface("gregtorio-me-gui", {
 		local frame = stand_in_element{ type = "frame", tags = { quality = "normal", kind = "item" } }
 		local bottom = frame.add{ type = "flow", name = "bottom" }
 		return picker.quality_view(frame, bottom, names, temperature, chosen)
+	end,
+	--- issue #803: one step of the quality keys: the pure step, and the step in a stand-in of the picker's frame with `tags`
+	--- and a quality row of `n` qualities (as picker_quality_view makes them; `n` 0: no row). Returns { to = the step's
+	--- answer, quality = the frame's afterwards, toggled (names), scrolled = the quality scrolled to (a row in a pane) }.
+	--- Issue #812: `cursor_empty` false is a key pressed with something in the cursor (nil: an empty cursor).
+	picker_cycle_quality = function(qualities, current, delta) return picker.cycle_quality(qualities, current, delta) end,
+	picker_cycle_view = function(n, tags, delta, temperature, cursor_empty)
+		local names = picker.qualities()
+		for i = #names + 1, n do names[i] = "zz-devcheck-quality-" .. i end
+		while #names > n do names[#names] = nil end
+		local frame = stand_in_element{ type = "frame", tags = tags }
+		local bottom = frame.add{ type = "flow", name = "bottom" }
+		local out = { toggled = {} }
+		local row
+		if n > 0 then
+			local pane
+			row, pane = picker.add_quality_row(bottom, names, temperature)
+			if pane then pane.scroll_to_element = function(b) out.scrolled = b.tags.quality end end
+		end
+		out.to = picker.step_quality(frame, delta, cursor_empty)
+		out.quality = frame.tags.quality
+		for _, b in ipairs(row and row.children or {}) do
+			if b.toggled then out.toggled[#out.toggled + 1] = b.tags.quality end
+		end
+		return out
 	end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
@@ -3288,6 +3347,31 @@ remote.add_interface("gregtorio-me-gui", {
 		out.circuit, out.logistic = out.names.fork_me_side_circuit == true, out.names.fork_me_side_logistic == true
 		return out
 	end,
+	--- Issue #809 (tests): the switch of the stand-in's open window whose action is `act` set to `state` ("left", "right")
+	--- through its handler, as a click does; then its state after a refresh. False when there is no such switch.
+	stand_in_switch = function(name, act, state)
+		local sp = stand_ins[name]
+		local function find()
+			local frame = G.window_of(sp)
+			local queue, i = { frame }, 1
+			while frame and queue[i] do
+				for _, c in pairs(queue[i].children) do
+					if c.type == "switch" and (c.tags or {}).fork_me_act == act then return c end
+					queue[#queue + 1] = c
+				end
+				i = i + 1
+			end
+		end
+		local el = find()
+		if not el then return false end
+		if state then
+			el.switch_state = state
+			G.run_action({ name = defines.events.on_gui_switch_state_changed, element = el }, sp, el)
+		end
+		G.refresh_one(sp)
+		el = find()
+		return el and el.switch_state or false
+	end,
 	--- Issue #651: the caption of the element `element` of the stand-in's open window after a refresh (nil: no such element)
 	stand_in_caption = function(name, element)
 		local sp = stand_ins[name]
@@ -3396,6 +3480,20 @@ remote.add_interface("gregtorio-me-gui", {
 			out[i] = { type = c.type, name = c.name, items = c.items, selected_index = c.selected_index }
 		end
 		return out
+	end,
+	--- issue #804: one step of the quality keys in the quality drop-down of a row built for the filter `quality`, with an
+	--- empty cursor or not: { to = the step's answer, selected_index = the drop-down's afterwards, name = its quality (nil:
+	--- "Any quality") }; nil without a drop-down (a game with one quality)
+	terminal_quality_step = function(quality, delta, cursor_empty)
+		local frame = stand_in_element{ type = "frame" }
+		local top = terminal.build_top(frame, { filter = "", quality = quality })
+		for _, c in ipairs(top.children) do
+			if c.name == "fork_me_quality" then
+				local to = terminal.step_quality_filter(c, delta, cursor_empty)
+				return { to = to, selected_index = c.selected_index, name = c.tags.names[c.selected_index - 1] }
+			end
+		end
+		return nil
 	end,
 	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }

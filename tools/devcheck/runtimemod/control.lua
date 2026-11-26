@@ -1253,6 +1253,9 @@ panel639 = require("panel639")({ me_place = me_place, power = power, me_report =
 --- me-network issue #780: the filters of the export and import bus from the circuit (circuitflt.lua)
 circuitflt780 = require("circuitflt")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #809: the ME Circuit Interface's mode "Missing for crafting" (circuitmissing.lua)
+missing809 = require("circuitmissing")({ me_place = me_place, power = power, me_report = me_report, blueprint_copy = blueprint_copy,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #781: parametrised blueprints, the mirror of the settings in the blocks' own fields (params.lua)
 params781 = require("params")({ me_place = me_place, me_report = me_report })
 --- me-network issue #414: the storage cells above 256k and the Singularity cell (bigcells.lua)
@@ -1449,6 +1452,7 @@ local function tests_running()
 	circuitbus412.running(check)
 	panel639.running(check)
 	circuitflt780.running(check)
+	missing809.running(check)
 	params781.running(check)
 	bigcells414.running(check)
 	bigcpus415.running(check)
@@ -2474,6 +2478,7 @@ script.on_nth_tick(10, function()
 	circuitbus412.tick()
 	panel639.tick()
 	circuitflt780.tick()
+	missing809.tick()
 	params781.tick()
 	bigcells414.tick()
 	bigcpus415.tick()
@@ -4639,7 +4644,15 @@ function circuit_test()
 			return next_phase("filtered")
 		end
 		if game.tick > st.phase_tick + limit then
-			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
+			local cb = ci.get_control_behavior()
+			local sec = cb and cb.sections_count > 0 and cb.get_section(1)
+			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want)
+				.. " (tick " .. game.tick .. ", phase since " .. st.phase_tick .. ", limit " .. limit .. ", queues " .. serpent.line(q)
+				.. ", record " .. serpent.line(remote.call(C38, "get_circuit", ci)) .. ", network " .. tostring(net and net.id)
+				.. ", sections " .. tostring(cb and cb.sections_count) .. ", section filters " .. tostring(sec and #sec.filters)
+				.. ", section active " .. tostring(sec and sec.active) .. ", status " .. tostring(ci.status)
+				.. ", wire network " .. tostring(ci.get_circuit_network(RED) and ci.get_circuit_network(RED).network_id)
+				.. ", pole network " .. tostring(pole.get_circuit_network(RED) and pole.get_circuit_network(RED).network_id) .. ")")
 			return finish()
 		end
 	elseif st.phase == "filtered" then
@@ -5500,6 +5513,7 @@ script.on_init(function()
 	for _, f in pairs(circuitbus412.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(panel639.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(circuitflt780.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(missing809.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(params781.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcells414.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end

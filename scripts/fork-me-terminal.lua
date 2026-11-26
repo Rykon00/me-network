@@ -1237,6 +1237,33 @@ G.on("term_quality", function(event, player, el)
 	set_quality(player, nil, el.tags.names and el.tags.names[el.selected_index - 1])
 end)
 
+--- Issue #804: one step of the game's "Increase quality" / "Decrease quality" key in the quality drop-down `dd` of the
+--- window (entry 1 is "Any quality", then the qualities, lowest first): up for a positive `delta`, down for a negative
+--- one; it stops at both ends, as the picker's row does (picker.cycle_quality). Only with an empty cursor
+--- (`cursor_empty`): the keys are not taken from the game, which changes the quality of what the cursor holds, and
+--- one notch must not change that and the filter. Returns the new index (the drop-down shows it), nil when nothing
+--- changed.
+function M.step_quality_filter(dd, delta, cursor_empty)
+	if not (cursor_empty and dd) then return nil end
+	local n = #(dd.tags.names or {}) + 1
+	local step = delta > 0 and 1 or delta < 0 and -1 or 0
+	local at = dd.selected_index or 1
+	local to = math.max(1, math.min(n, at + step))
+	if to == at then return nil end
+	dd.selected_index = to                                        -- (set by a script: no selection event)
+	return to
+end
+
+--- the quality keys with no picker shown (scripts/fork-me-picker.lua has the events): the open terminal window's filter
+picker.on_quality_key = function(player, delta)
+	if not st_of(player) then return end
+	local window = G.window_of(player)
+	local dd = window and window.valid and G.find(window, "fork_me_quality")
+	if not (dd and dd.valid) then return end
+	local to = M.step_quality_filter(dd, delta, player.is_cursor_empty())
+	if to then set_quality(player, nil, dd.tags.names and dd.tags.names[to - 1]) end
+end
+
 G.on("term_kind", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
@@ -1590,6 +1617,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)
 	VC.forget_player(event.player_index)                                                         -- (issue #440: wireless view cells)
 	if N.highlight then N.highlight.clear(event.player_index) end                                -- (issue #699: the highlight)
+	picker.forget_player(event.player_index)                                                     -- (issue #800: the picker's last group)
 end)
 
 return M

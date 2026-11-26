@@ -14,6 +14,10 @@
 ---     fluid's signal is the sum of its temperatures (with filters: of those the filters take; a fluid filter without
 ---     a temperature takes every one). A level maintainer's fluid is one temperature (its key, "fluid/<name>" for the
 ---     default one): it counts and crafts that key.
+---     Issue #809: its second mode "missing" writes what the network's failed crafting starts lack instead (the notes of
+---     issue #532, autocraft.waiting_needs: level maintainer rows and Crafting Cards; never a player's request): one signal
+---     per item (with its quality) or fluid, the value the need now (what they lacked plus what the network had then,
+---     less what it has now). The filters apply in both modes. A record without `mode` writes the contents.
 ---   * Settings of both are copied by settings paste and cloning and kept in blueprints (entity tags
 ---     "fork_me_maintainer" and "fork_me_circuit").
 --- Work (issue #5, a tick hook of fork-me-autocraft.lua, scripts/fork-me-schedule.lua): every maintainer and circuit
@@ -26,7 +30,9 @@
 --- shared by its interfaces (net.sigs; issue #721: kept and counted again only for the keys that moved). Issue #420 (lever 7): a list equal to the last one keeps its version (nothing is
 --- written); a list that differs from the last one only in a few amounts (DIFF_MAX) names those slots (net.sigs.diff), and
 --- an interface that wrote the last list writes only them; a filtered interface writes nothing while its signals are the ones
---- it wrote (rec.vsig).
+--- it wrote (rec.vsig). Issue #809: an interface in the mode "missing" takes the network's list of what crafting lacks instead
+--- (net.msigs, made at most once per CIRCUIT_INTERVAL and only while such an interface is visited; counted again only when
+--- the notes or the network's contents changed), through the same queue, budget and write rules.
 --- State: storage.fork_ae2.maintainers, mlist, mq, circuits, clist, cq (created lazily, so older saves need
 --- nothing). GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
@@ -72,7 +78,7 @@ local function state()
 		s.mcursor = 1
 	end
 	if not s.circuits then
-		s.circuits = {}      -- unit_number -> { entity, filters = { key, ... }, signals }
+		s.circuits = {}      -- unit_number -> { entity, filters = { key, ... }, signals, mode = "missing" or nil (issue #809) }
 		s.clist = {}
 		s.ccursor = 1
 	end
@@ -720,6 +726,51 @@ local function signals_of(net)
 	return c
 end
 
+--- Issue #809: the signals of what the failed crafting starts of a network lack (autocraft.waiting_needs: { key -> { sum,
+--- base } }, cached there), shared by the network's interfaces in the mode "missing": { tick, cver, n, list } in storage
+--- (net.msigs: the version `n` an interface wrote decides the game state). A signal's amount is the need now (sum + base -
+--- the network's count, rounded up, positive ones only); a fluid's temperatures are added up (`keys`: the need of each, for
+--- the filters). Made at most once per CIRCUIT_INTERVAL; while neither the notes (the `totals` table of waiting_needs is a
+--- new one whenever they change or run out; kept per load, a pure memo: a list made again is the same list) nor the network's
+--- contents (net.cver) changed, the last list stands and nothing is counted.
+local EMPTY = {}
+local noted = setmetatable({}, { __mode = "k" })     -- net.msigs record -> the totals table its list was made from
+local function missing_of(net)
+	local c = net.msigs
+	local now = game.tick
+	if c and now - c.tick < CIRCUIT_INTERVAL and live_list(c.list) then return c end
+	local totals = N.usable(net) and autocraft.waiting_needs(net) or EMPTY
+	if c and c.cver == net.cver and noted[c] == totals and live_list(c.list) then
+		c.tick = now
+		return c
+	end
+	local out, by = {}, {}
+	for key, t in pairs(totals) do
+		local p = parts(key)
+		local need = not p[5] and math.ceil(t.sum + t.base - N.count_key(net, key) - 1e-9) or 0
+		if need > 0 then
+			local sig = by[p[4]]
+			if not sig then
+				sig = { type = p[1], name = p[2], quality = p[3], count = 0, order = p[4], keys = p[1] == "fluid" and {} or nil }
+				by[p[4]] = sig
+				out[#out + 1] = sig
+			end
+			sig.count = sig.count + need
+			if sig.keys then sig.keys[key] = need end
+		end
+	end
+	local list = laid_out(out)
+	live_lists[list] = true
+	if c and same_signals(c.list, list) then
+		c.tick, c.cver = now, net.cver                    -- (the same signals: the version stays)
+	else
+		c = { tick = now, cver = net.cver, n = (c and c.n or 0) + 1, list = list }
+		net.msigs = c
+	end
+	noted[c] = totals
+	return c
+end
+
 --- the signals an interface writes from a shared list: the filtered ones (filter: key -> true), the MAX_SIGNALS
 --- largest if there are more (ties by type, name and quality), in the list's order
 --- the section of an unfiltered interface per shared list (a pure function of the list, kept per load)
@@ -767,8 +818,12 @@ end
 local function circuit_step(rec, force)
 	local e = rec.entity
 	local net = network_of(e)
-	local sigs = net and signals_of(net)
-	local version = sigs and (net.id .. ":" .. sigs.n) or "-"
+	local missing = rec.mode == "missing"                             -- (issue #809: what crafting lacks instead)
+	local sigs
+	if net then
+		if missing then sigs = missing_of(net) else sigs = signals_of(net) end
+	end
+	local version = sigs and (net.id .. (missing and ":m" or ":") .. sigs.n) or "-"
 	if not force and rec.version == version then return end
 	local filter
 	if #rec.filters > 0 then
@@ -837,11 +892,21 @@ function M.set_circuit_filters(entity, keys)
 	return true
 end
 
+--- Issue #809: the output mode of an interface: "contents" (the network's contents, the default; also for anything else) or
+--- "missing" (what the network's failed crafting starts lack). Writes the signals at once.
+function M.set_circuit_mode(entity, mode)
+	if not (entity and entity.valid and entity.name == CIRCUIT) then return false end
+	local rec = circuit_record(state(), entity)
+	rec.mode = mode == "missing" and "missing" or nil
+	circuit_step(rec, true)
+	return true
+end
+
 function M.get_circuit(entity)
 	local s = storage.fork_ae2
 	local rec = entity and entity.valid and s and s.circuits and s.circuits[entity.unit_number]
 	if not rec then return nil end
-	return { filters = { table.unpack(rec.filters) }, signals = rec.signals, network = rec.net }
+	return { filters = { table.unpack(rec.filters) }, signals = rec.signals, network = rec.net, mode = rec.mode or "contents" }
 end
 
 --------------------------------------------------------------------------------
@@ -1037,9 +1102,14 @@ local function visit_circuit(rec, unit)
 	local s = storage.fork_ae2
 	if not rec.entity.valid then drop_circuit(s, unit) return end
 	local net = network_of(rec.entity)
-	if net and stale(net) then
-		signals_of(net)                                      -- the network's list now, the write at the next tick
-		Sched.at(s.cq, rec, unit, game.tick + 1)
+	--- (issue #809: an interface in the mode "missing" never makes the contents' list; its own is short and made in the step)
+	if net and rec.mode ~= "missing" and stale(net) then
+		--- the network's list now, the write at the next visit the budget has: at the front of the queue, before the backlog.
+		--- Due "at the next tick" it went behind every interface that waited already; with more interfaces than the budget
+		--- visits in CIRCUIT_INTERVAL it came round when the list was old again, and an interface alone on a network whose
+		--- contents keep changing made the list at every visit and never wrote it.
+		signals_of(net)
+		Sched.wake(s.cq, rec, unit)
 		return
 	end
 	local written = circuit_step(rec)
@@ -1084,9 +1154,11 @@ function M.on_built(entity, tags, source)
 		local rec = circuit_record(state(), entity)
 		local t = type(tags) == "table" and tags[CIRCUIT_TAG] or nil
 		if type(t) == "table" and type(t.filters) == "table" then
+			rec.mode = t.mode == "missing" and "missing" or nil        -- (issue #809; a tag without it: the contents)
 			M.set_circuit_filters(entity, t.filters)
 		elseif source and source.valid and source.name == CIRCUIT then
 			local from = M.get_circuit(source)
+			rec.mode = from and from.mode == "missing" and "missing" or nil
 			M.set_circuit_filters(entity, from and from.filters or {})
 		else
 			circuit_step(rec, true)        -- a blueprint also carries the signals of the moment: replace them
@@ -1147,6 +1219,7 @@ function M.on_entity_settings_pasted(event)
 		N.update_screen(dst)                    -- issue #254: the pasted condition
 	elseif src.name == CIRCUIT then
 		local from = M.get_circuit(src)
+		circuit_record(state(), dst).mode = from and from.mode == "missing" and "missing" or nil     -- (issue #809)
 		M.set_circuit_filters(dst, from and from.filters or {})
 	else
 		return
@@ -1164,7 +1237,8 @@ local function tag_blueprint(bp, mapping)
 				if rec then bp.set_blueprint_entity_tag(index, MAINT_TAG, settings_of(rec)) end
 			elseif entity.name == CIRCUIT and s.circuits then
 				local rec = s.circuits[entity.unit_number]
-				if rec then bp.set_blueprint_entity_tag(index, CIRCUIT_TAG, { filters = { table.unpack(rec.filters) } }) end
+				--- (issue #809: `mode` only when it is not the contents, so a tag of before and one of now are the same)
+				if rec then bp.set_blueprint_entity_tag(index, CIRCUIT_TAG, { filters = { table.unpack(rec.filters) }, mode = rec.mode }) end
 			end
 		end
 	end
@@ -1184,6 +1258,7 @@ function M.clean_removed_items()
 			net.sigs.by, net.sigs.cnt = nil, nil               -- (issue #721: no kept list across a change of the mods)
 		end
 		net.ckeys = nil
+		net.msigs = nil                                      -- (issue #809: the list of what crafting lacks, too)
 	end
 end
 
@@ -1237,6 +1312,7 @@ function M.on_configuration_changed()
 				local rec = circuit_record(s, e)
 				local old = old_c[unit]
 				if old then
+					rec.mode = old.mode == "missing" and "missing" or nil      -- (issue #809)
 					local seen = {}
 					for _, k in pairs(old.filters or {}) do            -- (issue #503: a replaced item's key is its replacement's)
 						local nk = valid_key(k)
@@ -1329,8 +1405,11 @@ remote.add_interface("gregtorio-me-circuit", {
 	get_maintainer = function(entity) return M.get_maintainer(entity) end,
 	--- list of keys, empty for everything; writes the signals at once
 	set_circuit_filters = function(entity, keys) return M.set_circuit_filters(entity, keys) end,
-	--- { filters, signals = number of signals written, network = network id }
+	--- { filters, signals = number of signals written, network = network id, mode = "contents" or "missing" (issue #809) }
 	get_circuit = function(entity) return M.get_circuit(entity) end,
+	--- issue #809: the output mode, "contents" (the network's contents) or "missing" (what its failed crafting starts lack);
+	--- writes the signals at once
+	set_circuit_mode = function(entity, mode) return M.set_circuit_mode(entity, mode) end,
 	--- the windows (R3): the maintainer's circuit condition, the circuit interface's output switch, the status
 	get_condition = function(entity) return M.get_condition(entity) end,
 	set_condition = function(entity, enabled, signal, comparator, constant)
@@ -1348,6 +1427,11 @@ remote.add_interface("gregtorio-me-circuit", {
 		if not (entity and entity.valid and entity.name == CIRCUIT) then return false end
 		circuit_step(circuit_record(state(), entity), true)
 		return true
+	end,
+	--- issue #809 (tests): a note of what a failed crafting start lacked, as the level maintainer and the Crafting Cards make
+	--- it (autocraft.note_missing): by the member `entity` of a network, under the name `owner`; `missing` nil: the note goes
+	note_missing = function(entity, owner, missing, upto)
+		autocraft.note_missing(owner, entity.unit_number, N.network_of(entity), missing, upto)
 	end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	built = function(entity, tags) M.on_built(entity, tags) end,

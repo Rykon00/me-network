@@ -9,8 +9,11 @@
 --- (`Picker.on_confirm(name, fn)`; `fn(player, data, choice)`, `choice` = { kind = "item" or "fluid", name, quality,
 --- temperature }). Issue #159: a fluid can be chosen with a temperature (a field in the bottom row, whole degrees; empty:
 --- none, which a filter reads as every temperature and a level maintainer or a pattern output as the default one).
---- Everything it knows lives in the frame's tags and the player's GUI: nothing is in `storage`, so another player or a
---- loaded save has nothing to agree on.
+--- What an open picker knows lives in the frame's tags and the player's GUI. One thing is in `storage` (issue #800):
+--- `storage.fork_me_picker_group[player_index]`, the name of the item group the player used last, so the next picker
+--- for an empty slot opens on that tab. The table is made when the first group is remembered and every reader takes a
+--- missing table or entry as "none" (a save from before it needs no migration); `M.forget_player` clears a removed
+--- player's entry.
 ---
 --- Closing: the frame is not the player's opened GUI (the window below it is). The game's close keys therefore close
 --- that window; the hook `G.on_window_closed` turns that into "the picker closes" (Escape) or "the picker confirms"
@@ -69,6 +72,21 @@ function M.qualities()
 	table.sort(out, function(a, b) return a.level < b.level end)
 	for i, q in ipairs(out) do out[i] = q.name end
 	return out
+end
+
+--- Issue #803: the quality one step from `current` in `qualities` (names, lowest first, as the quality row lists them):
+--- up for a positive `delta`, down for a negative one. It stops at both ends (no wrap); a `current` the list does not
+--- hold (a hidden quality, none) gives the first one; an empty list gives `current` back. Pure.
+function M.cycle_quality(qualities, current, delta)
+	local n = #qualities
+	if n == 0 then return current end
+	local at
+	for i, name in ipairs(qualities) do
+		if name == current then at = i break end
+	end
+	if not at then return qualities[1] end
+	local step = delta > 0 and 1 or delta < 0 and -1 or 0
+	return qualities[math.max(1, math.min(n, at + step))]
 end
 
 --- Issue #291: the quality buttons wrap in a table. With a mod that adds many qualities (Infinite Quality Tiers) one row of
@@ -212,6 +230,50 @@ local function group_of(kind, name)
 end
 
 --------------------------------------------------------------------------------
+--- the group a picker opens on (issue #800)
+--------------------------------------------------------------------------------
+
+--- the group player `index` used last (nil: none yet, or a save from before issue #800)
+function M.remembered(index)
+	local m = storage.fork_me_picker_group
+	return m and index and m[index] or nil
+end
+
+--- `group` is the one player `index` used last: a click on its tab, or a confirmed choice of that group
+function M.remember(index, group)
+	if not (index and type(group) == "string") then return end
+	local m = storage.fork_me_picker_group
+	if not m then
+		m = {}
+		storage.fork_me_picker_group = m
+	end
+	m[index] = group
+end
+
+--- on_player_removed (fork-me-terminal.lua; fork-me-gui.lua cannot require this module: it would be circular)
+function M.forget_player(index)
+	local m = storage.fork_me_picker_group
+	if m and index then m[index] = nil end
+end
+
+--- The group a picker of `kinds` opens on: the group of `preset` ({ kind, name }: a filled slot, when its kind is allowed
+--- and the prototype exists), else `last` (the remembered group) when this picker lists it (a fluid-only picker may not),
+--- else the first group it lists (nil when it lists none). Pure: the prototypes and its arguments only.
+function M.initial_group(kinds, preset, last)
+	if type(preset) == "table" and kinds[preset.kind] then
+		local g = group_of(preset.kind, preset.name)
+		if g then return g end
+	end
+	local groups = groups_for(kinds)
+	if last then
+		for _, g in ipairs(groups) do
+			if g.name == last then return last end
+		end
+	end
+	return groups[1] and groups[1].name or nil
+end
+
+--------------------------------------------------------------------------------
 --- the frame
 --------------------------------------------------------------------------------
 
@@ -231,12 +293,35 @@ local function picker_of(player)
 	return nil
 end
 
+--- Issue #800: the quality the item buttons of the grid show in their corner (`sprite-button.quality`, as the game's own
+--- picker does): the chosen one; nil for normal, for a picker without quality and in a game without qualities
+local function badge_of(t)
+	local q = t.quality
+	if t.plain or not q or q == "normal" or not script.feature_flags.quality or not prototypes.quality[q] then return nil end
+	return q
+end
+
+--- the item buttons of the grid show the chosen quality (after a click on another one)
+local function show_quality(frame)
+	local body = G.find(frame, "fork_me_pk_body")
+	if not body then return end
+	local badge = badge_of(frame.tags)
+	for _, tbl in pairs(body.children) do
+		if tbl.type == "table" then
+			for _, b in pairs(tbl.children) do
+				if b.name:sub(1, 2) == "i/" then b.quality = badge end      -- (button_name: an item's)
+			end
+		end
+	end
+end
+
 --- the list of the chosen group, or of every group for a search text
 local function fill(frame)
 	local t = frame.tags
 	local body = G.find(frame, "fork_me_pk_body")
 	if not body then return end
 	body.clear()
+	local badge = badge_of(t)
 	local filter, lower = Names.search(t.filter)
 	local names = Names.names_of(frame.player_index)               -- (issue #295: the names the player sees)
 	local shown, more = 0, false
@@ -253,6 +338,7 @@ local function fill(frame)
 							sprite = e.kind .. "/" .. e.name, tags = G.act("pk_item", { kind = e.kind, name = e.name }) }
 						b.elem_tooltip = { type = e.kind, name = e.name }
 						b.toggled = t.kind == e.kind and t.name == e.name
+						if badge and e.kind == "item" then b.quality = badge end
 					end
 				end
 				if more then break end
@@ -315,7 +401,8 @@ function M.open(player, spec)
 		if preset.kind == "fluid" and tonumber(preset.temperature) then t.temperature = math.floor(tonumber(preset.temperature) + 0.5) end
 	end
 	local groups = groups_for(kinds)
-	if not t.group then t.group = groups[1] and groups[1].name end
+	--- issue #800: a filled slot opens on its group (t.group above), an empty one on the group the player used last
+	t.group = M.initial_group(kinds, t.name and { kind = t.kind, name = t.name } or nil, M.remembered(player.index))
 
 	local frame = player.gui.screen.add{ type = "frame", name = M.NAME, direction = "vertical", tags = t }
 	local bar = frame.add{ type = "flow", direction = "horizontal" }
@@ -375,6 +462,11 @@ function M.open(player, spec)
 	frame.auto_center = true
 	fill(frame)
 	sync(frame)
+	--- issue #800: the chosen item or fluid in view (a group can be longer than the list is high)
+	if t.name then
+		local chosen = G.find(body, button_name(t.kind, t.name))
+		if chosen and chosen.valid then body.scroll_to_element(chosen, "top-third") end
+	end
 	--- issue #380: the chosen quality in view when the row scrolls
 	if qpane then
 		for _, b in pairs(G.find(qpane, "fork_me_pk_q").children) do
@@ -382,6 +474,34 @@ function M.open(player, spec)
 		end
 	end
 	return true
+end
+
+--- Issue #803: the game's "Increase quality" / "Decrease quality" key in the picker `frame`: the chosen quality moves one
+--- step in the quality row (its buttons are the list: M.qualities() in M.open), as a click on that button would, and the
+--- button scrolls into view when the row is in a scroll pane (issue #380). Nothing happens in a picker without a quality
+--- row (a place that takes none, a game with one quality), while a fluid is chosen (the buttons are disabled then) and at
+--- the ends of the row. Returns the new quality, nil when nothing changed.
+--- Issue #812: only with an empty cursor (`cursor_empty`; nil counts as empty): the keys are not taken from the game, which
+--- changes the quality of the stack or ghost the cursor holds, and one notch must not change that and the picker (the rule
+--- of the ME Terminal's filter, issue #804). A fluid held with the pipette key is no cursor item.
+function M.step_quality(frame, delta, cursor_empty)
+	if cursor_empty == false then return nil end
+	local t = frame.tags
+	local row = G.find(frame, "fork_me_pk_q")
+	if t.plain or t.kind == "fluid" or not row then return nil end
+	local names, buttons = {}, {}
+	for i, b in ipairs(row.children) do
+		names[i] = b.tags.quality
+		buttons[names[i]] = b
+	end
+	local to = M.cycle_quality(names, t.quality, delta)
+	if to == nil or to == t.quality then return nil end
+	set_tags(frame, { quality = to })
+	show_quality(frame)                                             -- (issue #800: the item buttons show it)
+	sync(frame)
+	local pane = G.find(frame, "fork_me_pk_q_pane")
+	if pane and buttons[to] then pane.scroll_to_element(buttons[to], "in-view") end
+	return to
 end
 
 --- Issue #380 (tests: the harness has no player): the quality row built into `frame`, a stand-in of the picker's frame made
@@ -399,6 +519,28 @@ function M.quality_view(frame, bottom, qualities, with_temperature, chosen)
 	for _, b in ipairs(q.children) do
 		out.buttons[#out.buttons + 1] = b.tags.quality
 		if b.toggled then out.toggled[#out.toggled + 1] = b.tags.quality end
+	end
+	return out
+end
+
+--- Issue #800 (tests: the harness has no player): the grid filled into `frame`, a stand-in of the picker's frame made by the
+--- caller (its tags as M.open sets them, a scroll pane "fork_me_pk_body" in it), then a click on quality `chosen` as the
+--- button's handler takes it. Returns { item = { [quality or "none"] = buttons }, fluid = the same }: what the buttons show.
+function M.grid_view(frame, chosen)
+	fill(frame)
+	if chosen then
+		set_tags(frame, { quality = chosen })
+		show_quality(frame)
+	end
+	local out = { item = {}, fluid = {} }
+	for _, tbl in ipairs(G.find(frame, "fork_me_pk_body").children) do
+		for _, b in ipairs(tbl.children or {}) do
+			local kind = b.tags and b.tags.kind
+			if out[kind] then
+				local q = b.quality or "none"
+				out[kind][q] = (out[kind][q] or 0) + 1
+			end
+		end
 	end
 	return out
 end
@@ -479,6 +621,8 @@ function M.confirm(player)
 	end
 	local data = t.data
 	frame.destroy()
+	--- issue #800: the group of what was chosen is the one used last (a choice found through the search counts too)
+	if choice then M.remember(player.index, group_of(choice.kind, choice.name)) end
 	if cb and choice then cb(player, data, choice) end
 	return true
 end
@@ -492,6 +636,7 @@ G.on("pk_group", function(event, player, el)
 	local frame = picker_of(player)
 	if not frame then return end
 	set_tags(frame, { group = el.tags.group })
+	M.remember(player.index, el.tags.group)                         -- (issue #800: the next picker opens on it)
 	fill(frame)
 	sync(frame)
 end)
@@ -515,6 +660,7 @@ G.on("pk_quality", function(event, player, el)
 	local frame = picker_of(player)
 	if not frame then return end
 	set_tags(frame, { quality = el.tags.quality })
+	show_quality(frame)                                             -- (issue #800: the item buttons show it)
 	sync(frame)
 end)
 
@@ -599,6 +745,25 @@ script.on_event("fork-me-picker-confirm", function(event)
 	end
 	M.confirm(player)
 end)
+
+--- Issue #803: the game's quality keys (custom inputs linked to "cycle-quality-up" / "cycle-quality-down", Alt + mouse
+--- wheel by default, not consumed: the game's own cycling goes on) step the quality of the shown picker. A picker that
+--- Escape hid does not count. Issue #812: with something in the cursor the shown picker stays as it is (the key is the
+--- game's then), and the terminal's filter behind it is not stepped either.
+--- Issue #804: with no picker shown the keys go to `M.on_quality_key(player, delta)` when a module set it (the ME
+--- Terminal's quality filter; it requires this module, so it registers here instead of the other way round).
+M.on_quality_key = nil
+for name, delta in pairs({ ["fork-me-picker-quality-up"] = 1, ["fork-me-picker-quality-down"] = -1 }) do
+	script.on_event(name, function(event)
+		local player = game.get_player(event.player_index)
+		local frame = player and picker_of(player)
+		if frame and frame.visible then
+			M.step_quality(frame, delta, player.is_cursor_empty())
+		elseif player and M.on_quality_key then
+			M.on_quality_key(player, delta)
+		end
+	end)
+end
 
 --- Focus the search field of the player's open ME picker, else of the open ME window (the Terminal's), and select its
 --- text so that typing replaces the old search (issue #148). Returns true when a field was focused. The picker sits on

@@ -978,6 +978,18 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- Issue #803: the game's "Increase quality" and "Decrease quality" keys (Alt + mouse wheel by default): one step in the
+--- quality row of the mod's item picker (scripts/fork-me-picker.lua); the game's own cycling goes on everywhere else
+for _, key in ipairs({ { "fork-me-picker-quality-up", "cycle-quality-up" }, { "fork-me-picker-quality-down", "cycle-quality-down" } }) do
+	data:extend({ {
+		type = "custom-input",
+		name = key[1],
+		key_sequence = "",
+		linked_game_control = key[2],
+		consuming = "none",
+	} })
+end
+
 --- Issue #754: the pipette key (linked to the game's "pipette", Q by default): over a fluid shown in an ME window it holds
 --- that fluid for the next click on a slot (scripts/fork-me-gui.lua, the held fluid); the game's own pipette goes on
 data:extend({ {

@@ -34,7 +34,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Interface Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: lists every pattern provider and ME Interface of the network with their patterns and config rows (this page, **The ME Interface Terminal**) |
 | Blank / Encoded Pattern | a blank pattern is encoded in an ME Pattern Terminal into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
-| ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
+| ME Circuit Interface | puts the network contents, or what its automatic crafting is missing, onto a circuit wire (this page, **Circuit network**) |
 
 Techs (standalone, vanilla science packs; `prototypes/`): `me-network` (red and green: fluix cable, ME Controller,
 ME Chest, ME Drive, ME Interface, ME Terminal, the monitors, the ME IO Port, 1k/4k/16k cells, import, export and
@@ -248,7 +248,8 @@ Needs a working network and no pole: the controller draws its power (8 kW). The 
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
 name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
 tabs (issue #514, only in a game with qualities: a comparator **>**, **<**, **=**, **≥**, **≤** or **≠** (as in the
-game's own filters, issue #520) and **Any quality** or a quality;
+game's own filters, issue #520) and **Any quality** or a quality; the game's "Increase quality" / "Decrease quality"
+keys step it while no picker is shown and the cursor is empty, issue #804;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
@@ -332,7 +333,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), by the circuit network (issue #429: the mode is chosen in the circuit network panel, issue #639)) with what a locked provider waits for and **Unlock**, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | five rows: item or fluid, amount, batch, stock and status (the circuit options and the conditions: the panel below) |
-| ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
+| ME Circuit Interface | output on/off, the mode (**Network contents** or **Missing for crafting**, issue #809), up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413; set by the circuit network with **Set filters** of the panel below, issue #780), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
@@ -1497,8 +1498,15 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   rows scroll in a box two rows high, so the picker keeps its size with Infinite Quality Tiers too: issue #380) and the **green
   check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
   GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
-  slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
-  (with quality) and fluids are listed, no virtual signal and no other signal.
+  slot opens it with its element and quality chosen (on its tab, the list scrolled to it), so both can be changed; right
+  click empties a slot. For an empty slot it opens on the **tab you used last** (issue #800: the tab you clicked or the
+  group of what you confirmed, each player's own, kept in the save; a picker that does not list that group starts on
+  its first tab). The item buttons show the chosen quality in their corner. The game's **"Increase quality"** and
+  **"Decrease quality"** keys (Alt + mouse wheel by default, issue #803) move the chosen quality one step along the row
+  and stop at its ends, as in the game's own pickers; nothing happens while a fluid is chosen or in a picker without a
+  quality row. With an item or a ghost in the cursor the keys change that one, as everywhere in the game, and the
+  picker stays as it is (issue #812). Only items (with quality) and fluids are
+  listed, no virtual signal and no other signal.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
   **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
@@ -2246,6 +2254,31 @@ issue #68 the ME Controller has no circuit connection (it was a roboport): the C
 read the network. Items with tags (loaded cells) count under their item. Up to 1000 signals per interface (the
 largest amounts first).
 
+**Missing for crafting** (issue #809, asked for on the mod portal by GennP): the switch above the filters changes what
+the interface sends. **Network contents** is the list above and the default. With **Missing for crafting** it sends what
+the network's automatic crafting lacks instead: when a **level maintainer** or a **Crafting Card** (ME Interface, ME
+Export Bus, ME Logistic Interface) cannot start its crafting job because the network lacks raw ingredients (the maintainer
+says "missing"), every such ingredient is one signal, an item with its quality, a fluid with its temperatures added up and
+rounded up to whole units. The value is what is still missing: what the failed starts lacked together, less what
+arrived in the network since. So a lamp or a combinator can call for iron ore, switch on a train stop or sound an alarm
+with exactly the amount that is needed.
+
+* The signals follow about once a second, as the contents do. A signal goes down as the material arrives and goes away
+  when it is all there, when the job starts, or when the block stops asking (its row is cleared, it is switched off or
+  removed: the note of a failed start lasts about 11 seconds after the last try; a maintainer tries every 5 seconds).
+* The filters apply in both modes: with filters only those items and fluids are sent.
+* Only automation counts. A crafting request you start yourself in a terminal (the Craft button) that lacks ingredients is
+  not sent: the terminal shows what it lacks, and nothing tries it again.
+* It is the same list the ME Logistic Interface asks the robots for ("Request what crafting lacks"). Only the raw
+  ingredients are named, not the intermediate products the job would craft itself.
+* The mode is copied by settings paste and kept in blueprints, copy and paste, and clones; a blueprint made before this
+  version builds an interface that sends the contents, and so does every interface of an older save.
+* Cost: nothing in the contents mode. In this mode the network's list is made at most once a second, and only while the
+  notes or the network's contents changed; it holds a handful of entries. No new periodic task: the interfaces share the
+  queue and the budget "Circuit interface updates per second".
+* For other mods: `remote.call("gregtorio-me-circuit", "set_circuit_mode", entity, "missing" or "contents")`;
+  `get_circuit` returns `mode`.
+
 ### ME Level Emitter
 
 Tech `me-level-emitter` (issue #679: needs ME Network and Circuit network, red and green science, so an ME Interface or a
@@ -2309,7 +2342,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has; the circuit condition and its wires | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
-| ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
+| ME Circuit Interface | filters, the mode (network contents or missing for crafting, issue #809) | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 | ME IO Port | the mode, which speed cards it has | yes (the cards from your inventory, then the network) | yes (the cards from the network); its cells are items, not settings |
 | ME P2P Tunnel (issue #629) | frequency, input or output | the destination becomes an output of the source's frequency | yes (a copy of an input next to it waits: one input per frequency) |
 
@@ -3018,7 +3051,9 @@ lamp's circuit condition is false and start the job for 20 once it is true. A Co
 jobs at once (both running at the start, both with a machine crafting at the same time, 12 hand-overs per
 step, no free slot), a third job is refused (issue #6), and a Quantum CPU put in its place has four slots.
 A circuit interface wired to a pole must carry exactly the network's items and floored fluids (500.5 water
-is 500), then only its two filters, then follow 25 more plates. The settings of a maintainer (a fluid, 1234,
+is 500), then only its two filters, then follow 25 more plates. In the mode "Missing for crafting" (issue #809,
+`circuitmissing.lua`) it must send the 10 plates a maintainer's start lacks, 6 once 4 arrived and nothing once all are
+there, keep the mode through a blueprint, a paste and a clone, and round a missing fluid up. The settings of a maintainer (a fluid, 1234,
 circuit), a circuit interface (two filters) and a fluid interface (export water 2345) must be blueprint
 tags, come back on the entities built from that blueprint and revived, and be copied by settings paste and
 by cloning. `devcheck.py migrate` checks a job started by the old version.
