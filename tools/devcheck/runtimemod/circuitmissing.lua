@@ -179,8 +179,11 @@ return function(H)
 			expect(remote.call(NET, "insert", ctrl, "iron-plate", 6) == 6, "6 plates into the network")
 			return next_phase("gone")
 		elseif st.phase == "gone" then
-			if next(a) ~= nil then late(0, "all plates there and the fluid's note gone, yet signals") return end
-			expect(next(out(C)) == nil, "C still sends " .. line(out(C)))
+			--- (A and C each write at their own visit of the queue: both are waited for)
+			if next(a) ~= nil or next(out(C)) ~= nil then
+				late(0, "all plates there and the fluid's note gone, yet signals (C sends " .. line(out(C)) .. ")")
+				return
+			end
 			local sw, caption = window(A)
 			expect(sw == "right" and type(caption) == "table" and caption[1] == "fork-me-circuit.circuit-missing-none",
 				"A's window with nothing missing: " .. tostring(sw) .. ", " .. line(caption))

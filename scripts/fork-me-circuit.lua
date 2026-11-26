@@ -1104,8 +1104,12 @@ local function visit_circuit(rec, unit)
 	local net = network_of(rec.entity)
 	--- (issue #809: an interface in the mode "missing" never makes the contents' list; its own is short and made in the step)
 	if net and rec.mode ~= "missing" and stale(net) then
-		signals_of(net)                                      -- the network's list now, the write at the next tick
-		Sched.at(s.cq, rec, unit, game.tick + 1)
+		--- the network's list now, the write at the next visit the budget has: at the front of the queue, before the backlog.
+		--- Due "at the next tick" it went behind every interface that waited already; with more interfaces than the budget
+		--- visits in CIRCUIT_INTERVAL it came round when the list was old again, and an interface alone on a network whose
+		--- contents keep changing made the list at every visit and never wrote it.
+		signals_of(net)
+		Sched.wake(s.cq, rec, unit)
 		return
 	end
 	local written = circuit_step(rec)
