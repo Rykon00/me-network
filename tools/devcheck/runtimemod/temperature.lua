@@ -202,7 +202,11 @@ return function(H)
 			expect(input_box(sc.wm, "water") == nil and bi.status == "temperature" and bi.tstat and bi.tstat[1] == "water" and bi.tstat[2] == "15"
 				and bi.tstat[3] == "50-100", "water into the 50-100 °C machine: " .. serpent.line((input_box(sc.wm, "water"))) .. ", " .. serpent.line(bi.tstat)
 				.. " " .. tostring(bi.status))
+			st.phase, st.phase_tick = 0.5, tick
+			return
+		end
 
+		if st.phase == 0.5 then
 			--- the circuit interface: one signal per fluid (its temperatures added up), a filter of one temperature
 			local function signals()
 				remote.call(C38, "update_circuit", sc.ci)
@@ -214,6 +218,11 @@ return function(H)
 				return out
 			end
 			local want = math.floor(remote.call("gregtorio-me-fluids", "count", t, "steam", "any"))
+			--- (an interface writes its network's list, and that list is made at most once per second: when the queue made it
+			--- shortly before the fluids above came, an update writes the list of before them for up to a second; the wire is
+			--- asked until it carries them)
+			if signals().steam ~= want and tick <= st.phase_tick + 300 then return end
+			st.phase = 1
 			expect(signals().steam == want, "steam on the wire: " .. tostring(signals().steam) .. ", network " .. want)
 			remote.call(C38, "set_circuit_filters", sc.ci, { "fluid/steam@500" })
 			expect(signals().steam == 100, "steam at 500 °C on the wire: " .. tostring(signals().steam))

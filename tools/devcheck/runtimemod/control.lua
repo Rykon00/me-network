@@ -4644,7 +4644,15 @@ function circuit_test()
 			return next_phase("filtered")
 		end
 		if game.tick > st.phase_tick + limit then
-			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
+			local cb = ci.get_control_behavior()
+			local sec = cb and cb.sections_count > 0 and cb.get_section(1)
+			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want)
+				.. " (tick " .. game.tick .. ", phase since " .. st.phase_tick .. ", limit " .. limit .. ", queues " .. serpent.line(q)
+				.. ", record " .. serpent.line(remote.call(C38, "get_circuit", ci)) .. ", network " .. tostring(net and net.id)
+				.. ", sections " .. tostring(cb and cb.sections_count) .. ", section filters " .. tostring(sec and #sec.filters)
+				.. ", section active " .. tostring(sec and sec.active) .. ", status " .. tostring(ci.status)
+				.. ", wire network " .. tostring(ci.get_circuit_network(RED) and ci.get_circuit_network(RED).network_id)
+				.. ", pole network " .. tostring(pole.get_circuit_network(RED) and pole.get_circuit_network(RED).network_id) .. ")")
 			return finish()
 		end
 	elseif st.phase == "filtered" then
