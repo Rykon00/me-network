@@ -197,6 +197,32 @@ if ma and ma.crafting_categories and ma.crafting_categories[1] then
 	} })
 end
 
+--- me-network issue #815: recipes with more than a stack of an ingredient or of a product for an assembling machine 3
+--- (overstack.lua): 250 iron plates and 150 copper plates into a gear, a gear into 250 iron sticks, 300 iron sticks into a
+--- copper cable, and two modular armors (an item that does not stack: an armor with a grid; a light armor does) into a wooden chest. Only where the vanilla items are
+--- there.
+do
+	local function have(...)
+		for _, n in pairs({ ... }) do if not data.raw.item[n] then return false end end
+		return true
+	end
+	local function r815(name, time, ingredients, results, icon)
+		data:extend({ { type = "recipe", name = name, categories = { "crafting" }, energy_required = time, enabled = false,
+			ingredients = ingredients, results = results, icon = "__base__/graphics/icons/" .. icon .. ".png",
+			subgroup = "intermediate-product" } })
+	end
+	local function I815(name, amount) return { type = "item", name = name, amount = amount } end
+	if data.raw["recipe-category"]["crafting"] and data.raw["assembling-machine"]["assembling-machine-3"]
+		and have("iron-plate", "copper-plate", "iron-gear-wheel", "iron-stick", "copper-cable") then
+		r815("zz-devcheck-815-in", 0.5, { I815("iron-plate", 250), I815("copper-plate", 150) }, { I815("iron-gear-wheel", 1) }, "iron-gear-wheel")
+		r815("zz-devcheck-815-out", 1, { I815("iron-gear-wheel", 1) }, { I815("iron-stick", 250) }, "iron-stick")
+		r815("zz-devcheck-815-proc", 0.5, { I815("iron-stick", 300) }, { I815("copper-cable", 1) }, "copper-cable")
+		if data.raw.armor["modular-armor"] and have("wooden-chest") then
+			r815("zz-devcheck-815-armor", 0.5, { I815("modular-armor", 2) }, { I815("wooden-chest", 1) }, "wooden-chest")
+		end
+	end
+end
+
 --- me-network issue #752: two recipes of a tenth of a second for an assembling machine 3: a plate from water (a crafting
 --- pattern with a fluid) and a stick from a plate (a processing pattern), so a machine works off a hand-over in about a
 --- second (feeding.lua). Only where the vanilla categories and items are there.

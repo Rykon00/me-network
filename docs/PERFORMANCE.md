@@ -5066,3 +5066,52 @@ the machine's noise, not the removal. Throughput is identical per kind of endpoi
 stack gives 10; two more and two more: the one item more goes round; eight stacks and two removals of 20: every stack gave 5
 (the window); transport belts (whole stacks): an equal share each; an import bus visit over three stacks of copper leaves
 them within one item of each other; with the setting off the stacks do not go down together.
+
+## Recipes above a stack (issue #815)
+
+A pattern with more than a stack of an item ingredient was refused ("stack"), and the hand-overs of a job were sized by
+`floor(stack size / amount)` per ingredient, which is 0 for such a recipe and 1 for one with more than half a stack. The
+engine does not hold a script to the stack size. Measured in Factorio 2.1.25 with a probe mod (the table is in the issue):
+
+- `LuaInventory.insert` into a crafting machine's input takes `max(stack size, amount x multiplier) + 4` per slot, the
+  multiplier being the recipe's `overload_multiplier` when it sets one, else
+  `min(100, ceil(1.166 x crafting speed / recipe time) + 1)`: the overload rule of the inserters. An assembling machine 3
+  takes 1004 of each ingredient of the nuclear reactor (500 each, 8 s), 3004 of a 500-per-craft recipe of 1 s with four
+  speed modules 3. `get_insertable_count` answers slots x stack size and is of no use. An item that is not stackable
+  (`LuaItemPrototype.stackable`: an armor with a grid) never goes above one; an item with a stack size of 1 does.
+- A craft is delivered whole, also above a stack (300 of an item that stacks to 100 lie in the output slot); the next one
+  is delivered only when the slot is empty or holds a stack at most with it, and until then the machine holds the
+  finished craft together with its ingredients. So `max(1, floor(stack size / amount))` crafts before the slot must be
+  emptied, at any speed.
+
+**The change.** `M.recipe_slots` keeps per recipe name (per load) its own multiplier and its amount of each item
+ingredient; `M.slot_runs` gives the runs that fit the input slots of the machine at hand from that and from the crafts
+per tick that `M.machine_batch` computes anyway (no engine call more at a hand-over; the top-up reads each ingredient's
+count as before), `M.out_runs` the crafts that fit the output slots (hand-over, top-up and the early step now agree;
+the last two took 0 for a product above a stack). The pattern check refuses only what cannot fit at any speed, from the
+recipe the pattern names or, for a processing pattern without one, the recipe set in the machine. The multiplier is
+rounded so that it is never above the engine's, and a hand-over whose insert comes short all the same is repeated once
+with the runs that did fit. A processing top-up counts the craft in progress against the output slot: without it a
+machine could hold one craft more than the slot takes after the last run was handed out, and the job never ended.
+
+**Cost.** `bench --check origin/main` (in turns; the maintainer's desktop, so the noise is a few per cent):
+
+| | main | #815 |
+|---|---|---|
+| 100: script avg / p99 ms (3 rounds) | 0.201 / 1.81 | 0.201 / 1.79 |
+| 1000: script avg / p99 ms (3 rounds) | 0.333 / 1.85 | 0.393 / 2.06 (within the noise of its rounds: 0.331 to 0.404) |
+| 5000: script avg / p99 ms (7 rounds) | 0.993 / 2.93 | 0.943 / 2.83 |
+| 5000: provider crafts/s | 329.5 | 337.1 |
+| 5000: Lua alloc KB per tick | 53.48 | 53.31 |
+| 5000: items/s, fluid/s, latencies, starved arrivals | | identical |
+
+A first run of three rounds at 5000 gave 0.935 against 0.980 ms and was flagged (0.046 over a noise of 0.044); seven
+rounds gave the row above, so that was the machine. The crafts per second rise by 2.3 %: a recipe with more than a
+sixteenth of a stack of an ingredient gets more runs per hand-over where its machine's slots take them.
+
+**The test** (`overstack.lua`): a job of 5 copper cables over a crafting pattern with 250 + 150 of its ingredients, a
+processing pattern with 250 of a product and one with 300 of an ingredient (assembling machines 3, several hand-overs
+each: 26 steps in 520 ticks, 1000 plates in a slot at once), 5 nuclear reactors from the vanilla recipe in a machine with
+four speed modules, two runs of 150 plates into a chest (the chest's hand-over had the same limit: no run was ever handed
+out), and a pattern with two modular armors that stays refused. On `main` the three patterns are refused and no job
+starts.

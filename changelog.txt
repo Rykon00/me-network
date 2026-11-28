@@ -1,4 +1,11 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.7.5
+Date: 2026-11-28
+  Bugfixes:
+    - Autocrafting: a pattern of a recipe that takes more than a stack of an ingredient now works (issue #815, reported by g-bo-wen). The crafting pattern of the nuclear reactor (500 of each of its four ingredients) was red in the ME Pattern Provider, "More of an item than fits into the machine's input slots", and so was every other such recipe. The mod held a machine's input slot to one stack; the game itself lets a slot take what the recipe needs, a few crafts' worth, and more in a fast machine. The hand-overs now follow that rule, also for a processing pattern that goes into a machine or a chest. The message stays for what really cannot fit: more than one of an item that does not stack at all (an armor with an equipment grid), or more item ingredients than a furnace has slots.
+    - Autocrafting: a recipe with more than half a stack of an ingredient got one craft per hand-over. It now gets as many as its machine's input slots take, as other recipes do, so such a machine no longer stands idle between two steps of its job.
+    - Autocrafting: a processing pattern in a machine whose product fills the output slot with one or two crafts could leave its job waiting forever at its last runs: the machine was handed one run more than its output slot takes and held the finished craft, and nothing emptied the slot any more.
+---------------------------------------------------------------------------------------------------
 Version: 0.7.4
 Date: 2026-11-26
   Features:
