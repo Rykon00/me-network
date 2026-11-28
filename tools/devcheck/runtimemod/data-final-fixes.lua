@@ -223,6 +223,25 @@ do
 	end
 end
 
+--- me-network issue #821: two recipes with more of a fluid than an assembling machine 3's fluid box holds by its
+--- prototype (1000): 2500 water and an iron plate into a gear, a copper plate into 2500 crude oil (bigfluid.lua). Only
+--- where the vanilla categories, items and fluids are there.
+if data.raw["recipe-category"]["crafting-with-fluid"] and data.raw.fluid.water and data.raw.fluid["crude-oil"]
+	and data.raw.item["iron-plate"] and data.raw.item["copper-plate"] and data.raw.item["iron-gear-wheel"]
+	and data.raw["assembling-machine"]["assembling-machine-3"] then
+	data:extend({
+		{ type = "recipe", name = "zz-devcheck-821-in", categories = { "crafting-with-fluid" }, energy_required = 0.5,
+			enabled = false, ingredients = { { type = "fluid", name = "water", amount = 2500 },
+				{ type = "item", name = "iron-plate", amount = 1 } },
+			results = { { type = "item", name = "iron-gear-wheel", amount = 1 } },
+			icon = "__base__/graphics/icons/iron-gear-wheel.png", subgroup = "intermediate-product" },
+		{ type = "recipe", name = "zz-devcheck-821-out", categories = { "crafting-with-fluid" }, energy_required = 0.5,
+			enabled = false, ingredients = { { type = "item", name = "copper-plate", amount = 1 } },
+			results = { { type = "fluid", name = "crude-oil", amount = 2500 } },
+			icon = "__base__/graphics/icons/fluid/crude-oil.png", subgroup = "intermediate-product" },
+	})
+end
+
 --- me-network issue #752: two recipes of a tenth of a second for an assembling machine 3: a plate from water (a crafting
 --- pattern with a fluid) and a stick from a plate (a processing pattern), so a machine works off a hand-over in about a
 --- second (feeding.lua). Only where the vanilla categories and items are there.

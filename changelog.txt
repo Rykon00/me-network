@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.7.6
+  Bugfixes:
+    - Autocrafting: a crafting pattern whose recipe takes or makes more of a fluid than the machine's tank holds while it has no recipe is no longer refused (issue #821). The pattern was red in the ME Pattern Provider, "No usable fluid box", until the recipe had been set in the machine by hand. The game makes a machine's tanks as large as its recipe needs once the recipe is set, so the size of the empty machine's tank says nothing; only the number of free tanks and pipes on them are checked now. Found in Gregtorio Continued, whose flotation froths (1800 pine oil) and assembly line recipes were hit; in the base game it takes a recipe with more than 1000 of a fluid.
+---------------------------------------------------------------------------------------------------
 Version: 0.7.5
 Date: 2026-11-28
   Bugfixes:

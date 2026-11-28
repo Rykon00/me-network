@@ -1342,6 +1342,7 @@ RUNTIME_TESTS = (
     ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("FASTCRAFT", "Fast machines kept busy (issue #557)"),
     ("OVERSTACK", "Recipes above a stack (issue #815)"),
+    ("BIGFLUID", "Fluid above the prototype's box (issue #821)"),
     ("ASMNET", "ME Molecular Assembler carries the network (issue #560)"),
     ("CELLLIGHT", "Cell light with all types used (issue #468)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
