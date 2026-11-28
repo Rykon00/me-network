@@ -530,12 +530,59 @@ local function fluid_boxes_fit(machine, ingredients, products)
 	return fit(ins, ingredients, need_in) or fit(outs, products, need_out)
 end
 
---- "stack" when an item ingredient does not fit into one machine slot
-local function stack_problem(ingredients)
+--- Issue #815: what an input slot of a machine takes. Measured in Factorio 2.1.25 (the issue has the table): a script's
+--- insert into a crafting machine's input is not held to the item's stack size but to the engine's overload rule, the one
+--- its inserters follow: a slot takes max(stack size, the recipe's amount of the item x multiplier) (and 4 more, which nothing
+--- here counts on), the multiplier being the recipe's `overload_multiplier` when it sets one, else
+--- min(100, ceil(1.166 x the machine's crafting speed / the recipe's time) + 1). So one craft always fits, two do unless the
+--- recipe says otherwise, and a fast machine takes more. Only an item that does not stack at all (LuaItemPrototype.stackable: an armor with a grid, not an item with a stack size of 1) never goes
+--- above one. M.recipe_slots: per recipe name (per load; prototypes do not change while the game runs) its own multiplier
+--- (false: the engine's rule by speed) and its amount of each item ingredient; nil for a recipe that is not there.
+M.RECIPE_SLOTS = {}
+function M.recipe_slots(recipe)
+	local f = M.RECIPE_SLOTS[recipe]
+	if f == nil then
+		local proto = prototypes.recipe[recipe]
+		if proto then
+			local amounts = {}
+			for _, i in pairs(proto.ingredients) do
+				if i.type == "item" then amounts[i.name] = (amounts[i.name] or 0) + i.amount end
+			end
+			local own = proto.overload_multiplier
+			f = { mult = own and own > 0 and own or false, amounts = amounts }
+		else
+			f = false
+		end
+		M.RECIPE_SLOTS[recipe] = f
+	end
+	return f or nil
+end
+
+--- The multiplier of the rule above for a machine that makes `r` crafts per tick (M.crafts_per_tick; nil: not known) of the
+--- recipe with the facts `f`: never more than the engine's (rounded down a hair before the ceil), 2 when the speed is not
+--- known (what every speed gives at least).
+function M.slot_mult(f, r)
+	if f.mult then return f.mult end
+	if not r then return 2 end
+	return math.min(100, math.ceil(1.166 * 60 * r - 1e-4) + 1)
+end
+
+--- "stack" when an item ingredient does not fit into a machine's input slot at any crafting speed (issue #815; until then:
+--- as soon as it was more than a stack, which kept every recipe with such an ingredient out, the nuclear reactor's 500 of
+--- each): an item that is not there, more than one of an item that does not stack, or, for a pattern whose amounts are not
+--- its recipe's (a processing pattern), more than a stack and more than the crafts of `recipe` that always fit. Without a
+--- recipe the stack is all that is known.
+local function stack_problem(ingredients, recipe)
+	local f = recipe and M.recipe_slots(recipe) or nil
 	for _, i in pairs(ingredients) do
 		if i.type == "item" then
 			local proto = prototypes.item[i.name]
-			if not proto or i.amount > proto.stack_size then return "stack" end
+			if not proto then return "stack" end
+			if i.amount > proto.stack_size then
+				if not proto.stackable then return "stack" end
+				local a = f and f.amounts[i.name]
+				if not a or i.amount > a * (f.mult or 2) then return "stack" end
+			end
 		end
 	end
 	return nil
@@ -578,7 +625,9 @@ local function def_facts(def)
 		--- issue #158: a processing pattern that names the recipe it was encoded from (P.normalize keeps only an existing
 		--- one) switches an assembling machine to it, as a crafting pattern does: its category too
 		local recipe = def.recipe and prototypes.recipe[def.recipe]
-		f = { stack = stack_problem(ingredients), items = items, fluid_in = fluid_in,
+		--- (issue #815: `stack` by the recipe the pattern names; a processing pattern without one is asked again at a
+		--- machine that has a recipe set, target_for)
+		f = { stack = stack_problem(ingredients, recipe and def.recipe or nil), items = items, fluid_in = fluid_in,
 			categories = recipe and recipe.categories or nil, switch = def.kind == "processing" and recipe ~= nil or nil }
 		facts_cache[def] = f
 	end
@@ -711,7 +760,12 @@ local function target_for(v, def)
 		return { entity = v.entity, unit = v.unit, mode = "chest" }
 	end
 	if etype == "assembling-machine" and not v.recipe then return nil, "no-recipe" end
-	if facts.stack then return nil, facts.stack end
+	if facts.stack then
+		--- (issue #815: more than a stack of an ingredient of a pattern without a recipe of its own: the slot's size follows
+		--- the recipe the machine has set; a furnace has none before it is fed, so there a stack is the limit)
+		local set = v.recipe
+		if not set or stack_problem(def_ingredients(def), set) then return nil, facts.stack end
+	end
 	local slots = v.input_slots
 	if slots and facts.items > slots then return nil, "stack" end  -- more input items than input slots (a furnace)
 	local _, reason = fluid_map(v, def_ingredients(def), def_products(def), true)
@@ -2395,7 +2449,8 @@ local function assign_cpus(s)
 end
 
 --- One lease per machine: hand `batch` runs of ingredients to it. A crafting lease counts crafts
---- (products_finished), a processing lease remembers what it gave (to see what the machine used).
+--- (products_finished), a processing lease remembers what it gave (to see what the machine used). False when it did not
+--- start, and when an item did not fit, the runs of it that did (issue #815).
 local function start_lease(s, job, step_index, machine, batch, map)
 	local step = job.steps[step_index]
 	local ingredients = step_ingredients(step)
@@ -2425,7 +2480,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 			local inserted = inp.insert{ name = ing.name, count = count, quality = q }
 			pool_add(job, key, -inserted)
 			given[#given + 1] = { key = key, name = ing.name, quality = q, got = inserted }
-			if inserted < count then undo() return false end
+			if inserted < count then undo() return false, math.floor(inserted / ing.amount) end   -- (the runs that fit: issue #815)
 		end
 	end
 	local fb = M.T.boxes(machine)
@@ -2704,6 +2759,7 @@ end
 --- yet (a processing pattern's machine without one): MAX_BATCH. (Fields: the main chunk is at Lua's limit of 200 locals.)
 M.BATCH_STEPS = 2
 M.recipe_time = {}                      -- recipe name -> its time in seconds (a pure function of the prototypes, per load)
+--- (Issue #815: the second value is the name of the recipe the machine works with, also when its speed is not known.)
 function M.crafts_per_tick(machine, step)
 	local recipe = step.kind == "crafting" and step.def and step.def.recipe or nil
 	if not recipe then
@@ -2716,16 +2772,55 @@ function M.crafts_per_tick(machine, step)
 		t = proto and proto.energy or 0
 		M.recipe_time[recipe] = t
 	end
-	if not t or t <= 0 then return nil end
+	if not t or t <= 0 then return nil, recipe end
 	local ok, speed = pcall(function() return machine.crafting_speed end)
-	if not ok or not speed or speed <= 0 then return nil end
-	return speed / (t * 60)
+	if not ok or not speed or speed <= 0 then return nil, recipe end
+	return speed / (t * 60), recipe
 end
 
+--- (the second and third value, issue #815: the machine's crafts per tick and its recipe's name, for M.slot_runs)
 function M.machine_batch(machine, step)
-	local r = M.crafts_per_tick(machine, step)
-	if not r then return MAX_BATCH end
-	return math.max(MAX_BATCH, math.ceil(r * M.BATCH_STEPS * STEP_TICKS))
+	local r, recipe = M.crafts_per_tick(machine, step)
+	if not r then return MAX_BATCH, nil, recipe end
+	return math.max(MAX_BATCH, math.ceil(r * M.BATCH_STEPS * STEP_TICKS)), r, recipe
+end
+
+--- Issue #815: the runs of a step whose item ingredients fit into the input slots of its machine, at most `batch`: per
+--- ingredient the slot's size by the rule at M.recipe_slots (`r`, `recipe`: of M.machine_batch) less what the slot holds
+--- (`inp`: the input inventory of a machine that still works, the top-up; nil for an empty one). An item that is not
+--- there: 0. Until then a slot was one stack: no run at all of a recipe with more than a stack of an ingredient, and one
+--- of a recipe with more than half a stack.
+function M.slot_runs(batch, ingredients, r, recipe, inp)
+	local f = recipe and M.recipe_slots(recipe) or nil
+	local mult = f and M.slot_mult(f, r)
+	for _, ing in pairs(ingredients) do
+		if ing.type == "item" then
+			local size = stack_size_of(ing.name)
+			if not size then return 0 end
+			local a = f and f.amounts[ing.name]
+			if a and a * mult > size then size = a * mult end
+			if inp then size = size - inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" } end
+			batch = math.min(batch, math.floor(size / ing.amount))
+		end
+	end
+	return batch
+end
+
+--- Issue #815: the crafts a machine makes before the output slot of an item product must be emptied. Measured (the issue
+--- has the table): a craft is always delivered whole, also above a stack (300 of an item that stacks to 100 lie in the
+--- slot as 300), and the next one is delivered only when the slot is empty or holds a stack at most with it; until then
+--- the machine holds the finished craft and its ingredients. So max(1, floor(stack / amount)), whatever the speed. (The
+--- top-up and the early step took floor(stack / amount) alone: 0 for a product above a stack, so an early step on the
+--- tick after the hand-over.)
+function M.out_runs(batch, products)
+	for _, pr in pairs(products) do
+		if pr.type == "item" then
+			local per = pr.amount or pr.amount_max
+			local size = stack_size_of(pr.name)
+			if size and per and per > 0 then batch = math.min(batch, math.max(1, math.floor(size / per))) end
+		end
+	end
+	return batch
 end
 
 --- Issue #557: a machine that has `runs` to do runs out of work or fills its output slot (one stack of the product) before the
@@ -2735,14 +2830,9 @@ end
 function M.note_early(job, machine, step, runs)
 	local r = M.crafts_per_tick(machine, step)
 	if not r or runs <= 0 then return end
-	local cap = runs
-	for _, pr in pairs(step_products(step)) do
-		if pr.type == "item" then
-			local per = pr.amount or pr.amount_max
-			local size = stack_size_of(pr.name)
-			if size and per and per > 0 then cap = math.min(cap, math.floor(size / per)) end
-		end
-	end
+	--- (issue #815: a product above a stack gave 0 crafts here, so a time of 0: the job was stepped again on the tick after
+	--- each hand-over, for nothing)
+	local cap = M.out_runs(runs, step_products(step))
 	local t = cap / r
 	if t >= STEP_TICKS then return end
 	local at = game.tick + math.max(1, math.floor(t * 0.75))
@@ -2835,7 +2925,7 @@ function M.top_up(job, net, lease, step, s)
 	if not inp then return false end
 	local ingredients = step_ingredients(step)
 	local fb = fluid_in and M.T.boxes(m) or nil
-	local want = M.machine_batch(m, step)
+	local want, rate, recipe = M.machine_batch(m, step)
 	if fluid_in then want = fluid_batch_limit(map, want) end
 	--- the runs the machine still has: a crafting lease counts its crafts, a processing lease what lies in the machine
 	local left
@@ -2863,9 +2953,7 @@ function M.top_up(job, net, lease, step, s)
 	for _, ing in pairs(ingredients) do
 		if ing.type == "item" then
 			if with_data(ing.name) or not N.item_exists(ing.name) then return false end
-			local size = stack_size_of(ing.name)
-			local have = inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" }
-			add = math.min(add, math.floor(ing_pool(job, ing) / ing.amount + 1e-9), size and math.floor((size - have) / ing.amount) or 0)
+			add = math.min(add, math.floor(ing_pool(job, ing) / ing.amount + 1e-9))
 		elseif not fluid_in then
 			return false                                   -- (a fluid ingredient without a box of the machine)
 		end
@@ -2876,16 +2964,17 @@ function M.top_up(job, net, lease, step, s)
 		local _, have = pool_keys(job, i.key, i.name, i.flex, i.lo, i.hi)
 		add = math.min(add, math.floor((i.capacity - (f and f.amount or 0)) / i.amount + 1e-9), math.floor(have / i.amount + 1e-9))
 	end
-	for _, pr in pairs(step_products(step)) do
-		if pr.type == "item" then
-			local per = pr.amount or pr.amount_max
-			local size = stack_size_of(pr.name)
-			if size and per and per > 0 then add = math.min(add, math.floor(size / per) - math.max(0, left)) end
-		end
-	end
+	if add > 0 then add = M.slot_runs(add, ingredients, rate, recipe, inp) end   -- (issue #815: what the input slots still take)
+	--- (the item products of what it holds then must fit the output slots: issue #815, M.out_runs. A processing lease
+	--- counts its runs by what lies in the input, so the craft the machine is working on comes on top: without it a
+	--- machine got a second run of a product that fills the slot once, held the second craft for a slot nobody emptied
+	--- any more once every run was handed out, and the job never ended.)
+	local held = math.max(0, left)
+	if processing and add > 0 and m.crafting_progress > 0 then held = held + 1 end
+	add = math.min(add, M.out_runs(math.huge, step_products(step)) - held)
 	if map and map.max_out and map.max_out > 0 then          -- (the fluid products of what it holds then must fit their boxes)
 		for _, o in pairs(map.outputs) do
-			add = math.min(add, math.floor(o.capacity / map.max_out + 1e-9) - math.max(0, left))
+			add = math.min(add, math.floor(o.capacity / map.max_out + 1e-9) - held)
 		end
 	end
 	if add <= 0 then return false end
@@ -3110,13 +3199,12 @@ local function job_step(s, job, work)
 					local ingredients, products = step_ingredients(step), step_products(step)
 					local targets = targets_of[step.pid] or {}
 					local batch = step.runs - step.issued                     -- (issue #557: the machine's share follows below)
-					for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
+					--- only what the pool holds (issue #815: what the target's slots take follows below, when the target is
+					--- known; one stack per item ingredient, as it was here, left no run of a pattern with more than that)
+					for _, ing in pairs(ingredients) do
 						local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 						batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
-						if ing.type == "item" then
-							local size = stack_size_of(ing.name)
-							batch = math.min(batch, size and math.floor(size / per) or 0)
-						end
+						if ing.type == "item" and not stack_size_of(ing.name) then batch = 0 end   -- (an item no longer there)
 					end
 					if batch <= 0 then waiting = waiting or "ingredients" break end
 					local machine, mode, map, chest
@@ -3138,15 +3226,18 @@ local function job_step(s, job, work)
 						waiting = waiting or chest or "machine"
 						break
 					end
-					batch = math.min(batch, mode == "chest" and MAX_BATCH or M.machine_batch(machine, step))   -- (issue #557)
-					if mode ~= "chest" then
-						for _, pr in pairs(products) do        -- the products must fit into the output slot
-							if pr.type == "item" then
-								local per = pr.amount or pr.amount_max
-								local size = stack_size_of(pr.name)
-								if size and per > 0 then batch = math.min(batch, math.max(1, math.floor(size / per))) end
+					if mode == "chest" then
+						--- a chest: a stack per item ingredient, and one run of a pattern with more than that (issue #815)
+						batch = math.min(batch, MAX_BATCH)
+						for _, ing in pairs(ingredients) do
+							if ing.type == "item" then
+								batch = math.min(batch, math.max(1, math.floor(stack_size_of(ing.name) / ing.amount)))
 							end
 						end
+					else
+						local share, rate, recipe = M.machine_batch(machine, step)                             -- (issue #557)
+						batch = M.slot_runs(math.min(batch, share), ingredients, rate, recipe)                 -- (issue #815)
+						batch = M.out_runs(batch, products)             -- the products must fit into the output slots
 						batch = fluid_batch_limit(map, batch)
 						if batch <= 0 then waiting = waiting or "machine" break end
 					end
@@ -3161,7 +3252,14 @@ local function job_step(s, job, work)
 						if ok then EXT.pushed(s, chest, step.pid, step.def, runs) end   -- (issues #335, #346: smart blocking, the lock)
 					else
 						collect_output(job, net, machine, map)
-						ok = start_lease(s, job, i, machine, batch, map)
+						local fit
+						ok, fit = start_lease(s, job, i, machine, batch, map)
+						--- (issue #815: the machine took less of an item than M.slot_runs says, a rule of the engine that is
+						--- not known here: the runs that did fit, instead of no machine for the step)
+						if not ok and fit and fit >= 1 and fit < batch then
+							batch = fit
+							ok = start_lease(s, job, i, machine, batch, map)
+						end
 						--- (issue #752: the lease names the provider it came from, for the top-up's look at its lock; every kind of step
 						--- is stepped early when its machine runs out before the next step)
 						if ok then job.leases[#job.leases].prov = chest and chest.prov or nil end
@@ -3847,7 +3945,8 @@ function M.job(id)
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool, sent = job.sent or 0,
 		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
-		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0, fed = job.fed or 0 }
+		steps = steps, reason = job.reason, problem = job.problem, topups = job.topups or 0, fed = job.fed or 0,
+		stepped = job.stepped }                             -- (the tick of its last step: the tests count them, issue #815)
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)

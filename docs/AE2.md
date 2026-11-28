@@ -1855,7 +1855,11 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
   free. Jobs take turns: one job per tick (setting "Crafting jobs stepped per tick"), each one every 20 ticks at most.
 * **How much at once** (issue #557): a machine gets 16 crafts at a hand-over, or more when it is fast (its crafting speed
   with modules, quality and Acceleration Cards against the recipe's time): enough for two of the job's steps, as far as
-  its input slots (one stack per ingredient), its output slot and what the job holds allow. While it still works and has
+  its input slots, its output slot and what the job holds allow (issue #815: an input slot takes what the game lets
+  inserters put in, a stack or the recipe's amount times a few crafts, whichever is more, and more crafts in a fast
+  machine; so a recipe with more than a stack of an ingredient, the nuclear reactor's 500 of each, is crafted like any
+  other. The output slot takes the crafts that fit a stack, and one craft of a product above a stack, which the machine
+  delivers whole). While it still works and has
   less than half of that left, the job's step tops it up (the products so far are taken out first and count as done), and
   a machine that would run out or fill its output slot before the job's next step has the job stepped earlier, so a fast
   machine never waits for the job. Since issue #752 this also holds for a crafting pattern with a fluid (its fluid boxes
