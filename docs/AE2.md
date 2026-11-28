@@ -1984,7 +1984,8 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   Molecular Assembler has no fluid boxes, so fluid recipes need a GT machine (chemical reactor,
   extractor, ...). Not usable, and counted per reason in the crafting tab's info line: patterns
   that need more of one ingredient than fits into a machine slot (`stack`), no usable box for the recipe
-  (`fluid-box`: box too small for one craft, no matching box, a furnace or a chest with fluids), a pipe on a used
+  (`fluid-box`: no matching box, a furnace or a chest with fluids; not the size of a box, issue #821: the game makes a
+  machine's boxes as large as its recipe needs once the recipe is set, at least four crafts' worth in and three out), a pipe on a used
   box (`fluid-pipes`; also at a machine that switches its boxes off without a recipe, as Gregtorio's machines do: the
   pipe is found from the machine's connections before it is switched, issue #164 of ME Network; the provider hands
   every fluid ingredient over itself, so a pattern machine needs no pipes), and recipes that need a fluid temperature

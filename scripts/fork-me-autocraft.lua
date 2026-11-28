@@ -480,7 +480,7 @@ local function fluid_map(machine, ingredients, products, outputs_optional)
 end
 
 --- What a crafting pattern needs from a machine whose recipe is not set yet: enough unconnected fluid boxes
---- of the right kind and size (the exact map is made after set_recipe). The boxes are read from the machine's
+--- of the right kind (the exact map is made after set_recipe; not their size, issue #821). The boxes are read from the machine's
 --- prototype: a machine without a fluid recipe may have its boxes switched off (fluid_boxes_off_when_no_fluid_recipe),
 --- then the entity has none and pipes are checked only after the switch. nil when it fits, else the reason. `machine` is a
 --- scan's view of the machine (machine_view).
@@ -508,7 +508,15 @@ local function fluid_boxes_fit(machine, ingredients, products)
 		elseif kind == "output" then outs[#outs + 1] = i
 		elseif kind == "input-output" then return "fluid-box" end
 	end
-	local function fit(list, entries, need)
+	--- Issue #821: the size of a box is not asked here. The engine sizes a crafting machine's boxes by the recipe once it
+	--- is set, whatever the prototype's volume is (measured in Factorio 2.1.25, the table is in the issue): an input box
+	--- holds the recipe's amount x max(4, ceil(crafts per tick) + 1), an output box max(the prototype's volume, the amount
+	--- x max(3, ceil(crafts per tick))). So a recipe always fits its boxes: 5000 of a fluid gives a box of 20 000 where the
+	--- prototype says 1000, and 4 of one a box of 16. Until then the prototype's volume was compared (or the size the box
+	--- has for the recipe set at the moment), and a pattern with more fluid than that was refused until somebody set the
+	--- recipe in the machine by hand: Gregtorio's flotation froths (1800 pine oil), its assembly line recipes. fluid_map
+	--- reads the real capacity after the switch.
+	local function fit(list, entries)
 		local n = 0
 		for _, e in pairs(entries) do if e.type == "fluid" then n = n + 1 end end
 		if n == 0 then return nil end
@@ -516,18 +524,15 @@ local function fluid_boxes_fit(machine, ingredients, products)
 		for _, i in pairs(list) do
 			if live and connected(fb, i) then pipes = true
 			elseif not live and piped(i) then pipes = true                  -- (issue #164: the boxes are off)
-			elseif (live and fb.get_capacity(i) or boxes[i].get_volume()) >= need then free = free + 1 end
+			else free = free + 1 end
 		end
 		if free >= n then return nil end
 		return pipes and "fluid-pipes" or "fluid-box"
 	end
-	local need_in, need_out = 0, 0
-	for _, e in pairs(ingredients) do if e.type == "fluid" then need_in = math.max(need_in, fixed_up(e.amount)) end end
-	for _, e in pairs(products) do if e.type == "fluid" then need_out = math.max(need_out, e.amount or e.amount_max or 0) end end
 	for _, e in pairs(ingredients) do
 		if e.type == "fluid" and not fluid_reachable(e) then return "fluid-temperature" end
 	end
-	return fit(ins, ingredients, need_in) or fit(outs, products, need_out)
+	return fit(ins, ingredients) or fit(outs, products)
 end
 
 --- Issue #815: what an input slot of a machine takes. Measured in Factorio 2.1.25 (the issue has the table): a script's
